@@ -96,6 +96,6 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   return apiPost<T>(path, body, 'PUT');
 }
 
-export { buildQuery };
+export { buildQuery, extractErrorMessage };
 
 export { BackendError, getBackendErrorType };

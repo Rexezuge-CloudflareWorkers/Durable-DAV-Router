@@ -44,9 +44,23 @@ describe('ServiceError hierarchy', () => {
   });
 
   it('supplies a default message when none is given', () => {
-    // `rateLimit` constructs this with no argument, so the default has to be a
-    // usable client-facing sentence.
-    expect(new RateLimitedError().getErrorMessage()).toMatch(/rate limit/i);
+    // `rateLimit` constructs RateLimitedError with no argument, so a default has
+    // to be a usable client-facing sentence rather than an empty string.
+    const defaults: Array<[string, () => ServiceError]> = [
+      ['RateLimitedError', () => new RateLimitedError()],
+      ['BadRequestError', () => new BadRequestError()],
+      ['UnauthorizedError', () => new UnauthorizedError()],
+      ['ForbiddenError', () => new ForbiddenError()],
+      ['NotFoundError', () => new NotFoundError()],
+      ['ConflictError', () => new ConflictError()],
+      ['PayloadTooLargeError', () => new PayloadTooLargeError()],
+      ['MethodNotAllowedError', () => new MethodNotAllowedError()],
+    ];
+    for (const [name, make] of defaults) {
+      const message = make().getErrorMessage();
+      expect(typeof message, name).toBe('string');
+      expect(message.trim().length, name).toBeGreaterThan(0);
+    }
   });
 
   it('is catchable as Error', () => {

@@ -19,15 +19,35 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
+      // `apps/web` is measured by its own config in `apps/web`; the worker
+      // packages are what this config owns.
       include: ['apps/api/src/**/*.ts', 'packages/**/src/**/*.ts'],
-      exclude: ['**/*.test.ts', '**/*.d.ts', '**/index.ts', '**/types.d.ts', '**/model/**'],
+      exclude: [
+        '**/*.test.ts',
+        '**/*.d.ts',
+        '**/index.ts',
+        '**/types.d.ts',
+        '**/model/**',
+        // Generated at build time from the Vite bundle: a one-line HTML blob
+        // with no logic to exercise.
+        'apps/api/src/generated/**',
+        // Type-only modules: no runtime code to cover.
+        '**/D1Types.ts',
+        '**/ServiceEnv.ts',
+        '**/env.d.ts',
+        // Re-export barrels carry no logic of their own.
+        '**/dao/identity.ts',
+        '**/dao/router.ts',
+      ],
       thresholds: {
-        // Enforced floor (measured 29/23/36/30 after hardening; raise toward
-        // 50/40/50/50 as coverage grows — never lower to make CI pass).
-        statements: 28,
-        branches: 23,
-        functions: 36,
-        lines: 30,
+        // Enforced floor, measured 85/77/88/88 after the hardening pass. Set
+        // slightly below the measurement so ordinary additions of untested
+        // defensive branches do not fail CI, but a real regression does. Raise,
+        // never lower to make CI pass.
+        statements: 80,
+        branches: 75,
+        functions: 80,
+        lines: 80,
       },
     },
   },
