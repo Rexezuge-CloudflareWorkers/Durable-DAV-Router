@@ -7,21 +7,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./constants": "./src/constants/index.ts",
-    "./constants/*": "./src/constants/*.ts",
     "./i18n": "./src/i18n/index.ts",
-    "./model": "./src/model/index.ts",
-    "./model/*": "./src/model/*.ts",
     "./utils": "./src/utils/index.ts",
-    "./utils/*": "./src/utils/*.ts",
-    "./validation": "./src/validation/index.ts",
-    "./validation/*": "./src/validation/*.ts"
+    "./utils/*": "./src/utils/*.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "zod": "4.6.5"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "26.6.2",
     "typescript": "6.0.3"

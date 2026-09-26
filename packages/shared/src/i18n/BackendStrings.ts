@@ -4,44 +4,23 @@ const SUPPORTED_BACKEND_LOCALES = ['en', 'de', 'fr', 'es', 'it', 'nl', 'pt', 'pl
 
 type SupportedBackendLocale = (typeof SUPPORTED_BACKEND_LOCALES)[number];
 
+/**
+ * Localized messages the router returns to clients.
+ *
+ * The router has no repos, tokens, issues, or namespaces — those namespaces
+ * were carried over from the Durable-DAV backend and were never reachable
+ * from this codebase. `internalError` is the only string a request path
+ * actually reads (`BaseRoute.toErrorResponse`); `unauthorized` and `forbidden`
+ * are wired next to it and are reachable, so they are kept.
+ */
 interface CommonStrings {
   unauthorized: string;
   forbidden: string;
   internalError: string;
 }
 
-interface RepoStrings {
-  notFound: string;
-  visibilityDenied: string;
-  created: string;
-  deleted: string;
-}
-
-interface TokenStrings {
-  created: string;
-  revoked: string;
-  limitReached: string;
-}
-
-interface IssueStrings {
-  created: string;
-}
-
-interface GitStrings {
-  pushRejected: string;
-}
-
-interface NamespaceStrings {
-  reserved: string;
-}
-
 interface BackendLocaleStrings {
   common: CommonStrings;
-  repo: RepoStrings;
-  token: TokenStrings;
-  issue: IssueStrings;
-  git: GitStrings;
-  namespace: NamespaceStrings;
 }
 
 function formatBackendString(template: string, vars: Record<string, string | number> = {}): string {
@@ -67,14 +46,5 @@ function normalizeBackendLocale(locale: string | null | undefined): SupportedBac
   return (match || 'en') as SupportedBackendLocale;
 }
 
-export type {
-  BackendLocaleStrings,
-  CommonStrings,
-  RepoStrings,
-  TokenStrings,
-  IssueStrings,
-  GitStrings,
-  NamespaceStrings,
-  SupportedBackendLocale,
-};
+export type { BackendLocaleStrings, CommonStrings, SupportedBackendLocale };
 export { SUPPORTED_BACKEND_LOCALES, canonicalizeBackendLocaleTag, formatBackendString, normalizeBackendLocale };

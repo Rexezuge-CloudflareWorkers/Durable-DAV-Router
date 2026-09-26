@@ -8,9 +8,6 @@ const backendRuntimeSrcPath = fileURLToPath(new URL('packages/backend-runtime/sr
 const webdavSrcPath = fileURLToPath(new URL('packages/webdav/src', import.meta.url));
 const sharedSrcPath = fileURLToPath(new URL('packages/shared/src', import.meta.url));
 const backendServicesSrcPath = fileURLToPath(new URL('packages/backend-services/src', import.meta.url));
-const cloudflareSocketsMockPath = fileURLToPath(new URL('test/mocks/cloudflare-sockets.ts', import.meta.url));
-const cloudflareWorkersMockPath = fileURLToPath(new URL('test/mocks/cloudflare-workers.ts', import.meta.url));
-const cloudflareWorkflowsMockPath = fileURLToPath(new URL('test/mocks/cloudflare-workflows.ts', import.meta.url));
 
 export default defineConfig({
   test: {
@@ -48,9 +45,6 @@ export default defineConfig({
       { find: '@durable-dav-router/backend-services', replacement: backendServicesSrcPath },
       { find: '@durable-dav-router/webdav', replacement: webdavSrcPath },
       { find: '@durable-dav-router/shared', replacement: sharedSrcPath },
-      { find: 'cloudflare:sockets', replacement: cloudflareSocketsMockPath },
-      { find: 'cloudflare:workers', replacement: cloudflareWorkersMockPath },
-      { find: 'cloudflare:workflows', replacement: cloudflareWorkflowsMockPath },
       { find: /^@\//, replacement: `${apiSrcPath}/` },
     ],
   },

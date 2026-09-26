@@ -13,8 +13,6 @@ import { bindServiceBindings } from './serviceBindings';
 // live to backends.
 function createRequestScope(env: RequestScopeEnv): Container {
   const scope = new Container();
-  scope.bindValue(Tokens.Env, env);
-  scope.bindValue(Tokens.Db, env.DB);
   // Single CACHE binding (absent in tests / legacy deploys → fail-soft cache).
   scope.bindValue(Tokens.KvCache, new KvCache((env as { CACHE?: KvNamespaceLike }).CACHE ?? null));
 

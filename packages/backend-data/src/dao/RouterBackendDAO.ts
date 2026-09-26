@@ -1,4 +1,6 @@
 import { BaseDAO } from './BaseDAO';
+import { buildSetClause } from './UpdateClause';
+import type { SetAssignment } from './UpdateClause';
 import type { D1Queryable } from '../utils/D1Types';
 
 export interface RouterBackendRow {
@@ -138,6 +140,14 @@ class RouterBackendDAO extends BaseDAO {
     return row?.cnt ?? 0;
   }
 
+  /**
+   * Partial update. Only the keys present on `patch` are written, so a caller
+   * updating one column does not clobber another with a default.
+   *
+   * `backend_username_ci` is always written alongside `backend_username` — it is
+   * the WebDAV owner-routing lookup key, and leaving the two out of sync would
+   * make a renamed handle unroutable.
+   */
   public async update(
     id: string,
     patch: {
@@ -149,33 +159,20 @@ class RouterBackendDAO extends BaseDAO {
       backendUsername?: string | null;
     },
   ): Promise<void> {
-    const sets: string[] = ['updated_at = ?'];
-    const bindings: unknown[] = [patch.now];
-    if (patch.baseUrl !== undefined) {
-      sets.push('base_url = ?');
-      bindings.push(patch.baseUrl);
-    }
-    if (patch.displayName !== undefined) {
-      sets.push('display_name = ?');
-      bindings.push(patch.displayName);
-    }
-    if (patch.lastSeenAt !== undefined) {
-      sets.push('last_seen_at = ?');
-      bindings.push(patch.lastSeenAt);
-    }
-    if (patch.lastStatus !== undefined) {
-      sets.push('last_status = ?');
-      bindings.push(patch.lastStatus);
-    }
+    const assignments: SetAssignment[] = [{ column: 'updated_at', value: patch.now }];
+    if (patch.baseUrl !== undefined) assignments.push({ column: 'base_url', value: patch.baseUrl });
+    if (patch.displayName !== undefined) assignments.push({ column: 'display_name', value: patch.displayName });
+    if (patch.lastSeenAt !== undefined) assignments.push({ column: 'last_seen_at', value: patch.lastSeenAt });
+    if (patch.lastStatus !== undefined) assignments.push({ column: 'last_status', value: patch.lastStatus });
     if (patch.backendUsername !== undefined) {
-      sets.push('backend_username = ?');
-      bindings.push(patch.backendUsername);
-      sets.push('backend_username_ci = ?');
-      bindings.push(patch.backendUsername ? patch.backendUsername.toLowerCase() : null);
+      assignments.push(
+        { column: 'backend_username', value: patch.backendUsername },
+        { column: 'backend_username_ci', value: patch.backendUsername ? patch.backendUsername.toLowerCase() : null },
+      );
     }
-    bindings.push(id);
+    const { clause, values } = buildSetClause(assignments);
     await this.withRetry(
-      () => this.database.prepare(`UPDATE router_backends SET ${sets.join(', ')} WHERE id = ?`).bind(...bindings).run(),
+      () => this.database.prepare(`UPDATE router_backends SET ${clause} WHERE id = ?`).bind(...values, id).run(),
       'update router backend',
     );
   }

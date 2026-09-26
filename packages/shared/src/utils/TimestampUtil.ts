@@ -1,35 +1,13 @@
-class TimestampUtility {
-  public static getCurrentUnixTimestampInMilliseconds(): number {
-    return Date.now();
-  }
-
+/**
+ * Unix timestamps, in seconds.
+ *
+ * Seconds (not milliseconds) because that is what the D1 columns store, so the
+ * conversion lives in exactly one place rather than at each write site.
+ */
+class TimestampUtil {
   public static getCurrentUnixTimestampInSeconds(): number {
     return Math.floor(Date.now() / 1000);
   }
-
-  public static addMinutes(timestamp: number, minutes: number): number {
-    return timestamp + minutes * 60;
-  }
-
-  public static addHours(timestamp: number, hours: number): number {
-    return timestamp + hours * 60 * 60;
-  }
-
-  public static addDays(timestamp: number, days: number): number {
-    return timestamp + days * 60 * 60 * 24;
-  }
-
-  public static subtractMinutes(timestamp: number, minutes: number): number {
-    return timestamp - minutes * 60;
-  }
-
-  public static subtractDays(timestamp: number, days: number): number {
-    return timestamp - days * 60 * 60 * 24;
-  }
-
-  public static convertIsoToUnixTimestampInSeconds(isoString: string): number {
-    return Math.floor(new Date(isoString).getTime() / 1000);
-  }
 }
 
-export { TimestampUtility as TimestampUtil };
+export { TimestampUtil };
