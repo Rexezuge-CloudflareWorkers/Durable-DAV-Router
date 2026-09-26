@@ -472,16 +472,18 @@ describe('RouterDavProxyRoutes KV route cache', () => {
       'fetch',
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+        const origin = new URL(url).origin;
         calls.push({ url, init: init ?? {} });
         const headers = new Headers((init?.headers ?? {}) as HeadersInit);
         const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0';
         if (isProbe) {
           // Volume moved from b to a between requests.
-          return new Response('probe', { status: url.startsWith('https://a.example.com') ? 207 : 404 });
+          return new Response('probe', { status: origin === 'https://a.example.com' ? 207 : 404 });
         }
         // Forward to the stale backend 404s; the new owner serves.
-        return new Response(url.startsWith('https://b.example.com') ? 'gone' : '<ok/>', {
-          status: url.startsWith('https://b.example.com') ? 404 : 207,
+        const stale = origin === 'https://b.example.com';
+        return new Response(stale ? 'gone' : '<ok/>', {
+          status: stale ? 404 : 207,
         });
       },
     );
@@ -671,10 +673,12 @@ describe('RouterDavProxyRoutes KV route cache', () => {
       'fetch',
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+        const origin = new URL(url).origin;
         const headers = new Headers((init?.headers ?? {}) as HeadersInit);
         if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
-          return new Response(url.startsWith('https://a.example.com') ? '<ok/>' : 'probe', {
-            status: url.startsWith('https://a.example.com') ? 207 : 404,
+          const moved = origin === 'https://a.example.com';
+          return new Response(moved ? '<ok/>' : 'probe', {
+            status: moved ? 207 : 404,
           });
         }
         forwards.push(`${init?.method} ${url}`);

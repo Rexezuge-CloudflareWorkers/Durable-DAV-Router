@@ -395,7 +395,7 @@ describe('probeCandidateBackends', () => {
   it('survives a candidate whose fetch throws', async () => {
     vi.stubGlobal('fetch', async (i: RequestInfo | URL) => {
       const url = String(i instanceof Request ? i.url : i);
-      if (url.startsWith('https://a.com')) throw new Error('connection refused');
+      if (new URL(url).origin === 'https://a.com') throw new Error('connection refused');
       return new Response(null, { status: 207 });
     });
     const result = await probeCandidateBackends({ ...input, candidates: [a, b] });
