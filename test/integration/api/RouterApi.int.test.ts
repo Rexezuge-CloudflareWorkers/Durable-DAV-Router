@@ -247,6 +247,54 @@ describe('router authenticated API (integration)', () => {
     });
   });
 
+  describe('UserDAO', () => {
+    // `users.email` is the primary key every owner-scoped query hangs off, so
+    // the normalization and batch-lookup behavior is worth exercising against
+    // real SQL rather than a double that would accept anything.
+    it('upserts idempotently and reads back case-insensitively', async () => {
+      const { UserDAO } = await import('@durable-dav-router/backend-data/dao');
+      const dao = new UserDAO((env as unknown as TestEnv).DB as never);
+      const now = Math.floor(Date.now() / 1000);
+      const email = `Mixed-${Date.now()}@Example.com`;
+
+      await dao.upsertUser(email, now);
+      await dao.upsertUser(email.toUpperCase(), now + 1);
+
+      // Stored lowercased, and a differently-cased lookup still finds it.
+      const row = await dao.getByEmail(email.toUpperCase());
+      expect(row?.email).toBe(email.toLowerCase());
+
+      const count = await (env as unknown as TestEnv).DB.prepare('SELECT COUNT(*) AS cnt FROM users WHERE lower(email) = ?')
+        .bind(email.toLowerCase())
+        .first<{ cnt: number }>();
+      expect(count?.cnt).toBe(1);
+    });
+
+    it('returns null for an unknown email', async () => {
+      const { UserDAO } = await import('@durable-dav-router/backend-data/dao');
+      const dao = new UserDAO((env as unknown as TestEnv).DB as never);
+      expect(await dao.getByEmail(`nobody-${Date.now()}@example.com`)).toBeNull();
+    });
+
+    it('batch-looks-up emails across chunk boundaries, deduplicated', async () => {
+      const { UserDAO } = await import('@durable-dav-router/backend-data/dao');
+      const dao = new UserDAO((env as unknown as TestEnv).DB as never);
+      const now = Math.floor(Date.now() / 1000);
+      // More than one 50-row chunk, with case variants and blanks mixed in.
+      const emails = Array.from({ length: 120 }, (_, i) => `Batch${i}-${Date.now()}@example.com`);
+      for (const email of emails) await dao.upsertUser(email, now);
+      const found = await dao.getByEmails([...emails, emails[0]?.toUpperCase() ?? '', '', '   ', ...emails.map((e) => e.toUpperCase())]);
+      expect(found).toHaveLength(emails.length);
+    });
+
+    it('returns an empty array for an empty or blank-only batch', async () => {
+      const { UserDAO } = await import('@durable-dav-router/backend-data/dao');
+      const dao = new UserDAO((env as unknown as TestEnv).DB as never);
+      expect(await dao.getByEmails([])).toEqual([]);
+      expect(await dao.getByEmails(['', '   '])).toEqual([]);
+    });
+  });
+
   describe('data integrity', () => {
     it('stores owner_email lowercased even when the caller supplies mixed case', async () => {
       // `users.email` is BINARY and `router_backends.owner_email` is
