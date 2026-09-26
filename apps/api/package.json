@@ -1,0 +1,23 @@
+{
+  "name": "@durable-dav-router/api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@durable-dav-router/backend-errors": "workspace:*",
+    "@durable-dav-router/backend-runtime": "workspace:*",
+    "@durable-dav-router/backend-services": "workspace:*",
+    "@durable-dav-router/shared": "workspace:*",
+    "@durable-dav-router/webdav": "workspace:*",
+    "chanfana": "3.4.0",
+    "hono": "4.13.8",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.2",
+    "typescript": "6.0.3"
+  }
+}

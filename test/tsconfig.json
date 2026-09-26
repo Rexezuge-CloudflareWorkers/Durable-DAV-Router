@@ -1,0 +1,53 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "vitest/globals"
+    ],
+    "paths": {
+      "@/*": [
+        "../apps/api/src/*"
+      ],
+      "@durable-dav-router/background": [
+        "../apps/background/src"
+      ],
+      "@durable-dav-router/background/*": [
+        "../apps/background/src/*"
+      ],
+      "@durable-dav-router/backend-data": [
+        "../packages/backend-data/src"
+      ],
+      "@durable-dav-router/backend-data/*": [
+        "../packages/backend-data/src/*"
+      ],
+      "@durable-dav-router/backend-errors": [
+        "../packages/backend-errors/src"
+      ],
+      "@durable-dav-router/backend-errors/*": [
+        "../packages/backend-errors/src/*"
+      ],
+      "@durable-dav-router/backend-runtime": [
+        "../packages/backend-runtime/src"
+      ],
+      "@durable-dav-router/backend-runtime/*": [
+        "../packages/backend-runtime/src/*"
+      ],
+      "@durable-dav-router/backend-services": [
+        "../packages/backend-services/src"
+      ],
+      "@durable-dav-router/backend-services/*": [
+        "../packages/backend-services/src/*"
+      ],
+      "@durable-dav-router/shared": [
+        "../packages/shared/src"
+      ],
+      "@durable-dav-router/shared/*": [
+        "../packages/shared/src/*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "../src/**/*.ts"
+  ]
+}
