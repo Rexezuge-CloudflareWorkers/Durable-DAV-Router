@@ -65,6 +65,14 @@ async function probeBackendHealth(baseUrl: string, timeoutMs: number, auth?: Hea
   }
 }
 
+/**
+ * Forward the caller's Cloudflare Access credentials to a backend.
+ *
+ * Verbatim, because the router stores no credentials of its own: the backend
+ * validates the assertion against its own Access application. `Accept` and
+ * `User-Agent` are set by the caller when it wants them, so a probe and an
+ * identity lookup can be told apart in backend logs.
+ */
 function incomingAuthHeaders(request: Request): Headers {
   const out = new Headers();
   const jwt = request.headers.get('Cf-Access-Jwt-Assertion') ?? request.headers.get('cf-access-jwt-assertion');
@@ -74,6 +82,15 @@ function incomingAuthHeaders(request: Request): Headers {
   const cookie = request.headers.get('Cookie');
   if (cookie) out.set('Cookie', cookie);
   return out;
+}
+
+/**
+Mark a request as a router-originated API call in backend logs.
+*/
+function markAsRouterRequest(headers: Headers): Headers {
+  headers.set('Accept', 'application/json');
+  headers.set('User-Agent', 'durable-dav-router');
+  return headers;
 }
 
 /**
@@ -210,9 +227,7 @@ function registerBackendRoutes(app: App): void {
     try {
       const row = await scope.get(Tokens.BackendService).getBackend(email, c.req.param('slug') ?? '');
       const timeoutMs = getProxyTimeoutMs(c.env);
-      const auth = incomingAuthHeaders(c.req.raw);
-      auth.set('Accept', 'application/json');
-      auth.set('User-Agent', 'durable-dav-router');
+      const auth = markAsRouterRequest(incomingAuthHeaders(c.req.raw));
       const res = await fetchWithTimeout(
         new Request(joinBackendUrl(row.base_url, '/user/me')),
         { method: 'GET', headers: auth, redirect: 'manual' },
@@ -250,9 +265,7 @@ function registerBackendRoutes(app: App): void {
     try {
       const row = await scope.get(Tokens.BackendService).getBackend(email, c.req.param('slug') ?? '');
       const timeoutMs = getProxyTimeoutMs(c.env);
-      const auth = incomingAuthHeaders(c.req.raw);
-      auth.set('Accept', 'application/json');
-      auth.set('User-Agent', 'durable-dav-router');
+      const auth = markAsRouterRequest(incomingAuthHeaders(c.req.raw));
 
       async function check(path: string): Promise<{ status: number | null; error: string | null }> {
         try {

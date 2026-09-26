@@ -69,6 +69,19 @@ class AppConfiguration {
     return this.router.getRouteCacheTtlSeconds();
   }
 
+  /**
+   * Whether a user may register a private or loopback backend origin.
+   *
+   * Mirrors `BackendService`'s default so both layers agree: unset means
+   * "follow the environment", and only an explicit value overrides that.
+   * `BackendService` is the enforcement point; this exists so `validate()` can
+   * report a contradictory setting at startup.
+   */
+  public getAllowPrivateBackendHosts(): boolean | null {
+    const raw = EnvParser.string(this.env, 'ALLOW_PRIVATE_BACKEND_HOSTS', '');
+    return raw.trim().length === 0 ? null : raw.trim().toLowerCase() === 'true';
+  }
+
   public isDemoMode(): boolean {
     return this.auth.isDemoMode();
   }
@@ -124,12 +137,11 @@ class AppConfiguration {
           `The bypass is ignored in this environment; remove the variable so it cannot become live if ENVIRONMENT changes.`,
       );
     }
-    if (this.isBypassAllowed() && this.getDevAuthEmail() !== null) {
-      warnings.push(`Security: DEV_AUTH_EMAIL bypass is ACTIVE (ENVIRONMENT=${this.getEnvironment()}). Every unauthenticated request authenticates as that identity.`);
-    }
-    if (this.isBypassAllowed() && this.isDemoMode()) {
-      warnings.push(`Security: DEMO_MODE bypass is ACTIVE (ENVIRONMENT=${this.getEnvironment()}).`);
-    }
+    // An *active* bypass is not reported: it can only happen in
+    // {development, dev, local, test}, where it is the intended setup, and the
+    // allow-list in `isBypassAllowed` is the control that keeps it out of
+    // production. The reverse case above — a bypass present but inert — is
+    // reported, because that is the one that is one config edit from live.
     // An unparsable TEAM_DOMAIN silently degrades JWT verification into a 401
     // for every real user, which reads as an Access outage rather than a typo.
     const teamDomain = this.getTeamDomain();
@@ -139,6 +151,26 @@ class AppConfiguration {
     const policyAud = this.getPolicyAud();
     if (policyAud !== null && policyAud.includes(',')) {
       warnings.push('Invalid configuration: POLICY_AUD must be a single audience; multiple values are not supported');
+    }
+    // A production deployment that allows private backend origins has re-opened
+    // the SSRF surface that the default exists to close, so make it loud rather
+    // than leaving it as a silent opt-in nobody notices is active.
+    if (!this.isBypassAllowed() && this.getAllowPrivateBackendHosts() === true) {
+      warnings.push(
+        `Security: ALLOW_PRIVATE_BACKEND_HOSTS=true while ENVIRONMENT=${this.getEnvironment()}. ` +
+          `Users can register loopback and private-network origins, which turns the router into a proxy into its own network.`,
+      );
+    }
+    const allowPrivate = this.getAllowPrivateBackendHosts();
+    if (allowPrivate === true && this.isBypassAllowed()) {
+      warnings.push(
+        `Note: ALLOW_PRIVATE_BACKEND_HOSTS=true has no effect while ENVIRONMENT=${this.getEnvironment()} (private hosts are already allowed).`,
+      );
+    }
+    if (allowPrivate === false && !this.isBypassAllowed()) {
+      warnings.push(
+        `Note: ALLOW_PRIVATE_BACKEND_HOSTS=false has no effect while ENVIRONMENT=${this.getEnvironment()} (private hosts are already denied).`,
+      );
     }
     return warnings;
   }

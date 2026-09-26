@@ -39,6 +39,27 @@ describe('CORS origin policy', () => {
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 
+  it('sets the preflight contract a browser needs to attempt a DAV request', () => {
+    // Without the method/header lists, a browser refuses the preflight and the
+    // real PROPFIND/MKCOL never leaves the page.
+    const res = applyCors(new Response(null, { status: 204 }), request('https://app.example.com'), 'https://app.example.com');
+    expect(res.headers.get('Access-Control-Allow-Methods')).toContain('PROPFIND');
+    expect(res.headers.get('Access-Control-Allow-Methods')).toContain('MKCOL');
+    for (const header of ['depth', 'destination', 'lock-token', 'authorization']) {
+      expect(res.headers.get('Access-Control-Allow-Headers'), header).toContain(header);
+    }
+    expect(res.headers.get('Access-Control-Max-Age')).toMatch(/^\d+$/);
+  });
+
+  it('advertises DAV class and the Basic challenge as readable', () => {
+    // Without `DAV` exposed, a browser cannot confirm the backend is a DAV
+    // server; without `www-authenticate` it cannot tell "wrong password" from
+    // "no such bucket".
+    const res = applyCors(new Response('ok', { headers: { DAV: '1, 2' } }), request('https://app.example.com'), 'https://app.example.com');
+    expect(res.headers.get('Access-Control-Expose-Headers')).toContain('dav');
+    expect(res.headers.get('Access-Control-Expose-Headers')).toContain('www-authenticate');
+  });
+
   it('still emits Vary: Origin so caches cannot cross-serve a grant', () => {
     const res = applyCors(new Response('ok'), request('https://evil.example'));
     expect(res.headers.get('Vary')).toContain('Origin');

@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { ConflictError } from '@durable-dav-router/backend-errors';
 import { ErrorSanitizationUtil, canonicalizeLanguageTag } from '@durable-dav-router/shared/utils';
 import { createRequestScope } from '@durable-dav-router/backend-services/composition';
 import { getRequestScope, asScopedContext } from '@durable-dav-router/backend-runtime/di';
@@ -104,7 +105,11 @@ abstract class BaseRoute {
       const type = body.Exception?.Type ?? 'Error';
       console.warn(`Responding with ${type}:`, ErrorSanitizationUtil.sanitizeErrorForLogging(error));
     }
-    return Response.json(body, { status });
+    // A typed error may carry machine-readable context — the candidate slugs
+    // behind an ambiguous `?backend=` selector, for example — which the client
+    // needs but must not be folded into the translated message.
+    const details = error instanceof ConflictError ? error.details : undefined;
+    return Response.json(details && Object.keys(details).length > 0 ? { ...body, ...details } : body, { status });
   }
 
   private static resolveLocale(c: HonoContext): string {

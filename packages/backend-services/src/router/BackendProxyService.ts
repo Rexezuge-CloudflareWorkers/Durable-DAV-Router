@@ -112,8 +112,12 @@ type BackendResolution =
   | { kind: 'ambiguous'; backends: RouterBackendRow[] };
 
 function resolveBackend(backends: RouterBackendRow[], explicitSlug?: string | null): BackendResolution {
-  if (explicitSlug) {
-    const match = backends.find((b) => b.slug.toLowerCase() === explicitSlug.toLowerCase());
+  // Trim before testing for presence: a whitespace-only selector is an absent
+  // one, and treating it as a slug would answer 404 for a request that should
+  // have been resolved by probing.
+  const explicit = typeof explicitSlug === 'string' ? explicitSlug.trim() : '';
+  if (explicit) {
+    const match = backends.find((b) => b.slug.toLowerCase() === explicit.toLowerCase());
     return match ? { kind: 'single', backend: match } : { kind: 'not-found' };
   }
   if (backends.length === 0) return { kind: 'not-found' };

@@ -1,16 +1,24 @@
-import type { Context, Next } from 'hono';
+import type { Next } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import type { AccessIdentityContext } from '@durable-dav-router/backend-services/auth';
-import { UnauthorizedError, ForbiddenError, DefaultInternalServerError } from '@durable-dav-router/backend-errors';
 import { ErrorSanitizationUtil } from '@durable-dav-router/shared/utils';
 import { BaseRoute } from '../endpoints/IBaseRoute';
+import type { HonoContext } from '../endpoints/IBaseRoute';
 
-type RequestContext = Context<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type RequestContext = HonoContext;
 
 function getScope(c: RequestContext): ReturnType<typeof BaseRoute.getScope> {
   return BaseRoute.getScope(c);
 }
 
+/**
+ * Resolve the caller's identity and record it for the request.
+ *
+ * The user row is upserted here rather than in each handler so `/user/*` has a
+ * row to reference: `router_backends.owner_email` is a foreign key into
+ * `users(email)`, so a backend registered before the user row existed would
+ * fail to insert.
+ */
 async function authenticateUserIdentity(c: RequestContext): Promise<string> {
   const scope = getScope(c);
   const email = await scope
@@ -20,63 +28,33 @@ async function authenticateUserIdentity(c: RequestContext): Promise<string> {
   return email;
 }
 
+/**
+ * Guard for `/user/*`.
+ *
+ * Errors go through `BaseRoute.toErrorResponse`, which owns the status mapping
+ * and the rule that a 5xx body is masked. Mapping statuses here as well would
+ * be a second place to keep in sync, and this handler is the one place a
+ * failure happens *before* a route is reached.
+ */
 async function userAuthenticationHandler(c: RequestContext, next: Next): Promise<Response | void> {
   try {
-    const userEmail = await authenticateUserIdentity(c);
-    c.set('AuthenticatedUserEmailAddress', userEmail);
-    await next();
+    c.set('AuthenticatedUserEmailAddress', await authenticateUserIdentity(c));
   } catch (error: unknown) {
-    const status = error instanceof UnauthorizedError ? 401 : error instanceof ForbiddenError ? 403 : 500;
-    if (status === 500) {
+    // Only an authentication failure is expected here; anything else is a bug
+    // and is logged with its cause.
+    if (!(error instanceof Error) || error.name !== 'ServiceError') {
       console.error('userAuthentication failed:', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-      return c.json(
-        {
-          Exception: {
-            Type: DefaultInternalServerError.getErrorType(),
-            Message: DefaultInternalServerError.getErrorMessage(),
-          },
-        },
-        500,
-      );
     }
-    const type = error instanceof ForbiddenError ? 'Forbidden' : 'Unauthorized';
-    const message = error instanceof Error ? error.message : 'Unauthorized';
-    return c.json({ Exception: { Type: type, Message: message } }, status as 401);
+    return BaseRoute.toErrorResponse(c, error);
   }
+  await next();
 }
 
 class MiddlewareHandlers {
   public static userAuthentication(): (c: RequestContext, next: Next) => Promise<Response | void> {
     return userAuthenticationHandler;
   }
-
-  public static async requireUser(c: RequestContext): Promise<string | Response> {
-    try {
-      const existing = c.get('AuthenticatedUserEmailAddress') as string | undefined;
-      if (existing) return existing;
-      const email = await authenticateUserIdentity(c);
-      c.set('AuthenticatedUserEmailAddress', email);
-      return email;
-    } catch (error: unknown) {
-      if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {
-        const message = error instanceof Error ? error.message : 'Unauthorized';
-        const type = error instanceof ForbiddenError ? 'Forbidden' : 'Unauthorized';
-        const status = error instanceof ForbiddenError ? 403 : 401;
-        return c.json({ Exception: { Type: type, Message: message } }, status as 401);
-      }
-      console.error('requireUser failed:', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-      return c.json(
-        {
-          Exception: {
-            Type: DefaultInternalServerError.getErrorType(),
-            Message: DefaultInternalServerError.getErrorMessage(),
-          },
-        },
-        500,
-      );
-    }
-  }
 }
 
-export { MiddlewareHandlers };
+export { MiddlewareHandlers, userAuthenticationHandler, authenticateUserIdentity };
 export type { RequestContext };
