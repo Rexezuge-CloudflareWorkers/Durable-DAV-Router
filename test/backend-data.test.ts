@@ -210,7 +210,10 @@ describe('BaseDAO', () => {
   it('wraps a failure in a DatabaseError that names the operation', async () => {
     class Probe extends BaseDAO {
       public run(): Promise<D1Result> {
-        return this.withRetry(async () => ({ success: false, results: [], error: 'UNIQUE constraint failed', meta: {} }) as unknown as D1Result, 'create probe');
+        return this.withRetry(
+          async () => ({ success: false, results: [], error: 'UNIQUE constraint failed', meta: {} }) as unknown as D1Result,
+          'create probe',
+        );
       }
     }
     const dao = new Probe({} as D1Queryable);

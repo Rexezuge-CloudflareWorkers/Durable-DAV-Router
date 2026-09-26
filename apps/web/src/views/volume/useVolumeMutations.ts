@@ -9,7 +9,14 @@ type NoticeFn = (type: 'success' | 'error', text: string) => void;
 
 // Mutation slice for file operations (Command pattern: one async action per
 // user intent; the view only wires buttons to these commands).
-function useVolumeMutations(owner: string, volume: string, path: string, showNotice: NoticeFn, refresh: () => void, backend?: string | null) {
+function useVolumeMutations(
+  owner: string,
+  volume: string,
+  path: string,
+  showNotice: NoticeFn,
+  refresh: () => void,
+  backend?: string | null,
+) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [mkdirOpen, setMkdirOpen] = useState(false);

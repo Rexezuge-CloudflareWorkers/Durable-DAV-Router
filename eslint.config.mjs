@@ -226,7 +226,10 @@ export default tseslint.config(
               message: 'backend-runtime must not import from backend-services (higher layer)',
             },
             { group: ['@durable-dav-router/api', '@durable-dav-router/api/*'], message: 'backend-runtime must not import from apps/api' },
-            { group: ['@durable-dav-router/background', '@durable-dav-router/background/*'], message: 'backend-runtime must not import from apps/background' },
+            {
+              group: ['@durable-dav-router/background', '@durable-dav-router/background/*'],
+              message: 'backend-runtime must not import from apps/background',
+            },
           ],
         },
       ],
@@ -306,7 +309,8 @@ export default tseslint.config(
           patterns: [
             {
               group: ['@durable-dav-router/backend-data/dao', '@durable-dav-router/backend-data/dao/*'],
-              message: 'apps/api must not import DAOs directly; use @durable-dav-router/backend-services instead (type-only imports are allowed)',
+              message:
+                'apps/api must not import DAOs directly; use @durable-dav-router/backend-services instead (type-only imports are allowed)',
               allowTypeImports: true,
             },
             {

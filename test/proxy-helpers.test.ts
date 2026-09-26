@@ -111,14 +111,22 @@ describe('buildProxiedHeaders', () => {
   it('forwards the headers a DAV client depends on', () => {
     // Depth and Destination carry the method's semantics; dropping either turns
     // a correct request into a wrong one at the backend.
-    const out = buildProxiedHeaders(req({ Depth: '1', Destination: 'https://router.example.com/o2/v2', Authorization: 'Basic eA==' }), 'https://router.example.com', 'https://b.com');
+    const out = buildProxiedHeaders(
+      req({ Depth: '1', Destination: 'https://router.example.com/o2/v2', Authorization: 'Basic eA==' }),
+      'https://router.example.com',
+      'https://b.com',
+    );
     expect(out.get('Depth')).toBe('1');
     expect(out.get('Destination')).toBe('https://b.com/o2/v2');
     expect(out.get('Authorization')).toBe('Basic eA==');
   });
 
   it('drops hop-by-hop and host headers', () => {
-    const out = buildProxiedHeaders(req({ Host: 'router.example.com', Connection: 'keep-alive', 'X-Custom': 'v' }), 'https://router.example.com', 'https://b.com');
+    const out = buildProxiedHeaders(
+      req({ Host: 'router.example.com', Connection: 'keep-alive', 'X-Custom': 'v' }),
+      'https://router.example.com',
+      'https://b.com',
+    );
     expect(out.get('Host')).toBeNull();
     expect(out.get('Connection')).toBeNull();
     expect(out.get('X-Custom')).toBeNull();
@@ -137,7 +145,11 @@ describe('buildProxiedHeaders', () => {
   });
 
   it('rewrites a same-origin Destination and leaves a cross-origin one alone', () => {
-    const same = buildProxiedHeaders(req({ Destination: 'https://router.example.com/o2/v2?backend=x' }), 'https://router.example.com', 'https://b.com');
+    const same = buildProxiedHeaders(
+      req({ Destination: 'https://router.example.com/o2/v2?backend=x' }),
+      'https://router.example.com',
+      'https://b.com',
+    );
     expect(same.get('Destination')).toBe('https://b.com/o2/v2');
     const cross = buildProxiedHeaders(req({ Destination: 'https://elsewhere.com/o2/v2' }), 'https://router.example.com', 'https://b.com');
     expect(cross.get('Destination')).toBe('https://elsewhere.com/o2/v2');
@@ -150,7 +162,9 @@ describe('rewriteDestinationForBackend', () => {
   });
 
   it('strips the router selector so it never leaks to the backend', () => {
-    expect(rewriteDestinationForBackend('https://router.example.com/o2/v2?backend=office', 'https://router.example.com', 'https://b.com')).toBe('https://b.com/o2/v2');
+    expect(
+      rewriteDestinationForBackend('https://router.example.com/o2/v2?backend=office', 'https://router.example.com', 'https://b.com'),
+    ).toBe('https://b.com/o2/v2');
   });
 
   it('passes an unparsable destination through rather than dropping it', () => {
@@ -222,7 +236,9 @@ describe('filterProxiedResponseHeaders', () => {
   });
 
   it('keeps www-authenticate so a client can read the Basic challenge', () => {
-    expect(filterProxiedResponseHeaders(new Headers({ 'WWW-Authenticate': 'Basic realm="x"' })).get('WWW-Authenticate')).toBe('Basic realm="x"');
+    expect(filterProxiedResponseHeaders(new Headers({ 'WWW-Authenticate': 'Basic realm="x"' })).get('WWW-Authenticate')).toBe(
+      'Basic realm="x"',
+    );
   });
 });
 
@@ -270,10 +286,12 @@ describe('fetchWithTimeout', () => {
   });
 
   it('aborts and rejects when the backend exceeds the timeout', async () => {
-    vi.stubGlobal('fetch', (_i: unknown, init?: RequestInit) =>
-      new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-      }),
+    vi.stubGlobal(
+      'fetch',
+      (_i: unknown, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        }),
     );
     await expect(fetchWithTimeout(new Request('https://x/'), {}, 20)).rejects.toThrow();
   });

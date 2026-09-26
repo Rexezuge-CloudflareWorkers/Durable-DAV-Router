@@ -8,7 +8,10 @@ function registerUserProfileRoutes(app: UserApp): void {
   app.get('/user/me', async (c) => {
     const email = c.get('AuthenticatedUserEmailAddress');
     const scope = BaseRoute.getScope(c);
-    const profile = await scope.get(Tokens.UserService).getProfileByEmail(email).catch(() => null);
+    const profile = await scope
+      .get(Tokens.UserService)
+      .getProfileByEmail(email)
+      .catch(() => null);
     return c.json({ email: profile?.email ?? email });
   });
 }

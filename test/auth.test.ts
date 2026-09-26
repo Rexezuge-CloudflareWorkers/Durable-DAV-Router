@@ -87,13 +87,17 @@ describe('DEMO_MODE strategy', () => {
 
 describe('DEV_AUTH_EMAIL strategy', () => {
   it('authenticates as the configured email in development', async () => {
-    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'Dev@Example.com' }, [DEFAULT_ACCESS_AUTH_STRATEGIES[1]]);
+    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'Dev@Example.com' }, [
+      DEFAULT_ACCESS_AUTH_STRATEGIES[1],
+    ]);
     // Normalized: the email is the identity key for every D1 lookup.
     expect(await service.getAuthenticatedUserEmail(req())).toBe('dev@example.com');
   });
 
   it('fails closed on a malformed bypass email rather than authenticating it', async () => {
-    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'not-an-email' }, [DEFAULT_ACCESS_AUTH_STRATEGIES[1]]);
+    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'not-an-email' }, [
+      DEFAULT_ACCESS_AUTH_STRATEGIES[1],
+    ]);
     await expect(service.getAuthenticatedUserEmail(req())).rejects.toBeInstanceOf(UnauthorizedError);
   });
 
@@ -105,7 +109,9 @@ describe('DEV_AUTH_EMAIL strategy', () => {
   });
 
   it('is inert in production', async () => {
-    const service = new AccessAuthService({ ENVIRONMENT: 'production', DEV_AUTH_EMAIL: 'dev@example.com' }, [DEFAULT_ACCESS_AUTH_STRATEGIES[1]]);
+    const service = new AccessAuthService({ ENVIRONMENT: 'production', DEV_AUTH_EMAIL: 'dev@example.com' }, [
+      DEFAULT_ACCESS_AUTH_STRATEGIES[1],
+    ]);
     await expect(service.getAuthenticatedUserEmail(req())).rejects.toBeInstanceOf(UnauthorizedError);
   });
 });
@@ -124,14 +130,18 @@ describe('Access binding strategy', () => {
     // An unverified email must never authenticate, even from a trusted binding.
     for (const verified of [false]) {
       const service = new AccessAuthService({ ENVIRONMENT: 'production' });
-      await expect(service.getAuthenticatedUserEmail(req(), identityCtx('user@example.com', verified))).rejects.toBeInstanceOf(UnauthorizedError);
+      await expect(service.getAuthenticatedUserEmail(req(), identityCtx('user@example.com', verified))).rejects.toBeInstanceOf(
+        UnauthorizedError,
+      );
     }
   });
 
   it('refuses a missing or empty identity', async () => {
     const service = new AccessAuthService({ ENVIRONMENT: 'production' });
     for (const email of [null, undefined, '', '   ']) {
-      await expect(service.getAuthenticatedUserEmail(req(), identityCtx(email)), JSON.stringify(email)).rejects.toBeInstanceOf(UnauthorizedError);
+      await expect(service.getAuthenticatedUserEmail(req(), identityCtx(email)), JSON.stringify(email)).rejects.toBeInstanceOf(
+        UnauthorizedError,
+      );
     }
   });
 

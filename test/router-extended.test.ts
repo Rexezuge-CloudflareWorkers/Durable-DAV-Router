@@ -26,7 +26,9 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
         async first<T>(): Promise<T | null> {
           const [v0, v1] = state.values as string[];
           if (state.sql.includes('slug_ci = ?')) {
-            const found = [...store.values()].find((r) => r.owner_email.toLowerCase() === String(v0).toLowerCase() && r.slug_ci === String(v1));
+            const found = [...store.values()].find(
+              (r) => r.owner_email.toLowerCase() === String(v0).toLowerCase() && r.slug_ci === String(v1),
+            );
             return (found ?? null) as T | null;
           }
           if (state.sql.includes('WHERE id = ?')) {
@@ -41,9 +43,7 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
           if (state.sql.includes('backend_username_ci = ?')) {
-            const results = [...store.values()].filter(
-              (r) => (r.backend_username_ci ?? '').toLowerCase() === String(v0).toLowerCase(),
-            );
+            const results = [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === String(v0).toLowerCase());
             return { results: results as T[] };
           }
           const results = [...store.values()].filter((r) => r.owner_email.toLowerCase() === String(v0).toLowerCase());
@@ -52,12 +52,28 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
           if (state.sql.startsWith('INSERT INTO router_backends')) {
             const [id, ownerEmail, slug, slugCi, baseUrl, displayName, createdAt, updatedAt] = state.values as [
-              string, string, string, string, string, string | null, number, number,
+              string,
+              string,
+              string,
+              string,
+              string,
+              string | null,
+              number,
+              number,
             ];
             store.set(id, {
-              id, owner_email: ownerEmail, slug, slug_ci: slugCi, base_url: baseUrl, display_name: displayName,
-              created_at: createdAt, updated_at: updatedAt, last_seen_at: null, last_status: null,
-              backend_username: null, backend_username_ci: null,
+              id,
+              owner_email: ownerEmail,
+              slug,
+              slug_ci: slugCi,
+              base_url: baseUrl,
+              display_name: displayName,
+              created_at: createdAt,
+              updated_at: updatedAt,
+              last_seen_at: null,
+              last_status: null,
+              backend_username: null,
+              backend_username_ci: null,
             });
             return { success: true, meta: { changes: 1 } };
           }
@@ -88,7 +104,14 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
 describe('RouterBackendDAO', () => {
   it('creates and reads backends case-insensitively', async () => {
     const dao = new RouterBackendDAO(fakeDb());
-    await dao.create({ id: '1', ownerEmail: 'User@Example.com', slug: 'Office', baseUrl: 'https://b.example.com', displayName: null, now: 7 });
+    await dao.create({
+      id: '1',
+      ownerEmail: 'User@Example.com',
+      slug: 'Office',
+      baseUrl: 'https://b.example.com',
+      displayName: null,
+      now: 7,
+    });
     // Owner stored as-given; lookups are case-insensitive.
     await expect(dao.getByOwnerSlug('user@example.com', 'OFFICE')).resolves.toMatchObject({ slug: 'Office' });
     await expect(dao.getById('1')).resolves.toMatchObject({ base_url: 'https://b.example.com' });

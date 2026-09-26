@@ -38,7 +38,9 @@ export function NewBackendView({ showNotice }: { showNotice: (type: 'success' | 
   return (
     <div>
       <ContextBar
-        crumb={<span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">{t('backends.newBackend', 'New Backend')}</span>}
+        crumb={
+          <span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">{t('backends.newBackend', 'New Backend')}</span>
+        }
       />
       <AppPage variant="narrow">
         <Card>

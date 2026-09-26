@@ -167,7 +167,10 @@ describe('rateLimit', () => {
   beforeEach(() => resetRateLimitForTests());
   afterEach(() => resetRateLimitForTests());
 
-  const ctx = (identity: string | undefined) => makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.9' } }) as never as Parameters<ReturnType<typeof rateLimit>>[0] & { _identity?: string };
+  const ctx = (identity: string | undefined) =>
+    makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.9' } }) as never as Parameters<
+      ReturnType<typeof rateLimit>
+    >[0] & { _identity?: string };
 
   it('allows requests up to the limit, then rejects with 429 and Retry-After', async () => {
     const middleware = rateLimit({ windowMs: 60_000, max: 2, keyPrefix: 'test' });

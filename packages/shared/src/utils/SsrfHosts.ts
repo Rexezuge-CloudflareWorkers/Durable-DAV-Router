@@ -51,7 +51,17 @@ function isEncodedNumericHost(host: string): boolean {
 
 function isBlockedIpv6Host(host: string): boolean {
   const h = host.toLowerCase();
-  return (h === '::' || h === '::1' || h.startsWith('::ffff:') || /^::ffff:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/i.test(h) || h.startsWith('fc') || h.startsWith('fd') || /^fe[89ab]/i.test(h) || h.startsWith('ff') || h.startsWith('fe80:'));
+  return (
+    h === '::' ||
+    h === '::1' ||
+    h.startsWith('::ffff:') ||
+    /^::ffff:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/i.test(h) ||
+    h.startsWith('fc') ||
+    h.startsWith('fd') ||
+    /^fe[89ab]/i.test(h) ||
+    h.startsWith('ff') ||
+    h.startsWith('fe80:')
+  );
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -82,7 +92,15 @@ function isLocalhostName(host: string): boolean {
  */
 function isPrivateOrInternalHost(hostname: string): boolean {
   const host = stripTrailingDot(hostname).toLowerCase();
-  if ((host.length === 0) || isLocalhostName(host) || isLoopbackHost(host) || isBlockedIpv6Host(host) || isEncodedNumericHost(host) || host.includes(':')) return true; // any other IPv6 form; all are covered above
+  if (
+    host.length === 0 ||
+    isLocalhostName(host) ||
+    isLoopbackHost(host) ||
+    isBlockedIpv6Host(host) ||
+    isEncodedNumericHost(host) ||
+    host.includes(':')
+  )
+    return true; // any other IPv6 form; all are covered above
   return PRIVATE_IPV4_RANGES.some((range) => range.test(host));
 }
 

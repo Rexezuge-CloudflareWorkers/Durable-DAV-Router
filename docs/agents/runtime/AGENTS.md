@@ -21,11 +21,11 @@ Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS
 
 ## Optional vars (defaults in `ConfigurationDefaults.ts`)
 
-| Group  | Vars (default)                                                                                                                                                     |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| App    | `DEBUG_MODE` (`false`), `SITE_URL` (`""`)                                                                                                                          |
+| Group  | Vars (default)                                                                                           |
+| ------ | -------------------------------------------------------------------------------------------------------- |
+| App    | `DEBUG_MODE` (`false`), `SITE_URL` (`""`)                                                                |
 | Limits | `MAX_BACKENDS_PER_USER` (`20`), `BACKEND_FETCH_TIMEOUT_MS` (`8000`), `ROUTE_CACHE_TTL_SECONDS` (`86400`) |
-| SSRF   | `ALLOW_PRIVATE_BACKEND_HOSTS` (unset)                                                                                                                              |
+| SSRF   | `ALLOW_PRIVATE_BACKEND_HOSTS` (unset)                                                                    |
 
 `ALLOW_PRIVATE_BACKEND_HOSTS` gates whether a user may register a private/loopback backend origin. The router fetches `baseUrl` on the user's behalf with the user's credentials attached, so without this a user could point it at cloud metadata or a private service. Unset follows the environment: allowed outside production (so a co-located `wrangler dev` works), denied in production.
 

@@ -32,7 +32,9 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
         async first<T>(): Promise<T | null> {
           const [v0, v1] = state.values as string[];
           if (state.sql.includes('slug_ci = ?')) {
-            const found = [...rows.values()].find((r) => r.owner_email.toLowerCase() === String(v0).toLowerCase() && r.slug_ci === String(v1));
+            const found = [...rows.values()].find(
+              (r) => r.owner_email.toLowerCase() === String(v0).toLowerCase() && r.slug_ci === String(v1),
+            );
             return (found ?? null) as T | null;
           }
           if (state.sql.includes('WHERE id = ?')) {
@@ -55,12 +57,28 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
           if (state.sql.startsWith('INSERT INTO router_backends')) {
             const [id, ownerEmail, slug, slugCi, baseUrl, displayName, createdAt, updatedAt] = state.values as [
-              string, string, string, string, string, string | null, number, number,
+              string,
+              string,
+              string,
+              string,
+              string,
+              string | null,
+              number,
+              number,
             ];
             rows.set(id, {
-              id, owner_email: ownerEmail, slug, slug_ci: slugCi, base_url: baseUrl, display_name: displayName,
-              created_at: createdAt, updated_at: updatedAt, last_seen_at: null, last_status: null,
-              backend_username: null, backend_username_ci: null,
+              id,
+              owner_email: ownerEmail,
+              slug,
+              slug_ci: slugCi,
+              base_url: baseUrl,
+              display_name: displayName,
+              created_at: createdAt,
+              updated_at: updatedAt,
+              last_seen_at: null,
+              last_status: null,
+              backend_username: null,
+              backend_username_ci: null,
             });
             return { success: true, meta: { changes: 1 } };
           }
@@ -118,7 +136,11 @@ function fakeContext(opts: {
 }): FakeContext {
   const url = opts.url ?? 'https://router.example.com/';
   const headers = new Headers({ 'Content-Type': 'application/json', ...opts.headers });
-  const raw = new Request(url, { method: opts.method ?? 'GET', headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
+  const raw = new Request(url, {
+    method: opts.method ?? 'GET',
+    headers,
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+  });
   const parsed = new URL(url);
   return {
     req: {
@@ -158,7 +180,9 @@ describe('backend + aggregated volume routes', () => {
     registerBackendRoutes(app as never);
     const handler = routes.get('POST /user/backends');
     expect(handler).toBeDefined();
-    const res = await handler!(fakeContext({ method: 'POST', url: 'https://router.example.com/user/backends', env: { ...ENV_BASE, DB: db }, body: {} }));
+    const res = await handler!(
+      fakeContext({ method: 'POST', url: 'https://router.example.com/user/backends', env: { ...ENV_BASE, DB: db }, body: {} }),
+    );
     expect(res.status).toBe(400);
   });
 
@@ -168,7 +192,12 @@ describe('backend + aggregated volume routes', () => {
     registerBackendRoutes(app as never);
     const env = { ...ENV_BASE, DB: db };
     const created = await routes.get('POST /user/backends')!(
-      fakeContext({ method: 'POST', url: 'https://router.example.com/user/backends', env, body: { slug: 'office', baseUrl: 'https://backend.example.com', displayName: 'Office' } }),
+      fakeContext({
+        method: 'POST',
+        url: 'https://router.example.com/user/backends',
+        env,
+        body: { slug: 'office', baseUrl: 'https://backend.example.com', displayName: 'Office' },
+      }),
     );
     expect(created.status).toBe(201);
     const list = await routes.get('GET /user/backends')!(fakeContext({ url: 'https://router.example.com/user/backends', env }));
@@ -183,7 +212,13 @@ describe('backend + aggregated volume routes', () => {
     );
     expect(missing.status).toBe(404);
     const patched = await routes.get('PATCH /user/backends/:slug')!(
-      fakeContext({ method: 'PATCH', url: 'https://router.example.com/user/backends/office', env, params: { slug: 'office' }, body: { displayName: 'HQ' } }),
+      fakeContext({
+        method: 'PATCH',
+        url: 'https://router.example.com/user/backends/office',
+        env,
+        params: { slug: 'office' },
+        body: { displayName: 'HQ' },
+      }),
     );
     expect(patched.status).toBe(200);
     const deleted = await routes.get('DELETE /user/backends/:slug')!(
@@ -199,7 +234,12 @@ describe('backend + aggregated volume routes', () => {
     registerAggregatedVolumeRoutes(app as never);
     const env = { ...ENV_BASE, DB: db };
     await routes.get('POST /user/backends')!(
-      fakeContext({ method: 'POST', url: 'https://router.example.com/user/backends', env, body: { slug: 'office', baseUrl: 'https://backend.example.com' } }),
+      fakeContext({
+        method: 'POST',
+        url: 'https://router.example.com/user/backends',
+        env,
+        body: { slug: 'office', baseUrl: 'https://backend.example.com' },
+      }),
     );
     const agg = await routes.get('GET /user/volumes')!(fakeContext({ url: 'https://router.example.com/user/volumes', env }));
     expect(agg.status).toBe(200);
@@ -215,7 +255,12 @@ describe('backend + aggregated volume routes', () => {
     const env = { ...ENV_BASE, DB: db };
     for (const slug of ['a', 'b']) {
       await routes.get('POST /user/backends')!(
-        fakeContext({ method: 'POST', url: 'https://router.example.com/user/backends', env, body: { slug, baseUrl: `https://${slug}.example.com` } }),
+        fakeContext({
+          method: 'POST',
+          url: 'https://router.example.com/user/backends',
+          env,
+          body: { slug, baseUrl: `https://${slug}.example.com` },
+        }),
       );
     }
     const res = await routes.get('GET /user/volumes/:owner/:volume')!(

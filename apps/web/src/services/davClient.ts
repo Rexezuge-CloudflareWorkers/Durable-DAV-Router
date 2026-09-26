@@ -54,7 +54,13 @@ export async function createDirectory(owner: string, volume: string, innerPath: 
   await davFetch(entryUrl(owner, volume, innerPath, backend), { method: 'MKCOL' });
 }
 
-export async function uploadFile(owner: string, volume: string, innerPath: string, file: File | Blob, backend?: string | null): Promise<void> {
+export async function uploadFile(
+  owner: string,
+  volume: string,
+  innerPath: string,
+  file: File | Blob,
+  backend?: string | null,
+): Promise<void> {
   await davFetch(entryUrl(owner, volume, innerPath, backend), {
     method: 'PUT',
     headers: { 'Content-Type': (file as File).type || 'application/octet-stream' },

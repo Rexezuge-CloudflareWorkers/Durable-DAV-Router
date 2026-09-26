@@ -123,14 +123,22 @@ describe('router authenticated API (integration)', () => {
 
     it('reads a single backend and 404s an unknown slug', async () => {
       const slug = `single-${Date.now()}`;
-      await get('/user/backends', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug, baseUrl: 'https://backend.example.com' }) });
+      await get('/user/backends', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug, baseUrl: 'https://backend.example.com' }),
+      });
       expect((await get(`/user/backends/${slug}`)).status).toBe(200);
       expect((await get('/user/backends/does-not-exist')).status).toBe(404);
     });
 
     it('updates and deletes a backend', async () => {
       const slug = `lifecycle-${Date.now()}`;
-      await get('/user/backends', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug, baseUrl: 'https://backend.example.com' }) });
+      await get('/user/backends', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug, baseUrl: 'https://backend.example.com' }),
+      });
 
       const patched = await get(`/user/backends/${slug}`, {
         method: 'PATCH',
@@ -213,7 +221,9 @@ describe('router authenticated API (integration)', () => {
     // answer, since `lower(col) = lower(?)` and `col = ?` return identical rows.
     // Only the plan differs, and a scan is invisible until the table is large.
     const plan = async (sql: string, ...values: string[]): Promise<string> => {
-      const result = await (env as unknown as TestEnv).DB.prepare(`EXPLAIN QUERY PLAN ${sql}`).bind(...values).all();
+      const result = await (env as unknown as TestEnv).DB.prepare(`EXPLAIN QUERY PLAN ${sql}`)
+        .bind(...values)
+        .all();
       return result.results.map((row) => String((row as { detail?: string }).detail ?? '')).join(' | ');
     };
 
@@ -309,7 +319,9 @@ describe('router authenticated API (integration)', () => {
       // A raw mixed-case insert must fail, not quietly succeed.
       await expect(
         db
-          .prepare('INSERT INTO router_backends (id, owner_email, slug, slug_ci, base_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .prepare(
+            'INSERT INTO router_backends (id, owner_email, slug, slug_ci, base_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          )
           .bind(`mixed-${Date.now()}`, mixed, mixed, mixed.toLowerCase(), 'https://b.example.com', now, now)
           .run(),
       ).rejects.toThrow(/FOREIGN KEY/i);
@@ -336,7 +348,9 @@ describe('router authenticated API (integration)', () => {
       await seedBackend(db, { ownerEmail: OWNER, slug, baseUrl: 'https://b.example.com' });
       // `INSERT OR IGNORE` must be a no-op rather than creating a second row.
       await db
-        .prepare('INSERT OR IGNORE INTO router_backends (id, owner_email, slug, slug_ci, base_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .prepare(
+          'INSERT OR IGNORE INTO router_backends (id, owner_email, slug, slug_ci, base_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
         .bind(`dup-${Date.now()}`, OWNER, slug, slug, 'https://evil.example.com', now, now)
         .run();
       const row = await db.prepare('SELECT COUNT(*) AS cnt FROM router_backends WHERE slug_ci = ?').bind(slug).first<{ cnt: number }>();

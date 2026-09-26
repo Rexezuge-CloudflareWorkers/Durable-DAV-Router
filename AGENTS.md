@@ -14,7 +14,7 @@ Durable-DAV-Router: Cloudflare Workers reverse-proxy router to backend Durable-D
 
 Violating any of these reintroduces a fixed vulnerability; the test suite asserts each one.
 
-- **D1 predicates**: lowercase the *parameter*, never the column. `lower(col)` cannot use an index, so the authenticated hot path becomes a full table scan. `test/integration/api/RouterApi.int.test.ts` checks `EXPLAIN QUERY PLAN` — a wrong predicate and a right one return identical rows, so the plan is the only observable difference.
+- **D1 predicates**: lowercase the _parameter_, never the column. `lower(col)` cannot use an index, so the authenticated hot path becomes a full table scan. `test/integration/api/RouterApi.int.test.ts` checks `EXPLAIN QUERY PLAN` — a wrong predicate and a right one return identical rows, so the plan is the only observable difference.
 - **Probes never carry caller credentials.** The owner-routing candidate set is attacker-influenced (`backend_username` is cached from whatever a backend reports), so `buildProbeHeaders` substitutes a synthetic credential and the fan-out is capped.
 - **`baseUrl` host validation.** The router fetches it with the caller's credentials and can read a response snippet back, so private/loopback/link-local hosts are rejected unless `ALLOW_PRIVATE_BACKEND_HOSTS` opts in.
 - **No blanket `.catch(() => null)` on D1 reads.** Only `isMissingSchemaError` may degrade; everything else becomes a `DatabaseError`, or an outage reads as "not found".
@@ -72,14 +72,15 @@ where the difference would otherwise be invisible.
 
 ## Index
 
-| Area                              | Guide                          |
-| --------------------------------- | ------------------------------ |
-| API worker, auth, routes          | `apps/api/AGENTS.md`           |
-| WebDAV proxy notes                | `packages/webdav/README.md`    |
-| D1/DAO layer                      | `packages/backend-data/AGENTS.md` |
-| Bindings, wrangler, env vars, DI  | `docs/agents/runtime/AGENTS.md` |
-| Tests, thresholds, mock patterns  | `docs/agents/testing/AGENTS.md` |
-```
+| Area                             | Guide                             |
+| -------------------------------- | --------------------------------- |
+| API worker, auth, routes         | `apps/api/AGENTS.md`              |
+| WebDAV proxy notes               | `packages/webdav/README.md`       |
+| D1/DAO layer                     | `packages/backend-data/AGENTS.md` |
+| Bindings, wrangler, env vars, DI | `docs/agents/runtime/AGENTS.md`   |
+| Tests, thresholds, mock patterns | `docs/agents/testing/AGENTS.md`   |
+
+````
 
 ## Commit Policy
 
@@ -102,4 +103,4 @@ Format: `<TYPE>[optional scope]: <description>`
 [Markdown body]
 
 [optional footers]
-```
+````

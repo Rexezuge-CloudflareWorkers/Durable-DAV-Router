@@ -16,7 +16,8 @@ function fakeDao(seed: Array<{ email: string }> = []) {
   };
 }
 
-const svc = (dao: ReturnType<typeof fakeDao>) => new UserService({ DB: {} as D1Queryable }, { userDAO: () => Promise.resolve(dao as unknown as UserDAO) });
+const svc = (dao: ReturnType<typeof fakeDao>) =>
+  new UserService({ DB: {} as D1Queryable }, { userDAO: () => Promise.resolve(dao as unknown as UserDAO) });
 
 describe('UserService.upsertUser', () => {
   it('stores the email lowercased', async () => {

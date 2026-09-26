@@ -36,10 +36,20 @@ class FakeKv {
     this.store.delete(key);
   }
 
-  public async list(options: { prefix: string; limit?: number; cursor?: string }): Promise<{ keys: Array<{ name: string }>; list_complete: boolean }> {
+  public async list(options: {
+    prefix: string;
+    limit?: number;
+    cursor?: string;
+  }): Promise<{ keys: Array<{ name: string }>; list_complete: boolean }> {
     this.guard('list');
     const limit = Math.min(options.limit ?? 1000, this.listPageSize);
-    return { keys: [...this.store.keys()].filter((k) => k.startsWith(options.prefix)).slice(0, limit).map((name) => ({ name })), list_complete: true };
+    return {
+      keys: [...this.store.keys()]
+        .filter((k) => k.startsWith(options.prefix))
+        .slice(0, limit)
+        .map((name) => ({ name })),
+      list_complete: true,
+    };
   }
 }
 

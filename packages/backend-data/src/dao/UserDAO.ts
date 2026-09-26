@@ -41,7 +41,10 @@ class UserDAO extends BaseDAO {
       // Plain `?` placeholders: `lower(?)` here would still be index-safe, but
       // normalizing once up front keeps this consistent with `getByEmail`.
       const placeholders = chunk.map(() => '?').join(', ');
-      const result = await this.database.prepare(`SELECT * FROM users WHERE email IN (${placeholders})`).bind(...chunk).all<UserRow>();
+      const result = await this.database
+        .prepare(`SELECT * FROM users WHERE email IN (${placeholders})`)
+        .bind(...chunk)
+        .all<UserRow>();
       const rows = result.results ?? [];
       for (const row of rows) out.push(row);
     }
