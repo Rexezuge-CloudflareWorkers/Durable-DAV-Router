@@ -138,11 +138,38 @@ describe('proxy header helpers', () => {
     expect(out.get('X-Custom')).toBeNull();
   });
 
+  it('forwards Cookie/User-Agent/Translate/Brief and strips X-Backend', () => {
+    const req = new Request('https://router.example.com/a/b', {
+      method: 'PROPFIND',
+      headers: {
+        Authorization: 'Basic eA==',
+        Cookie: 'CF_Authorization=abc',
+        'User-Agent': 'Cyberduck/9.0',
+        Translate: 'f',
+        Brief: 'T',
+        'X-Backend': 'office',
+      },
+    });
+    const out = buildProxiedHeaders(req, 'https://router.example.com', 'https://backend.example.com');
+    expect(out.get('Cookie')).toBe('CF_Authorization=abc');
+    expect(out.get('User-Agent')).toBe('Cyberduck/9.0');
+    expect(out.get('Translate')).toBe('f');
+    expect(out.get('Brief')).toBe('T');
+    expect(out.get('X-Backend')).toBeNull();
+  });
+
   it('filters response headers to the allowlist', () => {
     const incoming = new Headers({ ETag: '"1"', 'X-Internal': 'no', 'Content-Type': 'text/plain' });
     const out = filterProxiedResponseHeaders(incoming);
     expect(out.get('ETag')).toBe('"1"');
     expect(out.get('X-Internal')).toBeNull();
+  });
+
+  it('forwards MS-Author-Via for Windows clients', () => {
+    const incoming = new Headers({ 'MS-Author-Via': 'DAV', DAV: '1, 2', Allow: 'OPTIONS, GET' });
+    const out = filterProxiedResponseHeaders(incoming);
+    expect(out.get('MS-Author-Via')).toBe('DAV');
+    expect(out.get('DAV')).toBe('1, 2');
   });
 
   it('reads proxy timeout with default fallback', () => {

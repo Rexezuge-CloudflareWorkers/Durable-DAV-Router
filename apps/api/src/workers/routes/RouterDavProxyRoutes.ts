@@ -5,7 +5,7 @@ import {
   fetchWithTimeout,
   filterProxiedResponseHeaders,
   getProxyTimeoutMs,
-  joinBackendUrl,
+  joinBackendUrlWithoutSelector,
   resolveBackend,
   stripSlashes,
 } from '@durable-dav-router/backend-services/router';
@@ -30,6 +30,7 @@ async function handleProxy(
   owner: string,
   volume: string,
   inner: string,
+  trailingSlash: boolean,
 ): Promise<Response> {
   const method = c.req.raw.method;
   if (!SUPPORT_METHODS.includes(method)) {
@@ -39,46 +40,54 @@ async function handleProxy(
     );
   }
   const scope = BaseRoute.getScope(c as never);
-  // Router stores no user rows for anonymous public reads; only authenticated
-  // management calls need an email. Anonymous DAV passes through with no
-  // `/user/*` identity — the backend enforces public-vs-private itself.
+  // WebDAV proxy is owner-routed, not requester-routed. Native clients only
+  // send per-bucket Basic `Authorization` — they never carry Cloudflare Access
+  // JWT — so requiring an Access identity here breaks every client (401).
+  // Resolve the volume owner's backends via username, then let the backend
+  // enforce public-vs-private itself with the verbatim-proxied credentials.
+  let ownerEmail: string | null = null;
+  try {
+    const user = await scope.get(Tokens.UserService).getByUsername(owner);
+    ownerEmail = user?.email ?? null;
+  } catch {
+    ownerEmail = null;
+  }
+  // Fallback to the global namespace registry (covers legacy rows without a
+  // `users.username` and renamed-away handles, which stay reserved).
+  if (!ownerEmail) {
+    try {
+      const nsDao = await scope.get(Tokens.NamespaceDAO)();
+      const ns = await (nsDao as { get: (k: string) => Promise<{ user_email?: string | null } | null> }).get(
+        owner.toLowerCase(),
+      ).catch(() => null);
+      ownerEmail = ns?.user_email ?? null;
+    } catch {
+      ownerEmail = null;
+    }
+  }
+  if (!ownerEmail) {
+    return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
+  }
   let backends: Array<{ slug: string; base_url: string }> = [];
   try {
-    const email = await scope
-      .get(Tokens.AccessAuthService)
-      .getAuthenticatedUserEmail(c.req.raw, (c as { executionCtx?: unknown }).executionCtx as never)
-      .catch(() => null);
-    if (email) {
-      await scope.get(Tokens.UserService).upsertUser(email).catch(() => undefined);
-      backends = await scope.get(Tokens.BackendService).listBackends(email).catch(() => []);
-    }
+    backends = await scope.get(Tokens.BackendService).listBackends(ownerEmail).catch(() => []);
   } catch {
     backends = [];
   }
-  // Anonymous callers cannot enumerate private backends. They must address the
-  // backend explicitly via `?backend=` host mapping is out of scope for the
-  // flat-path scheme — for now anonymous requires the backend to be hinted and
-  // resolvable without identity is unsupported, so fail closed with 401 unless
-  // the request carries an authenticated identity above.
   if (backends.length === 0) {
-    return applyCors(
-      Response.json({ Exception: { Type: 'Unauthorized', Message: 'Sign in to route WebDAV requests' } }, {
-        status: 401,
-        headers: { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Basic realm="durable-dav-router"' },
-      }),
-      c.req.raw,
-    );
+    return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
   }
   const resolved = resolveBackend(backends as never, explicitBackendSlug(c.req.raw));
   if (resolved.kind === 'not-found') {
     return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
   }
   if (resolved.kind === 'ambiguous') {
+    // Unauthenticated WebDAV callers get no slug enumeration — they already
+    // know their slugs from the authenticated dashboard (`/user/volumes`).
     return applyCors(
       Response.json(
         {
           Exception: { Type: 'Conflict', Message: 'Multiple backends match; retry with ?backend=<slug>' },
-          backends: resolved.backends.map((b) => b.slug),
         },
         { status: 409, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -87,9 +96,11 @@ async function handleProxy(
   }
   const backend = resolved.backend;
   const incomingUrl = new URL(c.req.raw.url);
-  const suffix = inner ? `/${inner}` : '';
-  // Preserve sub-path encoding segment-wise; backend origin join is verbatim.
-  const target = joinBackendUrl(backend.base_url, `/${owner}/${volume}${suffix}${incomingUrl.search}`);
+  const encodedBase = `/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`;
+  let suffix = inner ? `/${inner}` : '';
+  if (trailingSlash && suffix !== '/') suffix = suffix ? `${suffix}/` : '/';
+  // Never leak the router `?backend=` selector to the backend.
+  const target = joinBackendUrlWithoutSelector(backend.base_url, `${encodedBase}${suffix}`, incomingUrl.search);
   const routerOrigin = incomingUrl.origin;
   const headers = buildProxiedHeaders(c.req.raw, routerOrigin, backend.base_url);
   const hasBody = !['GET', 'HEAD', 'OPTIONS'].includes(method);
@@ -98,7 +109,13 @@ async function handleProxy(
   try {
     upstream = await fetchWithTimeout(
       new Request(target),
-      { method, headers, body: hasBody ? c.req.raw.body : undefined, ...(hasBody && { duplex: 'half' }) },
+      {
+        method,
+        headers,
+        redirect: 'manual',
+        body: hasBody ? c.req.raw.body : undefined,
+        ...(hasBody && { duplex: 'half' }),
+      },
       timeoutMs,
     );
   } catch (error) {
@@ -115,15 +132,20 @@ function registerRouterDavProxyRoutes(app: App): void {
     const owner = c.req.param('owner') ?? '';
     const volume = c.req.param('volume') ?? '';
     const url = new URL(c.req.url);
-    const base = `/${owner}/${volume}`;
-    const suffix = url.pathname.startsWith(base) ? url.pathname.slice(base.length) : '';
-    const inner = stripSlashes(suffix);
-    return handleProxy(c, owner, volume, inner);
+    // Derive the inner sub-path from encoded segments so `%20`/unicode names
+    // survive verbatim; `c.req.param` values are decoded and can't be used
+    // for prefix slicing.
+    const segments = url.pathname.split('/');
+    const rest = segments.length > 3 ? segments.slice(3).join('/') : '';
+    const inner = stripSlashes(rest);
+    const trailingSlash = url.pathname.endsWith('/');
+    return handleProxy(c, owner, volume, inner, trailingSlash);
   });
   app.on(methods, '/:owner/:volume', async (c) => {
     const owner = c.req.param('owner') ?? '';
     const volume = c.req.param('volume') ?? '';
-    return handleProxy(c, owner, volume, '');
+    const trailingSlash = new URL(c.req.url).pathname.endsWith('/');
+    return handleProxy(c, owner, volume, '', trailingSlash);
   });
 }
 
