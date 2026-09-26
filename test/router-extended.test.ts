@@ -27,15 +27,15 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
           const [v0, v1] = state.values as string[];
           if (state.sql.includes('slug_ci = ?')) {
             const found = [...store.values()].find(
-              (r) => r.owner_email.toLowerCase() === String(v0).toLowerCase() && r.slug_ci === String(v1),
+              (r) => r.owner_email.toLowerCase() === v0.toLowerCase() && r.slug_ci === v1,
             );
             return (found ?? null) as T | null;
           }
           if (state.sql.includes('WHERE id = ?')) {
-            return (store.get(String(v0)) ?? null) as T | null;
+            return (store.get(v0) ?? null) as T | null;
           }
           if (state.sql.includes('COUNT(*)')) {
-            const n = [...store.values()].filter((r) => r.owner_email.toLowerCase() === String(v0).toLowerCase()).length;
+            const n = [...store.values()].filter((r) => r.owner_email.toLowerCase() === v0.toLowerCase()).length;
             return { cnt: n } as T;
           }
           return null;
@@ -43,10 +43,10 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
           if (state.sql.includes('backend_username_ci = ?')) {
-            const results = [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === String(v0).toLowerCase());
+            const results = [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === v0.toLowerCase());
             return { results: results as T[] };
           }
-          const results = [...store.values()].filter((r) => r.owner_email.toLowerCase() === String(v0).toLowerCase());
+          const results = [...store.values()].filter((r) => r.owner_email.toLowerCase() === v0.toLowerCase());
           return { results: results as T[] };
         },
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
@@ -78,13 +78,9 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
             return { success: true, meta: { changes: 1 } };
           }
           if (state.sql.startsWith('UPDATE router_backends')) {
-            const id = String(state.values[state.values.length - 1]);
+            const id = String(state.values.at(-1));
             const cur = store.get(id);
             if (cur) {
-              if (state.sql.includes('base_url = ?')) {
-                const idx = state.sql.indexOf('base_url = ?');
-                void idx;
-              }
               store.set(id, { ...cur, updated_at: Date.now() });
             }
             return { success: true, meta: { changes: 1 } };

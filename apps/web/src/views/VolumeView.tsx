@@ -16,8 +16,27 @@ import { useVolumeMutations } from './volume/useVolumeMutations';
 import { VolumeFileList } from './volume/VolumeFileList';
 import { VolumeFileModals } from './volume/VolumeFileModals';
 
+/**
+ * Normalise a `?path=` query value into a safe volume-relative path.
+ *
+ * `?path=` is user-supplied (share links, hand-edited URLs) and is fed straight
+ * into `davClient.entryUrl`, so it must be validated here rather than trusted.
+ * `stripSlashes` alone was not enough:
+ *
+ * - `encodeURIComponent` does not encode `.`, so `..` segments survived into
+ *   the request URL and the browser normalised them out of the volume base —
+ *   `?path=../../admin` issued a request to `/user/volumes/o/admin`.
+ * - Empty segments (`a//b`) produce a guaranteed 400 from the server's
+ *   `isValidInnerPath`.
+ *
+ * Anything that is not a plain non-empty, non-dot segment is dropped, so the
+ * worst case is that the path silently becomes the volume root.
+ */
 function cleanPath(raw: string | null): string {
-  return stripSlashes(raw ?? '');
+  const segments = stripSlashes(raw ?? '')
+    .split('/')
+    .filter((segment) => segment !== '' && segment !== '.' && segment !== '..');
+  return segments.every((segment) => !/[/\\]/.test(segment)) ? segments.join('/') : '';
 }
 
 // Thin composition root: routing + hook slices + presentational children.

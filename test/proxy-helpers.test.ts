@@ -3,7 +3,6 @@ import {
   stripSlashes,
   stripTrailingSlashes,
   joinBackendUrl,
-  joinBackendUrlWithoutSelector,
   stripBackendSelector,
   buildProxiedHeaders,
   buildProbeHeaders,
@@ -14,7 +13,6 @@ import {
   getProxyTimeoutMs,
   truncateSnippet,
   describeBackendFailure,
-  classifyProbeStatus,
   probeCandidateBackends,
   PROBE_AUTHORIZATION,
   MAX_PROBE_CANDIDATES,
@@ -271,7 +269,7 @@ describe('resolveBackend', () => {
   });
 
   it('ignores an empty or whitespace selector', () => {
-    for (const slug of ['', '   ', null]) {
+    for (const slug of ['', ' '.repeat(3), null]) {
       expect(resolveBackend([a, b], slug).kind, JSON.stringify(slug)).toBe('ambiguous');
     }
   });
@@ -282,7 +280,8 @@ describe('fetchWithTimeout', () => {
 
   it('returns the upstream response on success', async () => {
     vi.stubGlobal('fetch', async () => new Response('ok', { status: 207 }));
-    expect((await fetchWithTimeout(new Request('https://x/'), {}, 1000)).status).toBe(207);
+    const res = await fetchWithTimeout(new Request('https://x/'), {}, 1000);
+    expect(res.status).toBe(207);
   });
 
   it('aborts and rejects when the backend exceeds the timeout', async () => {
@@ -290,7 +289,13 @@ describe('fetchWithTimeout', () => {
       'fetch',
       (_i: unknown, init?: RequestInit) =>
         new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+          init?.signal?.addEventListener('abort', () => {
+            // A real aborted `fetch` rejects with a `DOMException` named
+            // `AbortError`, which is how a caller tells an abort from a
+            // transport failure. Assigning `.name` on a plain `Error` would
+            // model the same signal less faithfully.
+            reject(new DOMException('aborted', 'AbortError'));
+          });
         }),
     );
     await expect(fetchWithTimeout(new Request('https://x/'), {}, 20)).rejects.toThrow();
@@ -322,7 +327,7 @@ describe('getProxyTimeoutMs', () => {
 describe('failure diagnostics', () => {
   it('flattens whitespace and truncates a long body', () => {
     expect(truncateSnippet('a\n\n  b   c')).toBe('a b c');
-    expect(truncateSnippet('x'.repeat(300)).length).toBe(201);
+    expect(truncateSnippet('x'.repeat(300))).toHaveLength(201);
   });
 
   it('leaves a short body untouched', () => {
@@ -376,19 +381,22 @@ describe('probeCandidateBackends', () => {
 
   it('reports ambiguous when several backends have it', async () => {
     stubStatuses({ 'https://a.com': 207, 'https://b.com': 207 });
-    expect((await probeCandidateBackends({ ...input, candidates: [a, b] })).kind).toBe('ambiguous');
+    const result = await probeCandidateBackends({ ...input, candidates: [a, b] });
+    expect(result.kind).toBe('ambiguous');
   });
 
   it('reports not-found when no backend has it', async () => {
     stubStatuses({ 'https://a.com': 404, 'https://b.com': 410 });
-    expect((await probeCandidateBackends({ ...input, candidates: [a, b] })).kind).toBe('not-found');
+    const result = await probeCandidateBackends({ ...input, candidates: [a, b] });
+    expect(result.kind).toBe('not-found');
   });
 
   it('reports unavailable when a candidate is indeterminate', async () => {
     // 502 is neither a hit nor a miss, so the honest answer is "cannot tell",
     // which the caller turns into a 502 rather than a false 404.
     stubStatuses({ 'https://a.com': 502, 'https://b.com': 502 });
-    expect((await probeCandidateBackends({ ...input, candidates: [a, b] })).kind).toBe('unavailable');
+    const result = await probeCandidateBackends({ ...input, candidates: [a, b] });
+    expect(result.kind).toBe('unavailable');
   });
 
   it('routes to a lone auth-gated candidate so the client sees the real challenge', async () => {
@@ -400,14 +408,16 @@ describe('probeCandidateBackends', () => {
 
   it('reports ambiguous for several auth-gated candidates', async () => {
     stubStatuses({ 'https://a.com': 401, 'https://b.com': 403 });
-    expect((await probeCandidateBackends({ ...input, candidates: [a, b] })).kind).toBe('ambiguous');
+    const result = await probeCandidateBackends({ ...input, candidates: [a, b] });
+    expect(result.kind).toBe('ambiguous');
   });
 
   it('does not treat an Access login redirect as proof the volume exists', async () => {
     // A real backend behind Access answers 302 for an unauthenticated probe.
     // Reading that as a hit pinned a route to the wrong origin for 24h.
     stubStatuses({ 'https://a.com': 302, 'https://b.com': 404 });
-    expect((await probeCandidateBackends({ ...input, candidates: [a, b] })).kind).toBe('unavailable');
+    const result = await probeCandidateBackends({ ...input, candidates: [a, b] });
+    expect(result.kind).toBe('unavailable');
   });
 
   it('survives a candidate whose fetch throws', async () => {

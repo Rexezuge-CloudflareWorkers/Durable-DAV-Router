@@ -19,7 +19,10 @@ export default tseslint.config(
       'apps/api/src/generated/**',
       'coverage/**',
       'node_modules/**',
-      'test/**',
+      // `test/**` was ignored here, so ~200 KB of test code was never linted even
+      // once. `test` is now a workspace project, so it is type-checked and linted
+      // like everything else. Generated `worker-configuration.d.ts` and the
+      // build artifacts under `apps/web/dist` stay ignored above.
     ],
   },
 
@@ -152,6 +155,44 @@ export default tseslint.config(
     files: ['apps/web/**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks },
     rules: reactHooks.configs['recommended-latest'].rules,
+  },
+
+  // --- Test suite ---
+  //
+  // `test/**` was excluded from linting entirely until this config change, so
+  // ~200 KB of test code had accumulated violations that nothing was reporting.
+  // This block does two things: it puts the suite back under the same rules as
+  // the rest of the workspace, and it switches off the handful of rules whose
+  // findings are structural artefacts of test code rather than defects.
+  //
+  // Every relaxation below is narrow and justified. It does not disable
+  // correctness rules; the unused-variable, dead-store, regex and sorting
+  // findings in the suite are real and are fixed, not suppressed.
+  {
+    files: ['test/**/*.{ts,tsx,mts}'],
+    rules: {
+      // `it('…', async () => …)` is the Vitest idiom: the runner consumes the
+      // returned promise and reports a rejected one as a failed test. Flagging
+      // it as an unhandled promise is a false positive in this one position.
+      '@typescript-eslint/no-misused-promises': [
+        'error',
+        { checksVoidReturn: { arguments: false, attributes: false } },
+      ],
+      // A test asserting request routing has to name `http://` hosts, and a
+      // proxy test has to name a loopback upstream. Both are the subject
+      // matter, not leaked configuration.
+      'sonarjs/no-clear-text-protocols': 'off',
+      'sonarjs/no-hardcoded-ip': 'off',
+      // Must stay off here, and this is not a style preference.
+      // `unicorn/prefer-https` rewrites `http://` to `https://` *inside string
+      // literals*, and `--fix` applies it silently. In `router-backends.test.ts`
+      // that turned
+      // `expect(() => normalizeBaseUrl('http://dav.example.com')).toThrow()`
+      // into an assertion against `https://` — making the test claim that a
+      // valid public origin is rejected, which is false. A test covering the
+      // plaintext-origin rejection path has to be able to name it.
+      'unicorn/prefer-https': 'off',
+    },
   },
 
   // --- Regexp: static analysis for regular expressions ---

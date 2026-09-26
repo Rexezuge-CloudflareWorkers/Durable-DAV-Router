@@ -6,7 +6,8 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, fallback?: string, vars?: Record<string, string>) => {
       let text = fallback ?? key;
-      for (const [k, v] of Object.entries(vars ?? {})) text = text.replace(`{{${k}}}`, v);
+      const entries = Object.entries(vars ?? {});
+      for (const [k, v] of entries) text = text.replace(`{{${k}}}`, v);
       return text;
     },
   }),

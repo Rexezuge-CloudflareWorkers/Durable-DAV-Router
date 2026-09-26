@@ -1,0 +1,32 @@
+{
+  "name": "@durable-dav-router/test",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "//": "This directory is a workspace project so `pnpm -r typecheck` and `pnpm run lint` actually reach it. It sat outside the workspace while holding roughly 200 KB of test code, so a type error or lint violation in a test only surfaced when that test happened to run — and `eslint.config.mjs` ignored `test/**` outright, so it was never linted at all.",
+  "dependencies": {
+    "@durable-dav-router/backend-data": "workspace:*",
+    "@durable-dav-router/backend-errors": "workspace:*",
+    "@durable-dav-router/backend-runtime": "workspace:*",
+    "@durable-dav-router/backend-services": "workspace:*",
+    "@durable-dav-router/shared": "workspace:*",
+    "@durable-dav-router/webdav": "workspace:*",
+    "vitest": "4.1.11"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20260922.1",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.0"
+  }
+}

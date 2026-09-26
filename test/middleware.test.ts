@@ -4,7 +4,12 @@ import { rateLimit, clientIp, resetRateLimitForTests, getRateLimitBucketCountFor
 import { RATE_LIMIT_DEFS } from '../apps/api/src/middleware/rateLimitConfig';
 import { UnauthorizedError, ForbiddenError, BadRequestError, RateLimitedError } from '@durable-dav-router/backend-errors';
 
-type Ctx = Parameters<Parameters<typeof securityHeaders>[0]>[0];
+// `securityHeaders()` takes no arguments and returns the middleware, so the
+// context type is the middleware's *first* parameter. Reaching for
+// `Parameters<typeof securityHeaders>[0]` instead resolved to the empty
+// parameter tuple of the factory, which collapsed `Ctx` to `never` and turned
+// every `c.get(...)` below into a type error.
+type Ctx = Parameters<ReturnType<typeof securityHeaders>>[0];
 
 function makeCtx(url: string, options: { method?: string; contentType?: string; headers?: Record<string, string> } = {}) {
   const resHeaders = new Headers();
@@ -17,7 +22,7 @@ function makeCtx(url: string, options: { method?: string; contentType?: string; 
       set.set(key.toLowerCase(), value);
     },
     json(data: unknown, status = 200, headers?: Record<string, string>) {
-      return new Response(JSON.stringify(data), { status, headers });
+      return Response.json(data, { status, headers });
     },
     get(key: string) {
       return set.get(key) ?? null;
@@ -118,7 +123,7 @@ describe('rateLimit registration', () => {
     expect(() => rateLimit({ windowMs: 1000, max: 0, keyPrefix: 'k' })).toThrow(/max/);
     expect(() => rateLimit({ windowMs: 1000, max: -1, keyPrefix: 'k' })).toThrow(/max/);
     expect(() => rateLimit({ windowMs: 1000, max: 1, keyPrefix: '' })).toThrow(/keyPrefix/);
-    expect(() => rateLimit({ windowMs: 1000, max: 1, keyPrefix: '   ' })).toThrow(/keyPrefix/);
+    expect(() => rateLimit({ windowMs: 1000, max: 1, keyPrefix: ' '.repeat(3) })).toThrow(/keyPrefix/);
   });
 
   it('accepts valid options', () => {
@@ -166,11 +171,6 @@ describe('clientIp', () => {
 describe('rateLimit', () => {
   beforeEach(() => resetRateLimitForTests());
   afterEach(() => resetRateLimitForTests());
-
-  const ctx = (identity: string | undefined) =>
-    makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.9' } }) as never as Parameters<
-      ReturnType<typeof rateLimit>
-    >[0] & { _identity?: string };
 
   it('allows requests up to the limit, then rejects with 429 and Retry-After', async () => {
     const middleware = rateLimit({ windowMs: 60_000, max: 2, keyPrefix: 'test' });

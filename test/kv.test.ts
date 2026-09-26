@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { KV_DOMAINS, buildKvKey, clampTtl, utf8ByteLength, fnv1aHex, KV_MIN_TTL_SECONDS } from '@durable-dav-router/backend-runtime/kv';
 
@@ -69,7 +69,7 @@ describe('KV key construction', () => {
   it('trims segments and rejects an empty one', () => {
     expect(buildKvKey('davRoute', ['  owner  '])).toBe('davRoute:v1:owner');
     expect(() => buildKvKey('davRoute', [''])).toThrow(/must not be empty/);
-    expect(() => buildKvKey('davRoute', ['   '])).toThrow(/must not be empty/);
+    expect(() => buildKvKey('davRoute', [' '.repeat(3)])).toThrow(/must not be empty/);
   });
 
   it('requires at least one part', () => {
@@ -129,8 +129,8 @@ describe('TTL clamping', () => {
   });
 
   it('returns undefined for a non-finite value so the write is skipped', () => {
-    expect(clampTtl(Number.NaN, 'davRoute')).toBeUndefined();
-    expect(clampTtl(Number.POSITIVE_INFINITY, 'davRoute')).toBeUndefined();
+    expect(clampTtl(NaN, 'davRoute')).toBeUndefined();
+    expect(clampTtl(Infinity, 'davRoute')).toBeUndefined();
   });
 });
 
@@ -196,7 +196,7 @@ describe('KvCache writes', () => {
     // `{expirationTtl: undefined}` to the platform is not the same as omitting
     // the option.
     const fake = new FakeKv();
-    await new KvCache(fake as never).putText('davRoute', ['a'], 'v', { ttlSeconds: Number.NaN });
+    await new KvCache(fake as never).putText('davRoute', ['a'], 'v', { ttlSeconds: NaN });
     expect(fake.puts[0]?.ttl).toBeUndefined();
     expect(fake.store.has('davRoute:v1:a')).toBe(true);
   });

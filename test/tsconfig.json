@@ -1,11 +1,18 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "types": ["vitest/globals"],
+    // `types` replaces the automatic `@types/*` inclusion rather than adding to
+    // it, so every ambient global this suite relies on has to be listed:
+    // `vitest/globals` for the `describe`/`it`/`expect` globals, the Cloudflare
+    // workers types for `D1Database`/`ExecutionContext`, and `vite/client` for
+    // `import.meta.glob` in `apps/web/src/i18n.ts`. Omitting any of them made
+    // the whole directory fail to type-check the moment it entered the
+    // workspace — which is why it was never in the workspace to begin with.
+    "types": ["vitest/globals", "@cloudflare/workers-types", "vite/client"],
+    // `web-danger-confirm.test.tsx` renders JSX.
+    "jsx": "react-jsx",
     "paths": {
       "@/*": ["../apps/api/src/*"],
-      "@durable-dav-router/background": ["../apps/background/src"],
-      "@durable-dav-router/background/*": ["../apps/background/src/*"],
       "@durable-dav-router/backend-data": ["../packages/backend-data/src"],
       "@durable-dav-router/backend-data/*": ["../packages/backend-data/src/*"],
       "@durable-dav-router/backend-errors": ["../packages/backend-errors/src"],
@@ -15,8 +22,16 @@
       "@durable-dav-router/backend-services": ["../packages/backend-services/src"],
       "@durable-dav-router/backend-services/*": ["../packages/backend-services/src/*"],
       "@durable-dav-router/shared": ["../packages/shared/src"],
-      "@durable-dav-router/shared/*": ["../packages/shared/src/*"]
+      "@durable-dav-router/shared/*": ["../packages/shared/src/*"],
+      "@durable-dav-router/webdav": ["../packages/webdav/src"],
+      "@durable-dav-router/webdav/*": ["../packages/webdav/src/*"]
     }
   },
-  "include": ["**/*.ts", "../src/**/*.ts"]
+  "//": "The `@durable-dav-router/background` entries that used to live here pointed at `../apps/background/src`, an app this repository does not have. They resolved to nothing and would have silently shadowed a real import.",
+  "include": [
+    "../worker-configuration.d.ts",
+    "../packages/backend-runtime/src/env.d.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ]
 }

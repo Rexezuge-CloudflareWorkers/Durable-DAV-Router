@@ -243,17 +243,21 @@ describe('BackendService with fakes', () => {
       ) => {
         const cur = store.get(id);
         if (!cur) return;
+        // Computed before the record so the nested ternary does not carry the
+        // `undefined`-means-"unchanged" rule *and* the lowercase-or-null rule at
+        // the same time.
+        const usernameCi =
+          patch.backendUsername === undefined
+            ? cur.backend_username_ci
+            : patch.backendUsername === null
+              ? null
+              : patch.backendUsername.toLowerCase();
         store.set(id, {
           ...cur,
           base_url: patch.baseUrl ?? cur.base_url,
-          display_name: patch.displayName !== undefined ? patch.displayName : cur.display_name,
-          backend_username: patch.backendUsername !== undefined ? patch.backendUsername : cur.backend_username,
-          backend_username_ci:
-            patch.backendUsername !== undefined
-              ? patch.backendUsername
-                ? patch.backendUsername.toLowerCase()
-                : null
-              : cur.backend_username_ci,
+          display_name: patch.displayName ?? cur.display_name,
+          backend_username: patch.backendUsername ?? cur.backend_username,
+          backend_username_ci: usernameCi,
           updated_at: patch.now,
         });
       },

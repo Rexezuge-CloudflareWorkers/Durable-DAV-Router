@@ -1,6 +1,11 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+  # The test suite is a workspace project so `pnpm -r typecheck` and
+  # `pnpm run lint` actually reach it. It sat outside the workspace while
+  # holding ~200 KB of test code, so a type error in a test surfaced only when
+  # that test happened to run, and eslint ignored `test/**` outright.
+  - 'test'
 allowBuilds:
   esbuild: true
   sharp: true

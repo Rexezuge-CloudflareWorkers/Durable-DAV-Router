@@ -102,7 +102,7 @@ describe('DEV_AUTH_EMAIL strategy', () => {
   });
 
   it('ignores an empty or whitespace value', async () => {
-    for (const value of ['', '   ']) {
+    for (const value of ['', ' '.repeat(3)]) {
       const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: value }, [DEFAULT_ACCESS_AUTH_STRATEGIES[1]]);
       await expect(service.getAuthenticatedUserEmail(req()), JSON.stringify(value)).rejects.toBeInstanceOf(UnauthorizedError);
     }
@@ -138,7 +138,7 @@ describe('Access binding strategy', () => {
 
   it('refuses a missing or empty identity', async () => {
     const service = new AccessAuthService({ ENVIRONMENT: 'production' });
-    for (const email of [null, undefined, '', '   ']) {
+    for (const email of [null, undefined, '', ' '.repeat(3)]) {
       await expect(service.getAuthenticatedUserEmail(req(), identityCtx(email)), JSON.stringify(email)).rejects.toBeInstanceOf(
         UnauthorizedError,
       );
