@@ -127,10 +127,51 @@ function getProxyTimeoutMs(env: unknown): number {
   }
 }
 
+function stripBackendSelector(search: string): string {
+  if (!search) return '';
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  params.delete('backend');
+  const rest = params.toString();
+  return rest ? `?${rest}` : '';
+}
+
+function joinBackendUrlWithoutSelector(baseUrl: string, pathname: string, search: string): string {
+  return joinBackendUrl(baseUrl, `${pathname}${stripBackendSelector(search)}`);
+}
+
+function truncateSnippet(value: string, max = 200): string {
+  const flat = value.replaceAll(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+function describeBackendFailure(status: number, bodySnippet: string): string {
+  const snippet = bodySnippet ? ` — ${truncateSnippet(bodySnippet)}` : '';
+  if (status >= 520 && status <= 527) {
+    return (
+      `backend responded ${status} (Cloudflare could not reach the backend origin; ` +
+      `verify baseUrl DNS/TLS, backend deployment is running, and Access/firewall allows Worker egress)${snippet}`
+    );
+  }
+  if ([301, 302, 303, 307, 308].includes(status)) {
+    return (
+      `backend responded ${status} (redirect — often a Cloudflare Access login redirect; ` +
+      `check backend Access policy and forwarded Cf-Access-Jwt-Assertion/Cookie)${snippet}`
+    );
+  }
+  return status === 401 || status === 403 ? (
+      `backend responded ${status} (backend rejected router credentials; ` +
+      `check Access JWT audience and forwarded Authorization/Cookie)${snippet}`
+    ) : `backend responded ${status}${snippet}`;
+}
+
 export {
   PASSTHROUGH_REQUEST_HEADERS,
   PASSTHROUGH_RESPONSE_HEADERS,
   joinBackendUrl,
+  joinBackendUrlWithoutSelector,
+  stripBackendSelector,
+  describeBackendFailure,
+  truncateSnippet,
   rewriteDestinationForBackend,
   buildProxiedHeaders,
   filterProxiedResponseHeaders,

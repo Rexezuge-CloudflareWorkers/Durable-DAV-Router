@@ -5,7 +5,7 @@ import { FolderArchive, Plus, Server } from 'lucide-react';
 import type { AggregatedVolume, BackendHealth, RouterBackend } from '../types';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
 import { listMyVolumes } from '../services/volumeService';
-import { listBackends } from '../services/backendService';
+import { listBackends, probeBackend } from '../services/backendService';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 import { AppPage } from '../components/layout/AppPage';
@@ -23,6 +23,7 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
   const [health, setHealth] = useState<BackendHealth[]>([]);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  const [probing, setProbing] = useState<string | null>(null);
 
   useEffect(() => {
     const run = async () => {
@@ -97,15 +98,46 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
           <ul className="divide-y divide-[var(--color-border)]">
             {backends.map((b) => {
               const h = health.find((x) => x.slug === b.slug);
+              const statusText = h ? (h.ok ? '● ok' : `● ${h.status ?? ''} ${h.error ?? 'unreachable'}`.trim()) : b.lastStatus ? `● ${b.lastStatus}` : '● unknown';
+              const showProbe = h && !h.ok;
               return (
-                <li key={b.slug} className="py-3 flex items-center justify-between gap-3 first:pt-0 last:pb-0">
-                  <div className="min-w-0">
+                <li key={b.slug} className="py-3 flex items-start justify-between gap-3 first:pt-0 last:pb-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium truncate">{b.displayName ? `${b.displayName} (${b.slug})` : b.slug}</p>
                     <p className="text-xs text-[var(--color-text-muted)] truncate">{b.baseUrl}</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] break-words" title={statusText}>
+                      {statusText}
+                    </p>
                   </div>
-                  <span className="text-xs text-[var(--color-text-secondary)]">
-                    {h ? (h.ok ? '● ok' : `● ${h.error ?? h.status ?? 'unreachable'}`) : b.lastStatus ? `● ${b.lastStatus}` : '● unknown'}
-                  </span>
+                  {showProbe ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={probing === b.slug}
+                      onClick={() => {
+                        setProbing(b.slug);
+                        probeBackend(b.slug)
+                          .then((r) => {
+                            showNotice(
+                              'success',
+                              t('dashboard.probeResult', 'Probe {{slug}}: Health {{health}} Volumes {{volumes}}.', {
+                                slug: r.slug,
+                                health: r.health.status ?? r.health.error ?? '?',
+                                volumes: r.volumes.status ?? r.volumes.error ?? '?',
+                              }),
+                            );
+                          })
+                          .catch((error) => {
+                            showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToProbe', 'Failed To Probe Backend.'));
+                          })
+                          .finally(() => setProbing(null));
+                      }}
+                    >
+                      {probing === b.slug
+                        ? t('dashboard.probing', 'Checking…')
+                        : t('dashboard.probe', 'Check')}
+                    </Button>
+                  ) : null}
                 </li>
               );
             })}

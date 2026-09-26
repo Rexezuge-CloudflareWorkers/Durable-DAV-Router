@@ -1,9 +1,12 @@
 import type { Hono } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import {
+  describeBackendFailure,
   fetchWithTimeout,
   getProxyTimeoutMs,
+  joinBackendUrl,
   stripTrailingSlashes,
+  truncateSnippet,
 } from '@durable-dav-router/backend-services/router';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 
@@ -29,13 +32,31 @@ function toBackendJson(r: {
   };
 }
 
-async function probeBackendHealth(baseUrl: string, timeoutMs: number): Promise<number | null> {
+async function probeBackendHealth(baseUrl: string, timeoutMs: number, auth?: Headers): Promise<number | null> {
   try {
-    const res = await fetchWithTimeout(new Request(`${stripTrailingSlashes(baseUrl)}/health`), { method: 'GET' }, timeoutMs);
+    const headers = new Headers(auth);
+    headers.set('Accept', 'application/json');
+    headers.set('User-Agent', 'durable-dav-router');
+    const res = await fetchWithTimeout(
+      new Request(`${stripTrailingSlashes(baseUrl)}/health`),
+      { method: 'GET', headers, redirect: 'manual' },
+      timeoutMs,
+    );
     return res.status;
   } catch {
     return null;
   }
+}
+
+function incomingAuthHeaders(request: Request): Headers {
+  const out = new Headers();
+  const jwt = request.headers.get('Cf-Access-Jwt-Assertion') ?? request.headers.get('cf-access-jwt-assertion');
+  if (jwt) out.set('Cf-Access-Jwt-Assertion', jwt);
+  const auth = request.headers.get('Authorization');
+  if (auth) out.set('Authorization', auth);
+  const cookie = request.headers.get('Cookie');
+  if (cookie) out.set('Cookie', cookie);
+  return out;
 }
 
 function registerBackendRoutes(app: App): void {
@@ -66,7 +87,7 @@ function registerBackendRoutes(app: App): void {
       });
       // Best-effort liveness probe; never blocks creation.
       const timeoutMs = getProxyTimeoutMs(c.env);
-      const status = await probeBackendHealth(created.base_url, timeoutMs);
+      const status = await probeBackendHealth(created.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
       await scope.get(Tokens.BackendService).recordProbe(email, created.slug, status);
       const refreshed = await scope.get(Tokens.BackendService).getBackend(email, created.slug).catch(() => created);
       return c.json(toBackendJson(refreshed), 201);
@@ -93,7 +114,7 @@ function registerBackendRoutes(app: App): void {
     try {
       const updated = await scope.get(Tokens.BackendService).updateBackend(email, c.req.param('slug') ?? '', body);
       const timeoutMs = getProxyTimeoutMs(c.env);
-      const status = await probeBackendHealth(updated.base_url, timeoutMs);
+      const status = await probeBackendHealth(updated.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
       await scope.get(Tokens.BackendService).recordProbe(email, updated.slug, status);
       const refreshed = await scope.get(Tokens.BackendService).getBackend(email, updated.slug).catch(() => updated);
       return c.json(toBackendJson(refreshed));
@@ -108,6 +129,55 @@ function registerBackendRoutes(app: App): void {
     try {
       await scope.get(Tokens.BackendService).deleteBackend(email, c.req.param('slug') ?? '');
       return c.json({ ok: true });
+    } catch (error) {
+      return BaseRoute.toErrorResponse(c as never, error);
+    }
+  });
+
+  // Live diagnostic: what the router sees when it fetches this backend.
+  // Hits `<baseUrl>/health` + `<baseUrl>/user/volumes` from Worker egress
+  // (same path as the Dashboard fan-out) so a `522 works-from-browser`
+  // case can be distinguished: browser-ok + router-522 = origin/Access
+  // allows browsers but not Worker fetches.
+  app.get('/user/backends/:slug/probe', async (c) => {
+    const scope = BaseRoute.getScope(c);
+    const email = c.get('AuthenticatedUserEmailAddress');
+    try {
+      const row = await scope.get(Tokens.BackendService).getBackend(email, c.req.param('slug') ?? '');
+      const timeoutMs = getProxyTimeoutMs(c.env);
+      const auth = incomingAuthHeaders(c.req.raw);
+      auth.set('Accept', 'application/json');
+      auth.set('User-Agent', 'durable-dav-router');
+
+      async function check(path: string): Promise<{ status: number | null; error: string | null }> {
+        try {
+          const res = await fetchWithTimeout(
+            new Request(joinBackendUrl(row.base_url, path)),
+            { method: 'GET', headers: auth, redirect: 'manual' },
+            timeoutMs,
+          );
+          if (res.ok) return { status: res.status, error: null };
+          const snippet = truncateSnippet(await res.text().catch(() => ''), 200);
+          return { status: res.status, error: describeBackendFailure(res.status, snippet) };
+        } catch (error) {
+          const isTimeout = error instanceof Error && (error.name === 'AbortError' || /aborted|timeout/i.test(error.message));
+          return {
+            status: isTimeout ? 504 : null,
+            error: isTimeout
+              ? `backend probe timed out after ${timeoutMs}ms (backend slow or unreachable from Worker egress)`
+              : 'backend probe failed: Worker egress could not reach baseUrl (DNS/TLS/firewall?)',
+          };
+        }
+      }
+
+      const [health, volumes] = await Promise.all([check('/health'), check('/user/volumes')]);
+      await scope.get(Tokens.BackendService).recordProbe(email, row.slug, health.status).catch(() => undefined);
+      return c.json({
+        slug: row.slug,
+        baseUrl: row.base_url,
+        health,
+        volumes,
+      });
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
     }

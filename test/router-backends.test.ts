@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { BackendService, normalizeBaseUrl, normalizeSlug } from '@durable-dav-router/backend-services/router';
 import {
+  describeBackendFailure,
   joinBackendUrl,
+  joinBackendUrlWithoutSelector,
   resolveBackend,
   rewriteDestinationForBackend,
+  stripBackendSelector,
 } from '@durable-dav-router/backend-services/router';
 import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
 
@@ -49,6 +52,22 @@ describe('normalizeBaseUrl', () => {
 describe('joinBackendUrl', () => {
   it('joins origin and path', () => {
     expect(joinBackendUrl('https://b.example.com', '/user/volumes')).toBe('https://b.example.com/user/volumes');
+  });
+  it('strips ?backend= selector when proxying', () => {
+    expect(stripBackendSelector('?backend=office')).toBe('');
+    expect(stripBackendSelector('?backend=office&foo=1')).toBe('?foo=1');
+    expect(joinBackendUrlWithoutSelector('https://b.example.com', '/user/volumes/x', '?backend=office')).toBe(
+      'https://b.example.com/user/volumes/x',
+    );
+  });
+});
+
+describe('describeBackendFailure', () => {
+  it('explains Cloudflare 522 distinctly', () => {
+    expect(describeBackendFailure(522, '')).toMatch(/could not reach/i);
+  });
+  it('hints Access redirect on 302', () => {
+    expect(describeBackendFailure(302, '')).toMatch(/Access/i);
   });
 });
 
