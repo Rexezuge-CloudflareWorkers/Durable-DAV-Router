@@ -52,10 +52,12 @@ function cleanup(now: number): void {
 }
 
 /**
- * Minimal in-memory token-bucket guard for abuse-prone mutating endpoints.
- * Per-isolate only (Workers have no shared memory); the cron sweeper and DO
- * single-flight remain the cross-isolate backstop. Never throws at request
- * time — failures fail open so limiting can never 500 a legitimate request.
+ * Minimal in-memory token-bucket guard for abuse-prone endpoints.
+ *
+ * Per-isolate only (Workers have no shared memory). The router has no cron
+ * triggers and no Durable Objects, so there is no cross-isolate backstop: this
+ * bounds abuse per isolate and nothing more. Never throws at request time —
+ * failures fail open so limiting can never 500 a legitimate request.
  * IP grouping is fail-closed: without a trusted CF-Connecting-IP all callers
  * share the `unknown` bucket instead of getting per-spoofed-header isolation.
  *

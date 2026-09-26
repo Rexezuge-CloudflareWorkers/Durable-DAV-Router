@@ -142,35 +142,40 @@ abstract class BaseRoute {
 
   public static toErrorResponse(c: HonoContext, error: unknown): Response {
     if (error instanceof DatabaseError) {
+      // Log the cause, return a masked body. `DatabaseError` carries raw D1
+      // text — table names, column names, and the constraint that fired — so
+      // echoing its message discloses the schema. The masked 500 below is
+      // exactly what the untyped branch does; keep the two consistent.
       console.error('Caught database error during execution:', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-      return Response.json(
-        { Exception: { Type: error.getErrorType(), Message: error.getErrorMessage() } },
-        { status: error.getErrorCode() },
-      );
+      return Response.json({ Exception: { Type: DefaultInternalServerError.getErrorType(), Message: this.localizedInternalError(c) } }, { status: 500 });
     }
     if (error instanceof ServiceError) {
       const code = error.getErrorCode();
-      const body = { Exception: { Type: error.getErrorType(), Message: error.getErrorMessage() } };
+      // A 5xx from a service error is a bug, not a client mistake, and its
+      // message may embed driver detail. Mask it the same way.
       if (code < 500) {
+        const body = { Exception: { Type: error.getErrorType(), Message: error.getErrorMessage() } };
         console.warn(`Responding with ${error.getErrorType()}:`, ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-      } else {
-        console.error('Caught service error during execution:', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
+        return Response.json(body, { status: code });
       }
-      return Response.json(body, { status: code });
+      console.error('Caught service error during execution:', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
+      return Response.json({ Exception: { Type: error.getErrorType(), Message: this.localizedInternalError(c) } }, { status: code });
     }
     // Untyped errors are masked as 500; log the cause server-side only.
     console.error('Unhandled route error', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-    const locale = this.resolveLocale(c);
-    const strings = getBackendStrings(locale);
     return Response.json(
       {
         Exception: {
           Type: DefaultInternalServerError.getErrorType(),
-          Message: strings.common.internalError,
+          Message: this.localizedInternalError(c),
         },
       },
       { status: 500 },
     );
+  }
+
+  private static localizedInternalError(c: HonoContext): string {
+    return getBackendStrings(this.resolveLocale(c)).common.internalError;
   }
 
   private static resolveLocale(c: HonoContext): string {

@@ -5,6 +5,20 @@ import { AuthConfig } from './sections/AuthConfig';
 import { RouterLimits } from './sections/RouterLimits';
 
 /**
+ * `TEAM_DOMAIN` is used to build the JWKS URL, so a scheme-less value throws
+ * inside `createRemoteJWKSet` and is swallowed into a 401 by the JWT strategy.
+ * Detect it at startup instead.
+ */
+function isParsableTeamDomain(value: string): boolean {
+  try {
+    const url = new URL(value.includes('://') ? value : `https://${value}`);
+    return url.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Injectable instance view over Durable-DAV-Router environment configuration.
  *
  * Composed of focused section objects (`RouterLimits`, `AuthConfig`) so the
@@ -84,9 +98,14 @@ class AppConfiguration {
   }
 
   /**
-   * Fail-fast misconfiguration report. Returns human-readable warnings
-   * for explicitly-set but malformed numeric vars; empty means clean.
-   * Call at worker startup or in tests — never per-request.
+   * Fail-fast misconfiguration report. Returns human-readable warnings for
+   * unsafe or malformed configuration; empty means clean.
+   *
+   * Call once at worker startup (not per-request) and log the result. The
+   * warnings exist because every failure mode below is silent at runtime: a
+   * bad numeric var quietly falls back to its default, and an auth bypass set
+   * in a production environment quietly authenticates every unauthenticated
+   * request as a fixed identity.
    */
   public validate(): string[] {
     const warnings: string[] = [];
@@ -95,6 +114,31 @@ class AppConfiguration {
       if (!EnvParser.isValidPositiveInt(this.env, key)) {
         warnings.push(`Invalid configuration: ${key} must be a positive integer`);
       }
+    }
+    // Security: a bypass identity must never be reachable in production. Even
+    // though `isBypassAllowed()` already refuses it there, shipping the value
+    // at all means one `ENVIRONMENT` edit away from a full account takeover.
+    if (!this.isBypassAllowed() && (this.getDevAuthEmail() !== null || this.isDemoMode())) {
+      warnings.push(
+        `Security: DEV_AUTH_EMAIL/DEMO_MODE is set while ENVIRONMENT=${this.getEnvironment()}. ` +
+          `The bypass is ignored in this environment; remove the variable so it cannot become live if ENVIRONMENT changes.`,
+      );
+    }
+    if (this.isBypassAllowed() && this.getDevAuthEmail() !== null) {
+      warnings.push(`Security: DEV_AUTH_EMAIL bypass is ACTIVE (ENVIRONMENT=${this.getEnvironment()}). Every unauthenticated request authenticates as that identity.`);
+    }
+    if (this.isBypassAllowed() && this.isDemoMode()) {
+      warnings.push(`Security: DEMO_MODE bypass is ACTIVE (ENVIRONMENT=${this.getEnvironment()}).`);
+    }
+    // An unparsable TEAM_DOMAIN silently degrades JWT verification into a 401
+    // for every real user, which reads as an Access outage rather than a typo.
+    const teamDomain = this.getTeamDomain();
+    if (teamDomain !== null && !isParsableTeamDomain(teamDomain)) {
+      warnings.push(`Invalid configuration: TEAM_DOMAIN must be a hostname (got ${JSON.stringify(teamDomain)})`);
+    }
+    const policyAud = this.getPolicyAud();
+    if (policyAud !== null && policyAud.includes(',')) {
+      warnings.push('Invalid configuration: POLICY_AUD must be a single audience; multiple values are not supported');
     }
     return warnings;
   }

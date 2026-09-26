@@ -1,14 +1,16 @@
 import { AbstractEntrypointWorker } from '@durable-dav-router/backend-runtime/base';
+import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { fromHono } from 'chanfana';
 import type { HonoOpenAPIRouterType } from 'chanfana';
 import { Hono } from 'hono';
-import { MiddlewareHandlers, securityHeaders } from '@/middleware';
+import { MiddlewareHandlers, registerRateLimits, securityHeaders } from '@/middleware';
 import { scopeMiddleware } from '@/middleware/scopeMiddleware';
 import { registerBackendRoutes } from './routes/BackendRoutes';
 import { registerAggregatedVolumeRoutes } from './routes/AggregatedVolumeRoutes';
 import { registerRouterDavProxyRoutes } from './routes/RouterDavProxyRoutes';
 import { registerUserProfileRoutes } from './routes/UserRoutes';
 import { SPA_HTML } from '@/generated/spa-shell';
+import { applyCors } from '@durable-dav-router/webdav';
 
 type AppRouter = HonoOpenAPIRouterType<{
   Bindings: Env;
@@ -21,6 +23,10 @@ function acceptsHtml(request: Request): boolean {
 
 class DurableDavRouterWorker extends AbstractEntrypointWorker {
   protected readonly app: AppRouter;
+  // Configuration problems are silent at runtime — a bad numeric var falls back
+  // to its default, an auth bypass in production authenticates everyone as one
+  // identity — so they must be reported exactly once, not per request.
+  private configChecked = false;
 
   constructor() {
     super();
@@ -49,6 +55,18 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
 
     app.use('*', scopeMiddleware);
 
+    // CORS preflight must be answered before authentication. `OPTIONS` is a
+    // supported WebDAV method, so it also reaches the proxy route registered
+    // below; without this, a preflight for any `/user/*` request was answered
+    // with 401 and browsers never issued the real call. Preflights carry no
+    // credentials by design, so requiring auth here can only break clients.
+    app.options('*', (c) => applyCors(new Response(null, { status: 204 }), c.req.raw));
+
+    // Before `/user/*` auth so the limiter can key on the authenticated email
+    // once the identity is known; the identity falls back to the trusted
+    // connecting IP for anonymous WebDAV traffic.
+    registerRateLimits(app);
+
     app.use('/user/*', MiddlewareHandlers.userAuthentication());
 
     registerBackendRoutes(app);
@@ -71,6 +89,16 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
   }
 
   protected async onRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (!this.configChecked) {
+      this.configChecked = true;
+      try {
+        for (const warning of AppConfiguration.fromEnv(env).validate()) {
+          console.error(`[config] ${warning}`);
+        }
+      } catch (error) {
+        console.error('[config] validation failed:', error instanceof Error ? error.message : String(error));
+      }
+    }
     return this.app.fetch(request, env, ctx);
   }
 

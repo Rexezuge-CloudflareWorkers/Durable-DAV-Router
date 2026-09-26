@@ -14,13 +14,21 @@ class UserDAO extends BaseDAO {
   public async upsertUser(email: string, now: number): Promise<void> {
     await this.withRetry(
       () =>
-        this.database.prepare('INSERT INTO users (email, created_at) VALUES (?, ?) ON CONFLICT(email) DO NOTHING').bind(email, now).run(),
+        this.database
+          .prepare('INSERT INTO users (email, created_at) VALUES (?, ?) ON CONFLICT(email) DO NOTHING')
+          .bind(email.toLowerCase(), now)
+          .run(),
       'upsert user',
     );
   }
 
   public async getByEmail(email: string): Promise<UserRow | null> {
-    return this.database.prepare('SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1').bind(email).first<UserRow>();
+    // Lowercase the *parameter*, never the column. A function call on the column
+    // side makes the `users.email` primary-key index unusable, so the query
+    // degrades to a full table scan. Every writer stores a lowercased email and
+    // `users.email` is `COLLATE NOCASE`, so matching semantics are unchanged.
+    const row = await this.database.prepare('SELECT * FROM users WHERE email = ? LIMIT 1').bind(email.toLowerCase()).first<UserRow>();
+    return row ?? null;
   }
 
   public async getByEmails(emails: string[]): Promise<UserRow[]> {
@@ -30,11 +38,10 @@ class UserDAO extends BaseDAO {
     const out: UserRow[] = [];
     for (let i = 0; i < keys.length; i += 50) {
       const chunk = keys.slice(i, i + 50);
-      const placeholders = chunk.map(() => 'lower(?)').join(', ');
-      const result = await this.database
-        .prepare(`SELECT * FROM users WHERE lower(email) IN (${placeholders})`)
-        .bind(...chunk)
-        .all<UserRow>();
+      // Plain `?` placeholders: `lower(?)` here would still be index-safe, but
+      // normalizing once up front keeps this consistent with `getByEmail`.
+      const placeholders = chunk.map(() => '?').join(', ');
+      const result = await this.database.prepare(`SELECT * FROM users WHERE email IN (${placeholders})`).bind(...chunk).all<UserRow>();
       const rows = result.results ?? [];
       for (const row of rows) out.push(row);
     }

@@ -14,6 +14,7 @@ import {
   resolveBackend,
   stripSlashes,
 } from '@durable-dav-router/backend-services/router';
+import type { BackendService } from '@durable-dav-router/backend-services/router';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { SUPPORT_METHODS, applyCors } from '@durable-dav-router/webdav';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
@@ -35,17 +36,24 @@ function explicitBackendSlug(request: Request): string | null {
 // Fire-and-forget cache writes: `waitUntil` when the runtime provides it,
 // otherwise a detached promise. L1 updates inside the cache helpers run
 // synchronously on call, so the next request in this isolate already hits.
-function runInBackground(c: ProxyContext, promise: Promise<unknown>): void {
+function runInBackground(c: ProxyContext, promise: Promise<unknown>, label: string): void {
+  const swallow = (error: unknown): undefined => {
+    // Never let a cache write break the request, but do not lose the signal
+    // either: a failed invalidation leaves a stale route in place for the whole
+    // TTL, and a failed populate is invisible until a slow request is traced.
+    console.warn(`${label} failed: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  };
   try {
     const ctx = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void } | undefined;
     if (ctx && typeof ctx.waitUntil === 'function') {
-      ctx.waitUntil(promise.catch(() => undefined));
+      ctx.waitUntil(promise.catch(swallow));
       return;
     }
   } catch {
     // fall through to detached promise
   }
-  void promise.catch(() => undefined);
+  void promise.catch(swallow);
 }
 
 function resolveKvCache(scope: { get: (token: never) => KvCache }): KvCache | null {
@@ -56,13 +64,29 @@ function resolveKvCache(scope: { get: (token: never) => KvCache }): KvCache | nu
   }
 }
 
+function serviceOf(scope: { get: (token: never) => BackendService }): BackendService {
+  return scope.get(Tokens.BackendService as never);
+}
+
 function cachedBackendId(backend: { id?: unknown; slug: string }): string {
   return typeof backend.id === 'string' && backend.id.length > 0 ? backend.id : backend.slug;
 }
 
-// Forward statuses that mark a cached resolution stale: the volume moved,
-// was deleted, or the backend is unreachable. Anything else is served as-is.
-const STALE_CACHED_STATUSES = new Set([404, 410, 502, 504]);
+// Forward statuses that mark a cached resolution stale: the volume moved or was
+// deleted from the origin we last saw it on.
+//
+// 502/504 are deliberately excluded. They mean "that origin is unreachable or
+// timed out", which says nothing about whether the route is stale — the D1
+// revalidation below already catches a deleted or repointed backend — and
+// treating them as staleness used to send every transient backend blip through
+// a second full forward.
+const STALE_CACHED_STATUSES = new Set([404, 410]);
+
+// Methods that may be replayed after a stale cached route is discovered.
+// Re-sending a consumed request body would write a truncated (or empty) file,
+// and a mutation that succeeded before the response was lost would be applied
+// twice — once to each of two different backends.
+const REPLAY_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PROPFIND']);
 
 async function handleProxy(
   c: ProxyContext,
@@ -83,18 +107,37 @@ async function handleProxy(
   const explicit = explicitBackendSlug(c.req.raw);
   // KV lookaside: bare client URLs repeat the same owner/volume for every
   // operation of a sync run. A hit skips both the D1 owner lookup and the N
-  // parallel volume-root probes. Trust + self-heal: a stale hit surfaces as
-  // a forward 404/410/502/504, which evicts and falls through to re-resolve.
+  // parallel volume-root probes. Trust + self-heal: a stale hit surfaces as a
+  // forward 404/410, which evicts and re-resolves.
   if (!explicit) {
     const cached = await getCachedRoute(kv, owner, volume).catch(() => null);
     if (cached) {
-      const res = await proxyToBackend(c, { base_url: cached.baseUrl }, owner, volume, inner, trailingSlash, getProxyTimeoutMs(c.env));
-      if (!STALE_CACHED_STATUSES.has(res.status)) {
-        trackVolumeMutation(c, kv, owner, volume, inner, res.status);
-        return res;
+      // Revalidate against D1 before spending a forward on it. A cache entry can
+      // name a deleted backend or a `base_url` that has since been edited, and
+      // the first symptom of that is a request already sent to the wrong
+      // origin. Self-healing after the forward instead meant replaying the
+      // request — with a body that had already been consumed.
+      const current = await serviceOf(scope)
+        .findBackendById(cached.backendId)
+        .catch(() => null);
+      if (current && current.base_url === cached.baseUrl) {
+        const res = await proxyToBackend(c, current, owner, volume, inner, trailingSlash, getProxyTimeoutMs(c.env));
+        if (!STALE_CACHED_STATUSES.has(res.status)) {
+          trackVolumeMutation(c, kv, owner, volume, inner, res.status);
+          return res;
+        }
+        await res.body?.cancel().catch(() => undefined);
+        if (!REPLAY_SAFE_METHODS.has(method)) {
+          // The origin is authoritative for this request; evict so the *next*
+          // one re-resolves, but do not replay this request against a second
+          // backend.
+          runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
+          return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
+        }
+        runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
+      } else {
+        runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
       }
-      await res.body?.cancel().catch(() => undefined);
-      runInBackground(c, invalidateCachedRoute(kv, owner, volume));
     }
   }
   // WebDAV proxy is owner-routed, not requester-routed. Native clients only
@@ -178,6 +221,7 @@ function rememberRoute(
       slug: backend.slug,
       baseUrl: backend.base_url,
     }),
+    'route cache populate',
   );
 }
 
@@ -209,14 +253,14 @@ function trackVolumeMutation(
   if (status < 200 || status >= 300) return;
   const method = c.req.raw.method;
   if (inner === '' && ['MKCOL', 'DELETE', 'MOVE'].includes(method)) {
-    runInBackground(c, invalidateCachedRoute(kv, owner, volume));
+    runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
   }
   if (method === 'MOVE' || method === 'COPY') {
     try {
       const routerOrigin = new URL(c.req.raw.url).origin;
       const dest = parseDestinationVolume(routerOrigin, c.req.raw.headers.get('Destination'));
       if (dest && (dest.owner !== owner || dest.volume !== volume)) {
-        runInBackground(c, invalidateCachedRoute(kv, dest.owner, dest.volume));
+        runInBackground(c, invalidateCachedRoute(kv, dest.owner, dest.volume), 'route cache invalidate (destination)');
       }
     } catch {
       // ignore malformed URL; the proxied backend reports the real error
@@ -237,7 +281,7 @@ async function proxyToBackend(
   const incomingUrl = new URL(c.req.raw.url);
   const encodedBase = `/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`;
   let suffix = inner ? `/${inner}` : '';
-  if (trailingSlash && suffix !== '/') suffix = suffix ? `${suffix}/` : '/';
+  if (trailingSlash) suffix = suffix ? `${suffix}/` : '/';
   // Never leak the router `?backend=` selector to the backend.
   const target = joinBackendUrlWithoutSelector(backend.base_url, `${encodedBase}${suffix}`, incomingUrl.search);
   const routerOrigin = incomingUrl.origin;
@@ -257,8 +301,18 @@ async function proxyToBackend(
       timeoutMs,
     );
   } catch (error) {
-    const message = error instanceof Error && error.name === 'AbortError' ? 'Backend timed out' : 'Backend unreachable';
-    return applyCors(new Response(message, { status: 502 }), c.req.raw);
+    // A timeout is a 504, not a 502: the origin did not answer within the
+    // budget, which is a distinct condition clients retry differently. Log the
+    // cause — a silent catch here is the only signal an unreachable backend
+    // produces.
+    const isTimeout = error instanceof Error && (error.name === 'AbortError' || /aborted|timeout/i.test(error.message));
+    console.warn(
+      `backend ${backend.base_url} ${isTimeout ? `timed out after ${timeoutMs}ms` : 'unreachable'} for ${method} ${encodedBase}${suffix}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    const message = isTimeout ? 'Backend timed out' : 'Backend unreachable';
+    return applyCors(new Response(message, { status: isTimeout ? 504 : 502 }), c.req.raw);
   }
   const outHeaders = filterProxiedResponseHeaders(upstream.headers);
   return applyCors(new Response(upstream.body, { status: upstream.status, headers: outHeaders }), c.req.raw);
@@ -285,6 +339,16 @@ function registerRouterDavProxyRoutes(app: App): void {
     const trailingSlash = new URL(c.req.url).pathname.endsWith('/');
     return handleProxy(c, owner, volume, '', trailingSlash);
   });
+
+  // The DAV handlers above are registered per-method, so a WebDAV path reached
+  // with any other method (`POST`, `PATCH`, `TRACE`, …) matched no route at all
+  // and fell through to Hono's default 404. RFC 9110 requires 405 with `Allow`
+  // when the resource exists but the method does not, and clients use the
+  // distinction to tell "wrong verb" from "no such bucket".
+  const methodNotAllowed = (c: { req: { raw: Request } }): Response =>
+    applyCors(new Response('Method Not Allowed', { status: 405, headers: { Allow: SUPPORT_METHODS.join(', ') } }), c.req.raw);
+  app.all('/:owner/:volume', methodNotAllowed as never);
+  app.all('/:owner/:volume/*', methodNotAllowed as never);
 }
 
 export { registerRouterDavProxyRoutes };

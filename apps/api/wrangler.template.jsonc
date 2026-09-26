@@ -35,6 +35,14 @@
       "id": "00000000000000000000000000000000"
     }
   ],
+  // No DEV_AUTH_EMAIL / DEMO_MODE here on purpose. Those are authentication
+  // bypasses: with either set, every unauthenticated request authenticates as
+  // that identity. `isBypassAllowed()` only honors them for ENVIRONMENT in
+  // {development, dev, local, test}, but shipping a ready-made bypass identity
+  // inside the production template makes a one-word edit (`ENVIRONMENT:
+  // "staging"`, or an `env.staging` block that inherits `vars`) a full account
+  // takeover with no attacker effort. Set them only in a non-production
+  // environment block, and prefer a secret over a plaintext var.
   "vars": {
     "ENVIRONMENT": "production",
     "DEBUG_MODE": "false",
@@ -43,7 +51,6 @@
     "TEAM_DOMAIN": "",
     "MAX_BACKENDS_PER_USER": "20",
     "BACKEND_FETCH_TIMEOUT_MS": "8000",
-    "ROUTE_CACHE_TTL_SECONDS": "86400",
-    "DEV_AUTH_EMAIL": "test@example.com"
+    "ROUTE_CACHE_TTL_SECONDS": "86400"
   }
 }

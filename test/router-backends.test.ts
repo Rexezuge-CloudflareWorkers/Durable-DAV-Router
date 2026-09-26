@@ -10,6 +10,7 @@ import {
   stripBackendSelector,
 } from '@durable-dav-router/backend-services/router';
 import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
+import { BadRequestError, ConflictError, DatabaseError, NotFoundError } from '@durable-dav-router/backend-errors';
 
 function row(slug: string, baseUrl = 'https://backend.example.com'): RouterBackendRow {
   return {
@@ -48,7 +49,54 @@ describe('normalizeBaseUrl', () => {
   });
   it('rejects remote http', () => {
     expect(() => normalizeBaseUrl('http://dav.example.com')).toThrow();
-    expect(normalizeBaseUrl('http://localhost:8787')).toBe('http://localhost:8787');
+    // Loopback is a private host, so it needs the explicit opt-in — the plain
+    // form here is the production default.
+    expect(() => normalizeBaseUrl('http://localhost:8787')).toThrow();
+    expect(normalizeBaseUrl('http://localhost:8787', true)).toBe('http://localhost:8787');
+  });
+  it('rejects non-string input as a 400, not a TypeError', () => {
+    // A JSON body with `{"slug": 1}` used to reach `raw.trim()` and throw a
+    // TypeError, which surfaced as a 500.
+    for (const bad of [1, null, undefined, {}, [], true]) {
+      expect(() => normalizeBaseUrl(bad)).toThrow(BadRequestError);
+    }
+  });
+
+  // The router fetches baseUrl on the user's behalf with the user's
+  // credentials attached, and can read part of the response back to them
+  // (GET /user/backends/:slug/probe). Without a host check that is an
+  // authenticated egress proxy into the router's own network.
+  describe('SSRF host rejection', () => {
+    const blocked: Array<[string, string]> = [
+      ['cloud metadata', 'https://169.254.169.254/'],
+      ['link-local', 'https://169.254.1.1/'],
+      ['rfc1918 10/8', 'https://10.0.0.5/'],
+      ['rfc1918 172.16/12', 'https://172.20.1.1/'],
+      ['rfc1918 192.168/16', 'https://192.168.1.1/'],
+      ['loopback v4', 'https://127.0.0.1/'],
+      ['loopback v6', 'https://[::1]/'],
+      ['ipv4-mapped metadata', 'https://[::ffff:169.254.169.254]/'],
+      ['unspecified', 'https://0.0.0.0/'],
+      ['decimal-encoded loopback', 'https://2130706433/'],
+      ['octal-encoded loopback', 'https://0177.0.0.1/'],
+      ['hex-encoded loopback', 'https://0x7f000001/'],
+      ['localhost name', 'https://localhost/'],
+      ['localhost subdomain', 'https://anything.localhost/'],
+      ['ipv6 unique-local', 'https://[fd00::1]/'],
+      ['ipv6 link-local', 'https://[fe80::1]/'],
+    ];
+    for (const [label, url] of blocked) {
+      it(`blocks ${label} (${url})`, () => {
+        expect(() => normalizeBaseUrl(url)).toThrow(BadRequestError);
+      });
+    }
+    it('allows a normal public https origin', () => {
+      expect(normalizeBaseUrl('https://dav.example.com')).toBe('https://dav.example.com');
+    });
+    it('allows private hosts when explicitly opted in (self-hosted router)', () => {
+      expect(normalizeBaseUrl('http://localhost:8787', true)).toBe('http://localhost:8787');
+      expect(normalizeBaseUrl('https://10.0.0.5', true)).toBe('https://10.0.0.5');
+    });
   });
 });
 
@@ -112,8 +160,8 @@ describe('resolveBackend', () => {
 });
 
 describe('classifyProbeStatus', () => {
-  it('treats success and redirects as hits', () => {
-    for (const s of [200, 207, 301, 302, 307, 308]) expect(classifyProbeStatus(s)).toBe('hit');
+  it('treats success and multi-status as hits', () => {
+    for (const s of [200, 204, 207]) expect(classifyProbeStatus(s)).toBe('hit');
   });
   it('treats auth challenges as auth signals', () => {
     for (const s of [401, 403, 423]) expect(classifyProbeStatus(s)).toBe('auth');
@@ -122,6 +170,14 @@ describe('classifyProbeStatus', () => {
     expect(classifyProbeStatus(404)).toBe('miss');
     expect(classifyProbeStatus(410)).toBe('miss');
     for (const s of [400, 405, 409, 500, 502]) expect(classifyProbeStatus(s)).toBe('unknown');
+  });
+  it('does not treat a redirect as proof the volume exists', () => {
+    // A Cloudflare Access login redirect comes from a perfectly real backend,
+    // so reading it as a hit would pin an owner route to the wrong origin for
+    // the whole route-cache TTL — and make two Access-gated candidates 409
+    // every bare WebDAV request for that owner. `describeBackendFailure` in the
+    // same module already documents redirects as an Access symptom.
+    for (const s of [301, 302, 303, 307, 308]) expect(classifyProbeStatus(s)).toBe('unknown');
   });
 });
 
@@ -136,10 +192,39 @@ describe('BackendService with fakes', () => {
       listByBackendUsernameCi: async (usernameCi: string) =>
         [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === usernameCi.toLowerCase()),
       countByOwnerEmail: async (ownerEmail: string) => [...store.values()].filter((r) => r.owner_email === ownerEmail.toLowerCase()).length,
+      createGuarded: async (
+        input: { id: string; ownerEmail: string; slug: string; baseUrl: string; displayName: string | null; now: number },
+        max: number,
+      ): Promise<'ok' | 'duplicate' | 'quota-exceeded'> => {
+        // Mirror the real statement: the quota check and the insert are one
+        // atomic operation, and the (owner_email, slug_ci) uniqueness is a
+        // constraint rather than a pre-flight SELECT.
+        const owner = input.ownerEmail.toLowerCase();
+        const slugCi = input.slug.toLowerCase();
+        const exists = [...store.values()].some((r) => r.owner_email === owner && r.slug_ci === slugCi);
+        if (exists) return 'duplicate';
+        const owned = [...store.values()].filter((r) => r.owner_email === owner).length;
+        if (owned >= max) return 'quota-exceeded';
+        store.set(input.id, {
+          id: input.id,
+          owner_email: owner,
+          slug: input.slug,
+          slug_ci: slugCi,
+          base_url: input.baseUrl,
+          display_name: input.displayName,
+          created_at: input.now,
+          updated_at: input.now,
+          last_seen_at: null,
+          last_status: null,
+          backend_username: null,
+          backend_username_ci: null,
+        });
+        return 'ok';
+      },
       create: async (input: { id: string; ownerEmail: string; slug: string; baseUrl: string; displayName: string | null; now: number }) => {
         store.set(input.id, {
           id: input.id,
-          owner_email: input.ownerEmail,
+          owner_email: input.ownerEmail.toLowerCase(),
           slug: input.slug,
           slug_ci: input.slug.toLowerCase(),
           base_url: input.baseUrl,
@@ -179,6 +264,85 @@ describe('BackendService with fakes', () => {
     const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
     await svc.createBackend({ ownerEmail: 'User@Example.com', slug: 'office', baseUrl: 'https://dav.example.com' });
     await expect(svc.createBackend({ ownerEmail: 'user@example.com', slug: 'office', baseUrl: 'https://other.example.com' })).rejects.toThrow();
+  });
+
+  it('resolves concurrent creates without a duplicate (uniqueness enforced in the insert)', async () => {
+    // The old flow was SELECT-then-INSERT, so two concurrent requests both saw
+    // a free slug and the loser surfaced a 500 carrying raw D1 constraint text.
+    const dao = fakeDAO();
+    const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
+    const results = await Promise.allSettled([
+      svc.createBackend({ ownerEmail: 'u@example.com', slug: 'race', baseUrl: 'https://a.example.com' }),
+      svc.createBackend({ ownerEmail: 'u@example.com', slug: 'race', baseUrl: 'https://b.example.com' }),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(ConflictError);
+    // The raw driver text must never reach the client.
+    expect(String(rejected.reason?.message ?? '')).not.toMatch(/UNIQUE constraint/i);
+  });
+
+  it('rejects a private backend origin in production but allows it in development', async () => {
+    const prod = new BackendService(
+      { DB: {} as never, ENVIRONMENT: 'production' } as never,
+      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
+    );
+    await expect(prod.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
+      /private, loopback/i,
+    );
+
+    // A co-located backend is a legitimate self-hosted setup, so an unset flag
+    // outside production must not block it.
+    const dev = new BackendService(
+      { DB: {} as never, ENVIRONMENT: 'development' } as never,
+      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
+    );
+    await expect(dev.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).resolves.toBeTruthy();
+  });
+
+  it('lets ALLOW_PRIVATE_BACKEND_HOSTS override the environment default', async () => {
+    const prodOptIn = new BackendService(
+      { DB: {} as never, ENVIRONMENT: 'production', ALLOW_PRIVATE_BACKEND_HOSTS: 'true' } as never,
+      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
+    );
+    await expect(prodOptIn.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).resolves.toBeTruthy();
+
+    const devOptOut = new BackendService(
+      { DB: {} as never, ENVIRONMENT: 'development', ALLOW_PRIVATE_BACKEND_HOSTS: 'false' } as never,
+      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
+    );
+    await expect(devOptOut.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
+      /private, loopback/i,
+    );
+  });
+
+  it('raises a database error instead of reporting a D1 outage as "not found"', async () => {
+    // `.catch(() => null)` turned a transient D1 fault into NotFoundError, so an
+    // outage was indistinguishable from a missing row — including on the
+    // unauthenticated WebDAV hot path, where it produced a false 404.
+    const exploding = {
+      ...fakeDAO(),
+      getByOwnerSlug: async () => {
+        throw new Error('D1_ERROR: network');
+      },
+      getById: async () => {
+        throw new Error('D1_ERROR: network');
+      },
+    };
+    const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(exploding as never) });
+    await expect(svc.getBackend('u@example.com', 'office')).rejects.toBeInstanceOf(DatabaseError);
+  });
+
+  it('tolerates a missing schema, which is the one legitimate degradation', async () => {
+    const missingSchema = {
+      ...fakeDAO(),
+      getByOwnerSlug: async () => {
+        const error = new Error('D1_ERROR: no such table: router_backends');
+        throw error;
+      },
+    };
+    const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(missingSchema as never) });
+    await expect(svc.getBackend('u@example.com', 'office')).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it('enforces the per-user quota', async () => {
