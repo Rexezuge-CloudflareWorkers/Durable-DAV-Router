@@ -1,10 +1,13 @@
 import type { Hono } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import {
+  describeBackendFailure,
   fetchWithTimeout,
   getProxyTimeoutMs,
   joinBackendUrl,
+  joinBackendUrlWithoutSelector,
   resolveBackend,
+  truncateSnippet,
 } from '@durable-dav-router/backend-services/router';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 
@@ -18,6 +21,8 @@ function authForwardHeaders(request: Request): Headers {
   if (auth) out.set('Authorization', auth);
   const cookie = request.headers.get('Cookie');
   if (cookie) out.set('Cookie', cookie);
+  out.set('Accept', 'application/json');
+  out.set('User-Agent', 'durable-dav-router');
   return out;
 }
 
@@ -55,9 +60,10 @@ async function proxyOne(c: ProxyOneContext): Promise<Response> {
     }
     const backend = resolved.backend;
     const incomingUrl = new URL(c.req.raw.url);
-    const target = joinBackendUrl(
+    const target = joinBackendUrlWithoutSelector(
       backend.base_url,
-      `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}${incomingUrl.search}`,
+      `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`,
+      incomingUrl.search,
     );
     const method = c.req.raw.method;
     const hasBody = !['GET', 'HEAD'].includes(method);
@@ -67,7 +73,7 @@ async function proxyOne(c: ProxyOneContext): Promise<Response> {
     const timeoutMs = getProxyTimeoutMs(c.env);
     const res = await fetchWithTimeout(
       new Request(target),
-      { method, headers, body: hasBody ? c.req.raw.body : undefined, ...(hasBody && { duplex: 'half' }) },
+      { method, headers, redirect: 'manual', body: hasBody ? c.req.raw.body : undefined, ...(hasBody && { duplex: 'half' }) },
       timeoutMs,
     );
     const text = await res.text().catch(() => '');
@@ -108,7 +114,7 @@ async function proxySubpath(c: ProxySubpathContext): Promise<Response> {
       );
     }
     const incomingUrl = new URL(raw.url);
-    const target = joinBackendUrl(resolved.backend.base_url, `${incomingUrl.pathname}${incomingUrl.search}`);
+    const target = joinBackendUrlWithoutSelector(resolved.backend.base_url, incomingUrl.pathname, incomingUrl.search);
     const method = raw.method;
     const hasBody = !['GET', 'HEAD'].includes(method);
     const headers = authForwardHeaders(raw);
@@ -117,7 +123,7 @@ async function proxySubpath(c: ProxySubpathContext): Promise<Response> {
     const timeoutMs = getProxyTimeoutMs(c.env);
     const res = await fetchWithTimeout(
       new Request(target),
-      { method, headers, body: hasBody ? raw.body : undefined, ...(hasBody && { duplex: 'half' }) },
+      { method, headers, redirect: 'manual', body: hasBody ? raw.body : undefined, ...(hasBody && { duplex: 'half' }) },
       timeoutMs,
     );
     const text = await res.text().catch(() => '');
@@ -147,7 +153,12 @@ function registerAggregatedVolumeRoutes(app: App): void {
       const timeoutMs = getProxyTimeoutMs(c.env);
       const res = await fetchWithTimeout(
         new Request(joinBackendUrl(resolved.backend.base_url, '/user/volumes')),
-        { method: 'POST', headers: new Headers({ ...Object.fromEntries(authForwardHeaders(c.req.raw)), 'Content-Type': 'application/json' }), body: JSON.stringify(body) },
+        {
+          method: 'POST',
+          headers: new Headers({ ...Object.fromEntries(authForwardHeaders(c.req.raw)), 'Content-Type': 'application/json' }),
+          redirect: 'manual',
+          body: JSON.stringify(body),
+        },
         timeoutMs,
       );
       const text = await res.text().catch(() => '');
@@ -170,8 +181,18 @@ function registerAggregatedVolumeRoutes(app: App): void {
       const settled = await Promise.allSettled(
         backends.map(async (b) => {
           const url = joinBackendUrl(b.base_url, '/user/volumes');
-          const res = await fetchWithTimeout(new Request(url), { method: 'GET', headers: authForwardHeaders(c.req.raw) }, timeoutMs);
-          if (!res.ok) throw new Error(`backend ${b.slug} responded ${res.status}`);
+          const res = await fetchWithTimeout(
+            new Request(url),
+            { method: 'GET', headers: authForwardHeaders(c.req.raw), redirect: 'manual' },
+            timeoutMs,
+          );
+          if (!res.ok) {
+            const snippet = truncateSnippet(await res.text().catch(() => ''), 200);
+            throw Object.assign(new Error(`backend ${b.slug} ${describeBackendFailure(res.status, snippet)}`), {
+              backendSlug: b.slug,
+              backendStatus: res.status,
+            });
+          }
           const data = (await res.json().catch(() => ({}))) as { volumes?: Array<Record<string, unknown>> };
           const volumes = (data.volumes ?? []).map((v) => ({ ...v, backend: b.slug, backendBaseUrl: b.base_url }));
           return { slug: b.slug, ok: true as const, volumes };
@@ -184,7 +205,16 @@ function registerAggregatedVolumeRoutes(app: App): void {
           volumes.push(...r.value.volumes);
           return { slug, ok: true, status: 200 };
         }
-        return { slug, ok: false, status: 502, error: r.reason instanceof Error ? r.reason.message : 'backend unreachable' };
+        const reason = r.reason as Error & { backendStatus?: number };
+        const upstreamStatus = typeof reason?.backendStatus === 'number' ? reason.backendStatus : null;
+        const isTimeout = reason?.name === 'AbortError' || /aborted|timeout/i.test(reason?.message ?? '');
+        const status = upstreamStatus ?? (isTimeout ? 504 : 502);
+        const message =
+          reason instanceof Error
+            ? reason.message
+            : 'backend unreachable';
+        console.warn('backend fan-out failed', { slug, status, error: message.slice(0, 300) });
+        return { slug, ok: false, status, error: message };
       });
       return c.json({ volumes, backends: backendStatus });
     } catch (error) {

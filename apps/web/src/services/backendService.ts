@@ -20,3 +20,14 @@ export async function updateBackend(
 export async function deleteBackend(slug: string): Promise<{ ok: boolean }> {
   return apiDelete<{ ok: boolean }>(`/user/backends/${encodeURIComponent(slug)}`);
 }
+
+export interface BackendProbe {
+  slug: string;
+  baseUrl: string;
+  health: { status: number | null; error: string | null };
+  volumes: { status: number | null; error: string | null };
+}
+
+export async function probeBackend(slug: string): Promise<BackendProbe> {
+  return apiGet<BackendProbe>(`/user/backends/${encodeURIComponent(slug)}/probe`);
+}

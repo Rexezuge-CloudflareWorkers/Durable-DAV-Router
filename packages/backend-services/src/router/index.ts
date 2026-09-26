@@ -2,6 +2,10 @@ export { BackendService, normalizeSlug, normalizeBaseUrl } from './BackendServic
 export type { BackendServiceEnv, BackendServiceDeps } from './BackendService';
 export {
   joinBackendUrl,
+  joinBackendUrlWithoutSelector,
+  stripBackendSelector,
+  describeBackendFailure,
+  truncateSnippet,
   rewriteDestinationForBackend,
   buildProxiedHeaders,
   filterProxiedResponseHeaders,
