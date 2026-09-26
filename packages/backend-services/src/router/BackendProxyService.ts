@@ -145,6 +145,77 @@ function joinBackendUrlWithoutSelector(baseUrl: string, pathname: string, search
   return joinBackendUrl(baseUrl, `${pathname}${stripBackendSelector(search)}`);
 }
 
+// Volume-existence probe for ambiguous owner routing. Native clients send a
+// bare `/:owner/:volume` URL with no `?backend=` hint, so when one owner maps
+// to several backends the router probes each candidate's volume root with
+// `PROPFIND Depth: 0` (forwarding the caller's auth) and routes to the unique
+// owner. Probes target the volume root — not the full inner path — so file
+// creation inside an existing volume still resolves.
+const VOLUME_PROBE_BODY = '<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><propname/></propfind>';
+
+type ProbeSignal = 'hit' | 'auth' | 'miss' | 'unknown';
+
+const PROBE_HIT_STATUSES = new Set([207, 301, 302, 303, 307, 308]);
+const PROBE_AUTH_STATUSES = new Set([401, 403, 423]);
+const PROBE_MISS_STATUSES = new Set([404, 410]);
+
+function classifyProbeStatus(status: number): ProbeSignal {
+  if (PROBE_MISS_STATUSES.has(status)) return 'miss';
+  if (PROBE_AUTH_STATUSES.has(status)) return 'auth';
+  return PROBE_HIT_STATUSES.has(status) || (status >= 200 && status < 300) ? 'hit' : 'unknown';
+}
+
+type AutoResolution =
+  | { kind: 'single'; backend: RouterBackendRow }
+  | { kind: 'not-found' }
+  | { kind: 'ambiguous'; backends: RouterBackendRow[] }
+  | { kind: 'unavailable' };
+
+interface ProbeCandidatesInput {
+  candidates: RouterBackendRow[];
+  volumePath: string;
+  incoming: Request;
+  routerOrigin: string;
+  timeoutMs: number;
+}
+
+async function probeCandidateBackends(input: ProbeCandidatesInput): Promise<AutoResolution> {
+  const settled = await Promise.allSettled(
+    input.candidates.map(async (backend) => {
+      const target = joinBackendUrl(backend.base_url, input.volumePath);
+      const headers = buildProxiedHeaders(input.incoming, input.routerOrigin, backend.base_url);
+      headers.set('Depth', '0');
+      headers.set('Content-Type', 'application/xml');
+      const res = await fetchWithTimeout(
+        new Request(target),
+        { method: 'PROPFIND', headers, redirect: 'manual', body: VOLUME_PROBE_BODY },
+        input.timeoutMs,
+      );
+      // Drain so workers can reuse the connection; status is all we keep.
+      await res.arrayBuffer().catch(() => undefined);
+      return { backend, signal: classifyProbeStatus(res.status) };
+    }),
+  );
+  const hits: RouterBackendRow[] = [];
+  const authHits: RouterBackendRow[] = [];
+  let unknown = 0;
+  const probed = settled.map((r) =>
+    r.status === 'fulfilled' ? r.value : { backend: null, signal: 'unknown' as ProbeSignal },
+  );
+  for (const p of probed) {
+    if (p.signal === 'hit' && p.backend !== null) hits.push(p.backend);
+    if (p.signal === 'auth' && p.backend !== null) authHits.push(p.backend);
+    if (p.signal === 'unknown') unknown += 1;
+  }
+  if (hits.length === 1) return { kind: 'single', backend: hits[0] };
+  if (hits.length > 1) return { kind: 'ambiguous', backends: hits };
+  // No strong hit: a lone auth-gated candidate still owns the volume — route
+  // there so the caller gets the backend's real 401/403 verbatim.
+  if (authHits.length === 1) return { kind: 'single', backend: authHits[0] };
+  if (authHits.length > 1) return { kind: 'ambiguous', backends: authHits };
+  return ({ kind: unknown > 0 ? 'unavailable' : 'not-found' });
+}
+
 function truncateSnippet(value: string, max = 200): string {
   const flat = value.replaceAll(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
@@ -186,5 +257,8 @@ export {
   getProxyTimeoutMs,
   stripTrailingSlashes,
   stripSlashes,
+  VOLUME_PROBE_BODY,
+  classifyProbeStatus,
+  probeCandidateBackends,
 };
-export type { BackendResolution };
+export type { BackendResolution, AutoResolution, ProbeSignal };
