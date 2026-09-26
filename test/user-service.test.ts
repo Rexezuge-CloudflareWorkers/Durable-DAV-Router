@@ -5,7 +5,9 @@ import type { UserDAO } from '@durable-dav-router/backend-data/dao';
 import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
 
 function fakeDao(seed: Array<{ email: string }> = []) {
-  const rows = new Map(seed.map((r) => [r.email, r]));
+  // Annotated: without it the Map's value type is inferred from `seed` alone,
+  // so the `created_at` the upsert stores is a type error on the next line.
+  const rows = new Map<string, { email: string; created_at?: number }>(seed.map((r) => [r.email, r]));
   return {
     calls: [] as string[],
     upsertUser: vi.fn(async (email: string, _now: number) => {

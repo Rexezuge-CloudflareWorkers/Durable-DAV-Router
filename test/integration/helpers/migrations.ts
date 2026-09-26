@@ -35,7 +35,7 @@ function splitSql(sql: string): string[] {
     // `CREATE [TEMP|TEMPORARY] TRIGGER` opens a body; a table merely named
     // "trigger" (`CREATE TABLE trigger`) must not. The word before TRIGGER
     // disambiguates.
-    if (upper === 'TRIGGER' && ['CREATE', 'TEMP', 'TEMPORARY'].includes(recentKeywords[recentKeywords.length - 2] ?? '')) {
+    if (upper === 'TRIGGER' && ['CREATE', 'TEMP', 'TEMPORARY'].includes(recentKeywords.at(-2) ?? '')) {
       inTrigger = true;
       triggerDepth = 0;
     } else if (inTrigger && upper === 'BEGIN') {
@@ -51,7 +51,6 @@ function splitSql(sql: string): string[] {
   let i = 0;
   while (i < sql.length) {
     const ch = sql[i];
-    const next = sql[i + 1] ?? '';
 
     if (inLineComment) {
       current += ch;
@@ -59,6 +58,7 @@ function splitSql(sql: string): string[] {
       i++;
       continue;
     }
+    const next = sql[i + 1] ?? '';
     if (inBlockComment) {
       current += ch;
       if (ch === '*' && next === '/') {
@@ -105,7 +105,7 @@ function splitSql(sql: string): string[] {
       i++;
       continue;
     }
-    if (ch === "'" || ch === '"' || ch === '`') {
+    if (["'", '"', '`'].includes(ch)) {
       inString = true;
       stringChar = ch;
       current += ch;
@@ -133,13 +133,15 @@ function splitSql(sql: string): string[] {
   return statements;
 }
 
-/** Executable statements for one migration file, comments stripped. */
+/**
+Executable statements for one migration file, comments stripped.
+*/
 function statementsFor(file: string): string[] {
   return splitSql(__INTEGRATION_MIGRATIONS__[file] ?? '').filter(
     (stmt) =>
       stmt
-        .replace(/--[^\n]*/g, '')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/--[^\n]*/g, '')
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
         .trim().length > 0,
   );
 }
@@ -161,12 +163,16 @@ async function applyFile(db: D1Database, file: string): Promise<void> {
   applied.add(file);
 }
 
-/** Migration filenames in lexical (apply) order. */
+/**
+Migration filenames in lexical (apply) order.
+*/
 export function migrationFiles(): string[] {
   return Object.keys(__INTEGRATION_MIGRATIONS__).sort();
 }
 
-/** Forget which migrations have run (test-isolation helper). */
+/**
+Forget which migrations have run (test-isolation helper).
+*/
 export function resetAppliedMigrations(): void {
   applied.clear();
 }
@@ -192,17 +198,21 @@ export async function applyMigrationsUpTo(db: D1Database, lastFile: string): Pro
   const all = migrationFiles();
   const cut = all.indexOf(lastFile);
   if (cut === -1) throw new Error(`Unknown migration file: ${lastFile}`);
-  for (const file of all.slice(0, cut + 1)) {
+  const upto = all.slice(0, cut + 1);
+  for (const file of upto) {
     await applyFile(db, file);
   }
 }
 
-/** Apply the migrations that follow `afterFile`. */
+/**
+Apply the migrations that follow `afterFile`.
+*/
 export async function applyMigrationsAfter(db: D1Database, afterFile: string): Promise<void> {
   const all = migrationFiles();
   const cut = all.indexOf(afterFile);
   if (cut === -1) throw new Error(`Unknown migration file: ${afterFile}`);
-  for (const file of all.slice(cut + 1)) {
+  const after = all.slice(cut + 1);
+  for (const file of after) {
     await applyFile(db, file);
   }
 }

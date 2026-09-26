@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 import { cloudflareTest, cloudflarePool } from '@cloudflare/vitest-pool-workers';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import path from 'node:path';
 
 const apiSrcPath = fileURLToPath(new URL('../../apps/api/src', import.meta.url));
 const backendDataSrcPath = fileURLToPath(new URL('../../packages/backend-data/src', import.meta.url));
@@ -12,14 +12,16 @@ const webdavSrcPath = fileURLToPath(new URL('../../packages/webdav/src', import.
 const sharedSrcPath = fileURLToPath(new URL('../../packages/shared/src', import.meta.url));
 const backendServicesSrcPath = fileURLToPath(new URL('../../packages/backend-services/src', import.meta.url));
 
-const migrationsDir = resolve(fileURLToPath(new URL('../../migrations', import.meta.url)));
+const migrationsDir = path.resolve(fileURLToPath(new URL('../../migrations', import.meta.url)));
 const migrationFiles = readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
-  .sort();
+  // Explicit numeric collation: `0001`, `0002`, … must apply in order, and a
+  // default string sort is locale-dependent.
+  .sort((a, b) => a.localeCompare(b, 'en'));
 // Per-file map, not one concatenated blob: a test that seeds data *between*
 // migrations (the cascade-wipe regression) needs to stop at a boundary.
 const migrationMap: Record<string, string> = Object.fromEntries(
-  migrationFiles.map((f) => [f, readFileSync(resolve(migrationsDir, f), 'utf-8')]),
+  migrationFiles.map((f) => [f, readFileSync(path.resolve(migrationsDir, f), 'utf8')]),
 );
 
 export default defineConfig({

@@ -115,11 +115,13 @@ const BACKENDS_TWO: BackendSeed[] = [
   { id: '2', owner_email: 'other@example.com', slug: 'b', base_url: 'https://b.example.com', backend_username: 'owner' },
 ];
 
-/** Fetch stub where volume-root `PROPFIND Depth: 0` probes get per-origin statuses. */
+/**
+Fetch stub where volume-root `PROPFIND Depth: 0` probes get per-origin statuses.
+*/
 function stubFetchWithProbes(probeStatusByOrigin: Record<string, number>, forwardStatus = 207) {
   const calls: CapturedFetch[] = [];
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+    const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
     calls.push({ url, init: init ?? {} });
     const headers = new Headers((init?.headers ?? {}) as HeadersInit);
     const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0' && !url.includes('/folder');
@@ -129,7 +131,7 @@ function stubFetchWithProbes(probeStatusByOrigin: Record<string, number>, forwar
       return new Response(status === 207 ? '<ok/>' : 'probe', { status });
     }
     const status = forwardStatus;
-    const noBody = status === 204 || status === 205 || status === 304;
+    const noBody = [204, 205, 304].includes(status);
     return new Response(noBody ? null : status === 401 ? 'unauthorized' : '<ok/>', {
       status,
       headers:
@@ -480,7 +482,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
   it('stale hits self-heal: forward 404 evicts and re-resolves', async () => {
     const calls: CapturedFetch[] = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
       const origin = new URL(url).origin;
       calls.push({ url, init: init ?? {} });
       const headers = new Headers((init?.headers ?? {}) as HeadersInit);
@@ -642,7 +644,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
   it('drops 502/504 from the staleness set so a backend blip is not mistaken for a moved volume', async () => {
     const calls: CapturedFetch[] = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
       calls.push({ url, init: init ?? {} });
       const headers = new Headers((init?.headers ?? {}) as HeadersInit);
       if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
@@ -676,7 +678,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     // twice — once to each of two backends.
     const forwards: string[] = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
       const origin = new URL(url).origin;
       const headers = new Headers((init?.headers ?? {}) as HeadersInit);
       if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {

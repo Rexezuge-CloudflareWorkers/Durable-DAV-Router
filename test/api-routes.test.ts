@@ -42,21 +42,15 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
         async first<T>(): Promise<T | null> {
           const [v0, v1] = state.values as string[];
           if (state.sql.includes('slug_ci = ?')) {
-            const found = [...rows.values()].find((r) => eq(r.owner_email, String(v0)) && eq(r.slug_ci, String(v1)));
+            const found = [...rows.values()].find((r) => eq(r.owner_email, v0) && eq(r.slug_ci, v1));
             return (found ?? null) as T | null;
           }
-          if (state.sql.includes('WHERE id = ?')) return (rows.get(String(v0)) ?? null) as T | null;
-          if (state.sql.includes('COUNT(*)')) {
-            return { cnt: [...rows.values()].filter((r) => eq(r.owner_email, String(v0))).length } as T;
-          }
-          return null;
+          if (state.sql.includes('WHERE id = ?')) return (rows.get(v0) ?? null) as T | null;
+          return state.sql.includes('COUNT(*)') ? ({ cnt: [...rows.values()].filter((r) => eq(r.owner_email, v0)).length } as T) : null;
         },
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
-          if (state.sql.includes('backend_username_ci = ?')) {
-            return { results: [...rows.values()].filter((r) => eq(r.backend_username_ci, String(v0))) as T[] };
-          }
-          return { results: [...rows.values()].filter((r) => eq(r.owner_email, String(v0))) as T[] };
+          return ({ results: state.sql.includes('backend_username_ci = ?') ? [...rows.values()].filter((r) => eq(r.backend_username_ci, v0)) as T[] : [...rows.values()].filter((r) => eq(r.owner_email, v0)) as T[] });
         },
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
           const sql = state.sql;
@@ -76,9 +70,9 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
               string,
               number,
             ];
-            const owned = [...rows.values()].filter((r) => eq(r.owner_email, String(ownerForQuota)));
+            const owned = [...rows.values()].filter((r) => eq(r.owner_email, ownerForQuota));
             if (owned.length >= max) return { success: true, meta: { changes: 0 } };
-            if (owned.some((r) => eq(r.owner_email, String(ownerForQuota)) && eq(r.slug_ci, String(slugCi)))) {
+            if (owned.some((r) => eq(r.owner_email, ownerForQuota) && eq(r.slug_ci, slugCi))) {
               return { success: true, meta: { changes: 0 } };
             }
             rows.set(id, {
@@ -100,8 +94,11 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
           if (sql.startsWith('UPDATE router_backends')) {
             // Column names come from the SET clause, values from the bindings
             // in the same order; the trailing binding is the id.
-            const sets = [...sql.matchAll(/(\w+) = \?/g)].map((m) => m[1]);
-            const id = String(state.values[state.values.length - 1]);
+            const sets = sql
+              .slice(sql.indexOf('SET ') + 'SET '.length)
+              .split(',')
+              .map((clause) => clause.split('=', 1)[0]?.trim() ?? '');
+            const id = String(state.values.at(-1));
             const cur = rows.get(id);
             if (cur) {
               const patch: Record<string, unknown> = { updated_at: state.values[0] };
@@ -129,16 +126,18 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
 function stubApp() {
   const routes = new Map<string, Handler>();
   const app = {
-    get: (path: string, h: Handler) => void routes.set(`GET ${path}`, h),
-    post: (path: string, h: Handler) => void routes.set(`POST ${path}`, h),
-    patch: (path: string, h: Handler) => void routes.set(`PATCH ${path}`, h),
-    delete: (path: string, h: Handler) => void routes.set(`DELETE ${path}`, h),
-    on: (_m: unknown, path: string, h: Handler) => void routes.set(`ON ${path}`, h),
+    get: (path: string, h: Handler) => routes.set(`GET ${path}`, h),
+    post: (path: string, h: Handler) => routes.set(`POST ${path}`, h),
+    patch: (path: string, h: Handler) => routes.set(`PATCH ${path}`, h),
+    delete: (path: string, h: Handler) => routes.set(`DELETE ${path}`, h),
+    on: (_m: unknown, path: string, h: Handler) => routes.set(`ON ${path}`, h),
   };
   return { app, routes };
 }
 
-/** Optional raw body, so malformed-JSON cases are expressible. */
+/**
+Optional raw body, so malformed-JSON cases are expressible.
+*/
 function fakeContext(opts: {
   method?: string;
   url?: string;
@@ -164,8 +163,7 @@ function fakeContext(opts: {
       query: (k: string) => parsed.searchParams.get(k) ?? undefined,
       header: (k: string) => raw.headers.get(k) ?? undefined,
       json: async () => {
-        if (opts.rawBody !== undefined) return JSON.parse(opts.rawBody);
-        return opts.body ?? {};
+        return opts.rawBody === undefined ? opts.body ?? {} : JSON.parse(opts.rawBody);
       },
     },
     env: opts.env,
@@ -176,11 +174,13 @@ function fakeContext(opts: {
 
 const ENV = { ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'test@example.com' };
 
-let fetchStub: ReturnType<typeof vi.fn>;
+// A holder object, not a reassigned module-level binding: `beforeEach` needs
+// to install a fresh stub while individual tests re-implement it.
+const stubs: { fetch: ReturnType<typeof vi.fn> } = { fetch: vi.fn() };
 
 beforeEach(() => {
-  fetchStub = vi.fn(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
-  vi.stubGlobal('fetch', fetchStub);
+  stubs.fetch = vi.fn(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  vi.stubGlobal('fetch', stubs.fetch);
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -300,7 +300,7 @@ describe('POST /user/backends', () => {
   });
 
   it('records a liveness probe without failing creation when the backend is down', async () => {
-    fetchStub.mockImplementation(async () => {
+    stubs.fetch.mockImplementation(async () => {
       throw new Error('DNS failure');
     });
     const { routes, env } = setup();
@@ -352,28 +352,35 @@ describe('GET /user/backends', () => {
   });
 });
 
+/**
+ * A router with exactly one registered backend row. Both the CRUD suite and the
+ * `/:slug/me` suite need this identical fixture; it used to be copy-pasted into
+ * each, so a column added to `router_backends` had to be remembered twice.
+ */
+function oneBackendRow() {
+  const { db, rows } = fakeDb();
+  const now = Math.floor(Date.now() / 1000);
+  rows.set('1', {
+    id: '1',
+    owner_email: 'test@example.com',
+    slug: 'office',
+    slug_ci: 'office',
+    base_url: 'https://b.com',
+    display_name: null,
+    created_at: now,
+    updated_at: now,
+    last_seen_at: null,
+    last_status: null,
+    backend_username: null,
+    backend_username_ci: null,
+  });
+  const { app, routes } = stubApp();
+  registerBackendRoutes(app as never);
+  return { routes, env: { ...ENV, DB: db }, rows };
+}
+
 describe('GET/PATCH/DELETE /user/backends/:slug', () => {
-  const withBackend = () => {
-    const { db, rows } = fakeDb();
-    const now = Math.floor(Date.now() / 1000);
-    rows.set('1', {
-      id: '1',
-      owner_email: 'test@example.com',
-      slug: 'office',
-      slug_ci: 'office',
-      base_url: 'https://b.com',
-      display_name: null,
-      created_at: now,
-      updated_at: now,
-      last_seen_at: null,
-      last_status: null,
-      backend_username: null,
-      backend_username_ci: null,
-    });
-    const { app, routes } = stubApp();
-    registerBackendRoutes(app as never);
-    return { routes, env: { ...ENV, DB: db }, rows };
-  };
+  const withBackend = oneBackendRow;
 
   it('returns 404 for an unknown slug', async () => {
     const { routes, env } = withBackend();
@@ -443,31 +450,11 @@ describe('GET/PATCH/DELETE /user/backends/:slug', () => {
 });
 
 describe('GET /user/backends/:slug/me', () => {
-  const setup = () => {
-    const { db, rows } = fakeDb();
-    const now = Math.floor(Date.now() / 1000);
-    rows.set('1', {
-      id: '1',
-      owner_email: 'test@example.com',
-      slug: 'office',
-      slug_ci: 'office',
-      base_url: 'https://b.com',
-      display_name: null,
-      created_at: now,
-      updated_at: now,
-      last_seen_at: null,
-      last_status: null,
-      backend_username: null,
-      backend_username_ci: null,
-    });
-    const { app, routes } = stubApp();
-    registerBackendRoutes(app as never);
-    return { routes, env: { ...ENV, DB: db }, rows };
-  };
+  const setup = oneBackendRow;
 
   it('returns the backend username and caches it for owner routing', async () => {
-    fetchStub.mockImplementation(
-      async () => new Response(JSON.stringify({ username: 'alice' }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    stubs.fetch.mockImplementation(
+      async () => Response.json({ username: 'alice' }, { status: 200, headers: { 'Content-Type': 'application/json' } }),
     );
     const { routes, env, rows } = setup();
     const res = await call(routes, 'GET /user/backends/:slug/me', fakeContext({ env, params: { slug: 'office' } }));
@@ -479,21 +466,21 @@ describe('GET /user/backends/:slug/me', () => {
   });
 
   it('forwards the caller credentials to the backend', async () => {
-    fetchStub.mockImplementation(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    stubs.fetch.mockImplementation(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const { routes, env } = setup();
     await call(
       routes,
       'GET /user/backends/:slug/me',
       fakeContext({ env, params: { slug: 'office' }, headers: { Authorization: 'Bearer access-jwt', Cookie: 'CF_Authorization=abc' } }),
     );
-    const init = fetchStub.mock.calls.at(-1)?.[1] as RequestInit;
+    const init = stubs.fetch.mock.calls.at(-1)?.[1] as RequestInit;
     const headers = new Headers(init.headers);
     expect(headers.get('Authorization')).toBe('Bearer access-jwt');
     expect(headers.get('Cookie')).toBe('CF_Authorization=abc');
   });
 
   it('passes a backend auth failure through with its own status', async () => {
-    fetchStub.mockImplementation(async () => new Response('nope', { status: 403 }));
+    stubs.fetch.mockImplementation(async () => new Response('nope', { status: 403 }));
     const { routes, env, rows } = setup();
     const res = await call(routes, 'GET /user/backends/:slug/me', fakeContext({ env, params: { slug: 'office' } }));
     expect(res.status).toBe(403);
@@ -502,7 +489,7 @@ describe('GET /user/backends/:slug/me', () => {
   });
 
   it('treats an unparsable body as a null username', async () => {
-    fetchStub.mockImplementation(async () => new Response('<html>', { status: 200, headers: { 'Content-Type': 'text/html' } }));
+    stubs.fetch.mockImplementation(async () => new Response('<html>', { status: 200, headers: { 'Content-Type': 'text/html' } }));
     const { routes, env } = setup();
     const res = await call(routes, 'GET /user/backends/:slug/me', fakeContext({ env, params: { slug: 'office' } }));
     expect((await res.json()) as { username: string | null }).toEqual({ slug: 'office', username: null });
@@ -547,7 +534,7 @@ describe('GET /user/volumes fan-out', () => {
   };
 
   it('merges volumes from every backend and tags each with its origin', async () => {
-    fetchStub.mockImplementation(async (input: RequestInfo | URL) => {
+    stubs.fetch.mockImplementation(async (input: RequestInfo | URL) => {
       const origin = new URL(String(input instanceof Request ? input.url : input)).origin;
       return Response.json({ volumes: [{ name: `vol-${origin.slice(-1)}` }] });
     });
@@ -562,10 +549,9 @@ describe('GET /user/volumes fan-out', () => {
   it('fails soft per backend so one outage does not blank the dashboard', async () => {
     // This is the behavior that `.catch(() => [])` destroyed: an unreachable
     // backend used to look like "you have no backends".
-    fetchStub.mockImplementation(async (input: RequestInfo | URL) => {
+    stubs.fetch.mockImplementation(async (input: RequestInfo | URL) => {
       const origin = new URL(String(input instanceof Request ? input.url : input)).origin;
-      if (origin === 'https://b.com') return new Response('down', { status: 502 });
-      return Response.json({ volumes: [{ name: 'ok' }] });
+      return origin === 'https://b.com' ? new Response('down', { status: 502 }) : Response.json({ volumes: [{ name: 'ok' }] });
     });
     const { routes, env } = twoBackends();
     const res = await call(routes, 'GET /user/volumes', fakeContext({ env }));
@@ -576,12 +562,12 @@ describe('GET /user/volumes fan-out', () => {
   });
 
   it('restricts the fan-out to one backend with ?backend=', async () => {
-    fetchStub.mockImplementation(async () => Response.json({ volumes: [] }));
+    stubs.fetch.mockImplementation(async () => Response.json({ volumes: [] }));
     const { routes, env } = twoBackends();
     const res = await call(routes, 'GET /user/volumes', fakeContext({ env, url: 'https://router.example.com/user/volumes?backend=a' }));
     // Only the selected backend is contacted, and its status is still reported
     // so the dashboard can badge it.
-    expect(fetchStub).toHaveBeenCalledOnce();
+    expect(stubs.fetch).toHaveBeenCalledOnce();
     const body = (await res.json()) as { backends: Array<{ slug: string }> };
     expect(body.backends).toHaveLength(1);
     expect(body.backends[0]?.slug).toBe('a');
@@ -621,7 +607,7 @@ describe('POST /user/volumes', () => {
   };
 
   it('proxies creation to the lone backend and caches the returned owner', async () => {
-    fetchStub.mockImplementation(async () => Response.json({ owner: 'alice', name: 'photos' }));
+    stubs.fetch.mockImplementation(async () => Response.json({ owner: 'alice', name: 'photos' }));
     const { routes, env, rows } = oneBackend();
     const res = await call(routes, 'POST /user/volumes', fakeContext({ method: 'POST', env, body: { name: 'photos' } }));
     expect(res.status).toBe(200);
@@ -630,14 +616,14 @@ describe('POST /user/volumes', () => {
   });
 
   it('never leaks the ?backend= selector to the backend', async () => {
-    fetchStub.mockImplementation(async () => Response.json({ owner: 'alice' }));
+    stubs.fetch.mockImplementation(async () => Response.json({ owner: 'alice' }));
     const { routes, env } = oneBackend();
     await call(
       routes,
       'POST /user/volumes',
       fakeContext({ method: 'POST', env, url: 'https://router.example.com/user/volumes?backend=a', body: {} }),
     );
-    expect(String(fetchStub.mock.calls.at(-1)?.[0])).not.toContain('backend=');
+    expect(String(stubs.fetch.mock.calls.at(-1)?.[0])).not.toContain('backend=');
   });
 
   it('requires a selector when several backends exist, listing the candidates', async () => {
@@ -670,13 +656,13 @@ describe('POST /user/volumes', () => {
     // already knows them from the dashboard.
     const body = (await res.json()) as { Exception: { Type: string }; backends: string[] };
     expect(body.Exception.Type).toBe('Conflict');
-    expect(body.backends.sort()).toEqual(['a', 'b']);
+    expect([...body.backends].sort()).toEqual(['a', 'b']);
   });
 
   it('accepts the X-Backend header as a selector when there is no query string', async () => {
     // Some clients cannot set a query string; the header is the documented
     // alternative and must behave identically.
-    fetchStub.mockImplementation(async () => Response.json({ owner: 'alice' }));
+    stubs.fetch.mockImplementation(async () => Response.json({ owner: 'alice' }));
     const { routes, env, rows } = oneBackend();
     const res = await call(routes, 'POST /user/volumes', fakeContext({ method: 'POST', env, body: {}, headers: { 'X-Backend': 'a' } }));
     expect(res.status).toBe(200);
@@ -686,7 +672,7 @@ describe('POST /user/volumes', () => {
   it('reports 502 when the selected backend is unreachable', async () => {
     // A transport failure is a real answer for a proxy, and 502 keeps it
     // distinguishable from a backend-authored 404.
-    fetchStub.mockImplementation(async () => {
+    stubs.fetch.mockImplementation(async () => {
       throw new Error('connection refused');
     });
     const { routes, env } = oneBackend();
@@ -695,8 +681,8 @@ describe('POST /user/volumes', () => {
   });
 
   it('reports 504 when the selected backend times out', async () => {
-    fetchStub.mockImplementation(async () => {
-      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    stubs.fetch.mockImplementation(async () => {
+      throw new DOMException('aborted', 'AbortError');
     });
     const { routes, env } = oneBackend();
     const res = await call(routes, 'POST /user/volumes', fakeContext({ method: 'POST', env, body: {} }));

@@ -76,16 +76,30 @@ function splitResponses(xml: string): string[] {
 /**
  * Parses an RFC 4918 `207 multistatus` body into directory entries.
  * Namespace-prefix agnostic (`D:`, `d:`, or none) so it stays robust across
- * server renderers. The `basePath` is the inner path that was listed (used
- * to drop the self-response and to derive child names).
+ * server renderers.
+ *
+ * `volumePrefix` is the volume's public base (`/<owner>/<volume>`) as it appears
+ * in the hrefs of the backend this router fronts. RFC 4918 §8.3 requires every
+ * `DAV:href` to be a URI reference that resolves against the *request* URL, and
+ * the request URL here is the backend's own browser plane
+ * (`/user/volumes/<owner>/<volume>/files/…`), so hrefs arrive carrying the whole
+ * base. The router forwards upstream 207 bodies verbatim
+ * (`RouterDavProxyRoutes` returns `upstream.body` untouched), so nothing strips
+ * it on the way through. It is stripped here to recover the volume-relative
+ * path the UI works in — without that, the volume root's own `<response>` is
+ * never recognised as the self-response, every path carries the base twice, and
+ * each follow-up request lands outside the volume.
+ *
+ * The parser still tolerates hrefs *without* the prefix, so it keeps working
+ * against a backend that predates the §8.3 change.
  */
-export function parseMultistatus(xml: string, basePath: string): DavEntry[] {
+export function parseMultistatus(xml: string, basePath: string, volumePrefix = ''): DavEntry[] {
   const normalizedBase = stripSlashes(basePath);
+  const prefix = stripSlashes(volumePrefix);
   const entries: DavEntry[] = [];
   for (const block of splitResponses(xml)) {
     const rawHref = pickTag(block, 'href');
     if (!rawHref) continue;
-    // Server hrefs are root-relative inner paths (`/`, `/child`, `/dir/`).
     let hrefPath = decodeHref(rawHref);
     const queryAt = hrefPath.indexOf('?');
     if (queryAt !== -1) hrefPath = hrefPath.slice(0, queryAt);
@@ -98,6 +112,15 @@ export function parseMultistatus(xml: string, basePath: string): DavEntry[] {
       // keep raw
     }
     hrefPath = stripSlashes(hrefPath);
+    // Drop the volume prefix so `path` stays volume-relative. Matched
+    // case-insensitively: volume keys are lowercased at the backend's front
+    // door, but a `Destination`/href may preserve the original casing, and the
+    // two strings are always the same length so slicing stays correct.
+    if (prefix !== '' && hrefPath.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)) {
+      hrefPath = hrefPath.slice(prefix.length + 1);
+    } else if (hrefPath.toLowerCase() === prefix.toLowerCase()) {
+      hrefPath = '';
+    }
     // Skip the self response (the listed collection itself).
     if (hrefPath === normalizedBase) continue;
 

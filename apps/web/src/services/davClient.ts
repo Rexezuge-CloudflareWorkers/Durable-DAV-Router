@@ -2,6 +2,17 @@ import type { DavEntry } from '../types';
 import { BackendError, readDav } from '../lib/api';
 import { parseMultistatus, stripSlashes } from '../lib/davXml';
 
+/**
+ * Public volume base, as it appears in `DAV:href` values (RFC 4918 §8.3).
+ *
+ * The upstream backend is a Durable-DAV deployment whose hrefs carry
+ * `/<owner>/<volume>`; `parseMultistatus` needs that prefix to recover
+ * volume-relative paths.
+ */
+function davBase(owner: string, volume: string): string {
+  return `/${owner}/${volume}`;
+}
+
 function volumeBase(owner: string, volume: string, backend?: string | null): string {
   // Router browser plane: same path shape as the backend
   // (`/user/volumes/:owner/:volume/files`), authed via the Access session.
@@ -10,11 +21,42 @@ function volumeBase(owner: string, volume: string, backend?: string | null): str
   return backend ? `${base}?backend=${encodeURIComponent(backend)}` : base;
 }
 
+/**
+ * Origin to resolve relative request URLs against.
+ *
+ * `entryUrl` returns a root-relative path, so `moveEntry`/`copyEntry` have to
+ * absolutise it for the `Destination` header. `globalThis.location` exists in a
+ * browser but not in a worker or a test runner, and reading `.origin` off
+ * `undefined` throws before the request is ever made — so the two must resolve it
+ * the same guarded way.
+ */
+function requestOrigin(): string {
+  return globalThis.location?.origin ?? 'https://localhost';
+}
+
 function entryUrl(owner: string, volume: string, innerPath: string, backend?: string | null): string {
-  const clean = stripSlashes(innerPath);
+  // Defence in depth: even if a caller skips `cleanPath`, a `..` segment must
+  // never escape the volume base. `encodeURIComponent` leaves `.` alone, so
+  // the browser would otherwise resolve `..` out of
+  // `/user/volumes/<o>/<v>/files` and the request would leave the volume.
+  //
+  // The filter removes dot segments rather than resolving them, so a traversal
+  // attempt lands back inside the volume (`photos/../notes.txt` →
+  // `photos/notes.txt`) instead of escaping or failing. The containment check
+  // below is the second layer behind this filter, not the primary defence.
+  const clean = stripSlashes(innerPath)
+    .split('/')
+    .filter((segment) => segment !== '' && segment !== '.' && segment !== '..')
+    .join('/');
   const suffix = clean === '' ? '/' : `/${clean.split('/').map(encodeURIComponent).join('/')}`;
   const base = `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}/files`;
   const url = `${base}${suffix}`;
+  // Fail closed rather than emit a request outside the volume. The `?backend=`
+  // selector is appended only after this check, so it cannot affect the
+  // pathname being validated.
+  if (!new URL(url, requestOrigin()).pathname.startsWith(`${base}/`)) {
+    throw new Error('Refusing to build a DAV URL outside the volume base.');
+  }
   return backend ? `${url}${url.includes('?') ? '&' : '?'}backend=${encodeURIComponent(backend)}` : url;
 }
 
@@ -47,7 +89,7 @@ export async function listDirectory(owner: string, volume: string, innerPath: st
     body,
   });
   const xml = await readDav(response);
-  return parseMultistatus(xml, innerPath);
+  return parseMultistatus(xml, innerPath, davBase(owner, volume));
 }
 
 export async function createDirectory(owner: string, volume: string, innerPath: string, backend?: string | null): Promise<void> {
@@ -80,7 +122,7 @@ export async function moveEntry(
   overwrite = true,
   backend?: string | null,
 ): Promise<void> {
-  const destination = new URL(entryUrl(owner, volume, toPath, backend), globalThis.location.origin).href;
+  const destination = new URL(entryUrl(owner, volume, toPath, backend), requestOrigin()).href;
   await davFetch(entryUrl(owner, volume, fromPath, backend), {
     method: 'MOVE',
     headers: { Destination: destination, Overwrite: overwrite ? 'T' : 'F' },
@@ -95,7 +137,7 @@ export async function copyEntry(
   overwrite = true,
   backend?: string | null,
 ): Promise<void> {
-  const destination = new URL(entryUrl(owner, volume, toPath, backend), globalThis.location.origin).href;
+  const destination = new URL(entryUrl(owner, volume, toPath, backend), requestOrigin()).href;
   await davFetch(entryUrl(owner, volume, fromPath, backend), {
     method: 'COPY',
     headers: { Destination: destination, Overwrite: overwrite ? 'T' : 'F' },

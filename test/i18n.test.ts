@@ -47,7 +47,8 @@ describe('backend strings (en)', () => {
   it('gives every locale a non-empty translation for every key', () => {
     // A missing or blank string would surface to a client as an empty `Message`.
     for (const locale of SUPPORTED_BACKEND_LOCALES) {
-      for (const [key, value] of Object.entries(BACKEND_STRINGS[locale].common)) {
+      const entries = Object.entries(BACKEND_STRINGS[locale].common);
+      for (const [key, value] of entries) {
         expect(typeof value, `${locale}:${key}`).toBe('string');
         expect(value.trim().length, `${locale}:${key}`).toBeGreaterThan(0);
       }
@@ -55,7 +56,7 @@ describe('backend strings (en)', () => {
   });
 
   it('keeps {placeholder} parity across all locales', () => {
-    const varsOf = (value: string): string[] => [...new Set(value.match(/\{(\w+)\}/g) ?? [])].sort();
+    const varsOf = (value: string): string[] => [...new Set(value.match(/\{\w+\}/g) || [])].sort();
     const collect = (node: object, out: Map<string, string[]>): void => {
       for (const [key, value] of Object.entries(node)) {
         if (value !== null && typeof value === 'object') collect(value as object, out);

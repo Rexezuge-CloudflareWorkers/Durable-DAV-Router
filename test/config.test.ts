@@ -4,7 +4,10 @@ import { AuthConfig } from '@durable-dav-router/backend-runtime/config';
 import { RouterLimits } from '@durable-dav-router/backend-runtime/config';
 import { EnvParser } from '@durable-dav-router/backend-runtime/config';
 
-const config = (env: Record<string, unknown>) => AppConfiguration.fromEnv(env);
+// `fromEnv` takes `unknown` on purpose: it is called from fail-soft paths where
+// the env object may not be shaped as expected, and must not throw there. The
+// parameter is widened to match so the null case below is expressible.
+const config = (env: unknown) => AppConfiguration.fromEnv(env);
 
 describe('EnvParser', () => {
   it('falls back to the default when unset or unparsable', () => {

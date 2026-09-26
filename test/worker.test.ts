@@ -2,7 +2,6 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { DurableDavRouterWorker } from '../apps/api/src/workers/DurableDavRouterWorker';
 import { SPA_HTML } from '../apps/api/src/generated/spa-shell';
 import { resetRateLimitForTests } from '../apps/api/src/middleware/rateLimit';
-import type { AbstractEntrypointWorker } from '../apps/api/src/workers/DurableDavRouterWorker';
 
 type Fetchable = { fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> };
 
@@ -27,7 +26,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Typo-tolerant access to the protected `onRequest` for config-warning tests. */
+/**
+Typo-tolerant access to the protected `onRequest` for config-warning tests.
+*/
 const withConfigProbe = (w: object) => w as unknown as { onRequest: (r: Request, e: unknown, c: unknown) => Promise<Response> };
 
 describe('worker bootstrap', () => {
@@ -71,7 +72,8 @@ describe('worker bootstrap', () => {
   });
 
   it('404s an unknown API path', async () => {
-    expect((await call(worker(), '/not/a/route')).status).toBe(404);
+    const res = await call(worker(), '/not/a/route');
+    expect(res.status).toBe(404);
   });
 });
 
@@ -86,7 +88,7 @@ describe('configuration validation runs once per isolate', () => {
     expect(spy.mock.calls.some((c) => String(c[0]).includes('MAX_BACKENDS_PER_USER'))).toBe(true);
     await withConfigProbe(w).onRequest(new Request('https://router.example.com/health'), { ...ENV, MAX_BACKENDS_PER_USER: 'lots' }, ctx());
     // Validated once, not per request: a per-request log would be noise and cost.
-    expect(spy.mock.calls.length).toBe(first);
+    expect(spy.mock.calls).toHaveLength(first);
   });
 
   it('says nothing for a clean configuration', async () => {
@@ -156,7 +158,8 @@ describe('rate limiting is wired into the app', () => {
     const w = worker();
     const statuses: number[] = [];
     for (let i = 0; i < 130; i += 1) {
-      statuses.push((await call(w, '/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.5' } })).status);
+      const res = await call(w, '/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.5' } });
+      statuses.push(res.status);
     }
     expect(statuses).toContain(429);
   });
@@ -187,7 +190,10 @@ describe('rate limiting is wired into the app', () => {
   it('does not limit the health endpoint', async () => {
     // A health check must never be throttled, or a deploy looks unhealthy.
     const w = worker();
-    for (let i = 0; i < 20; i += 1) expect((await call(w, '/health')).status).toBe(200);
+    for (let i = 0; i < 20; i += 1) {
+      const res = await call(w, '/health');
+      expect(res.status).toBe(200);
+    }
   });
 });
 
@@ -200,7 +206,8 @@ describe('CORS preflight', () => {
   });
 
   it('answers OPTIONS on a DAV path', async () => {
-    expect((await call(worker(), '/owner/volume', { method: 'OPTIONS' })).status).toBe(204);
+    const res = await call(worker(), '/owner/volume', { method: 'OPTIONS' });
+    expect(res.status).toBe(204);
   });
 
   it('does not grant a non-allow-listed origin', async () => {
@@ -212,8 +219,10 @@ describe('CORS preflight', () => {
 describe('AbstractEntrypointWorker contract', () => {
   it('converts a thrown error into a 500 rather than rejecting', async () => {
     // The base class is the outermost boundary; a rejection here would surface
-    // as an unhandled worker error with no response at all.
-    class Boom extends (DurableDavRouterWorker as unknown as { new (): AbstractEntrypointWorker }) {
+    // as an unhandled worker error with no response at all. Extending through
+    // the `DurableDavRouterWorker` constructor keeps the real `onRequest`
+    // signature in the `override` check below.
+    class Boom extends DurableDavRouterWorker {
       protected override onRequest(): Promise<Response> {
         return Promise.reject(new Error('boom'));
       }

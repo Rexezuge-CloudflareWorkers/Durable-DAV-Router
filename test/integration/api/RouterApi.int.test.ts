@@ -128,8 +128,10 @@ describe('router authenticated API (integration)', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slug, baseUrl: 'https://backend.example.com' }),
       });
-      expect((await get(`/user/backends/${slug}`)).status).toBe(200);
-      expect((await get('/user/backends/does-not-exist')).status).toBe(404);
+      const found = await get(`/user/backends/${slug}`);
+      expect(found.status).toBe(200);
+      const missing = await get('/user/backends/does-not-exist');
+      expect(missing.status).toBe(404);
     });
 
     it('updates and deletes a backend', async () => {
@@ -146,10 +148,13 @@ describe('router authenticated API (integration)', () => {
         body: JSON.stringify({ displayName: 'Renamed' }),
       });
       expect(patched.status).toBe(200);
-      expect(((await patched.json()) as { displayName: string }).displayName).toBe('Renamed');
+      const patchedBody = (await patched.json()) as { displayName: string };
+      expect(patchedBody.displayName).toBe('Renamed');
 
-      expect((await get(`/user/backends/${slug}`, { method: 'DELETE' })).status).toBe(200);
-      expect((await get(`/user/backends/${slug}`)).status).toBe(404);
+      const deleted = await get(`/user/backends/${slug}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      const gone = await get(`/user/backends/${slug}`);
+      expect(gone.status).toBe(404);
     });
 
     it('returns the canonical error envelope for a 404', async () => {
@@ -224,7 +229,7 @@ describe('router authenticated API (integration)', () => {
       const result = await (env as unknown as TestEnv).DB.prepare(`EXPLAIN QUERY PLAN ${sql}`)
         .bind(...values)
         .all();
-      return result.results.map((row) => String((row as { detail?: string }).detail ?? '')).join(' | ');
+      return result.results.map((row) => ((row as { detail?: string }).detail ?? '')).join(' | ');
     };
 
     it('serves owner+slug lookups from an index', async () => {
@@ -293,7 +298,7 @@ describe('router authenticated API (integration)', () => {
       // More than one 50-row chunk, with case variants and blanks mixed in.
       const emails = Array.from({ length: 120 }, (_, i) => `Batch${i}-${Date.now()}@example.com`);
       for (const email of emails) await dao.upsertUser(email, now);
-      const found = await dao.getByEmails([...emails, emails[0]?.toUpperCase() ?? '', '', '   ', ...emails.map((e) => e.toUpperCase())]);
+      const found = await dao.getByEmails([...emails, emails[0]?.toUpperCase() ?? '', '', ' '.repeat(3), ...emails.map((e) => e.toUpperCase())]);
       expect(found).toHaveLength(emails.length);
     });
 
@@ -301,7 +306,7 @@ describe('router authenticated API (integration)', () => {
       const { UserDAO } = await import('@durable-dav-router/backend-data/dao');
       const dao = new UserDAO((env as unknown as TestEnv).DB as never);
       expect(await dao.getByEmails([])).toEqual([]);
-      expect(await dao.getByEmails(['', '   '])).toEqual([]);
+      expect(await dao.getByEmails(['', ' '.repeat(3)])).toEqual([]);
     });
   });
 

@@ -144,11 +144,15 @@ describe('executeD1WithRetry', () => {
   });
 
   it('rethrows a non-Error throw rather than swallowing it', async () => {
+    // A bare string is the subject matter: the point is that a thrown value
+    // which is not an `Error` still propagates unchanged.
+    const thrown = 'a bare string';
     await expect(
       executeD1WithRetry(async () => {
-        throw 'a bare string';
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- deliberately not an Error
+        throw thrown;
       }, 'read'),
-    ).rejects.toBe('a bare string');
+    ).rejects.toBe(thrown);
   });
 
   it('backs off between attempts rather than hammering immediately', async () => {

@@ -16,7 +16,6 @@ import { BACKEND_TYPE_TO_FALLBACK, BACKEND_TYPE_TO_I18N_KEY, toLocalizedErrorMes
 import { formatBytes, formatExpiryTimestamp, resolveLocale } from '../apps/web/src/lib/format';
 import { joinDavPath, parentDavPath, parseMultistatus } from '../apps/web/src/lib/davXml';
 import { cn } from '../apps/web/src/lib/utils';
-import { getBackendErrorMessage, isLikelyAuthError } from '../apps/web/src/lib/backendErrors';
 
 describe('BackendError', () => {
   it('carries the status and the backend error type', () => {
@@ -116,12 +115,12 @@ describe('readJson', () => {
   });
 
   it('throws a BackendError with the parsed message for a failure', async () => {
-    const res = new Response(JSON.stringify({ Exception: { Type: 'NotFound', Message: 'gone' } }), { status: 404 });
+    const res = Response.json({ Exception: { Type: 'NotFound', Message: 'gone' } }, { status: 404 });
     await expect(readJson(res)).rejects.toBeInstanceOf(BackendError);
   });
 
   it('propagates the status and type', async () => {
-    const res = new Response(JSON.stringify({ Exception: { Type: 'Conflict', Message: 'dupe' } }), { status: 409 });
+    const res = Response.json({ Exception: { Type: 'Conflict', Message: 'dupe' } }, { status: 409 });
     await readJson(res).catch((e: unknown) => {
       expect(e).toBeInstanceOf(BackendError);
       expect((e as BackendError).status).toBe(409);
@@ -158,13 +157,16 @@ describe('readDav', () => {
 });
 
 describe('API verbs', () => {
+  // `vi.stubGlobal` records the original and `vi.unstubAllGlobals` puts it back,
+  // which is safer than a hand-rolled save/restore (an exception thrown before
+  // the restore leaked the stub into the next test) and is the form the linter
+  // expects for replacing a global.
   const withFetch = async (impl: (url: string, init?: RequestInit) => Promise<Response>, run: () => Promise<unknown>): Promise<unknown> => {
-    const original = globalThis.fetch;
-    globalThis.fetch = impl as unknown as typeof fetch;
+    vi.stubGlobal('fetch', impl);
     try {
       return await run();
     } finally {
-      globalThis.fetch = original;
+      vi.unstubAllGlobals();
     }
   };
 
@@ -172,7 +174,7 @@ describe('API verbs', () => {
     const seen: string[] = [];
     await withFetch(
       async (url) => {
-        seen.push(String(url));
+        seen.push(url);
         return new Response('{}', { status: 200 });
       },
       () => apiGet('/user/backends', { backend: 'office' }),
@@ -184,7 +186,7 @@ describe('API verbs', () => {
     const seen: string[] = [];
     await withFetch(
       async (url) => {
-        seen.push(String(url));
+        seen.push(url);
         return new Response('{}', { status: 200 });
       },
       () => apiGet('/user/backends'),
@@ -264,9 +266,9 @@ describe('formatExpiryTimestamp', () => {
     // exactly on a bucket edge can round down by one depending on when the
     // second clock read lands. Assert the unit rather than the exact count.
     expect(formatExpiryTimestamp(now + 30)).toBe('Expires soon');
-    expect(formatExpiryTimestamp(now + 20 * 60)).toMatch(/^Expires in (19|20)m$/);
-    expect(formatExpiryTimestamp(now + 5 * 3600)).toMatch(/^Expires in (4|5)h$/);
-    expect(formatExpiryTimestamp(now + 3 * 86_400)).toMatch(/^Expires in (2|3)d$/);
+    expect(formatExpiryTimestamp(now + 20 * 60)).toMatch(/^Expires in (?:19|20)m$/);
+    expect(formatExpiryTimestamp(now + 5 * 3600)).toMatch(/^Expires in [45]h$/);
+    expect(formatExpiryTimestamp(now + 3 * 86_400)).toMatch(/^Expires in [23]d$/);
   });
 
   it('picks the right unit for each magnitude', () => {

@@ -38,6 +38,8 @@ pnpm exec wrangler dev --config ./wrangler.jsonc
 ```
 
 No committed `wrangler.jsonc` secrets. God-file guard 300/400 warn-only.
+`test` is a workspace project (`test/package.json`), so `pnpm -r typecheck` and `pnpm run lint` both reach it — it sat outside the workspace while holding ~200 KB of test code, and `eslint.config.mjs` ignored `test/**` outright.
+`pnpm run build` is the **only** build (just `apps/web`); re-run it after any `apps/web` change and before `wrangler deploy`. The worker serves the last local build via the gitignored `apps/api/src/generated/spa-shell.ts`, so a frontend fix is inert until the bundle is regenerated. `scripts/verify-spa-shell.mjs` runs in `checks` and rejects a missing, stubbed, or half-refreshed artifact.
 Coverage floor is **80/75/80/80** (measured 87/79/89/90) — raise it, never lower it to make CI pass.
 
 ## Layers
