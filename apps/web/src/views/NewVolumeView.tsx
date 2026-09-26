@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
+import type { RouterBackend } from '../types';
 import { listBackends } from '../services/backendService';
 import { apiPost } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -23,7 +24,7 @@ export function NewVolumeView({
   const [name, setName] = useState('');
   const [isPrivate, setIsPrivate] = useState(true);
   const [backend, setBackend] = useState('');
-  const [backends, setBackends] = useState<Array<{ slug: string }>>([]);
+  const [backends, setBackends] = useState<RouterBackend[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -73,7 +74,7 @@ export function NewVolumeView({
                 <option value="">{t('volumes.chooseBackend', 'Choose A Backend')}</option>
                 {backends.map((b) => (
                   <option key={b.slug} value={b.slug}>
-                    {b.slug}
+                    {b.displayName ? `${b.displayName} (${b.slug})` : b.slug}
                   </option>
                 ))}
               </select>
