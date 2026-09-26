@@ -22,6 +22,8 @@ function row(slug: string, baseUrl = 'https://backend.example.com'): RouterBacke
     updated_at: 1,
     last_seen_at: null,
     last_status: null,
+    backend_username: null,
+    backend_username_ci: null,
   };
 }
 
@@ -116,6 +118,8 @@ describe('BackendService with fakes', () => {
         [...store.values()].find((r) => r.owner_email === ownerEmail.toLowerCase() && r.slug_ci === slug.toLowerCase()) ?? null,
       getById: async (id: string) => store.get(id) ?? null,
       listByOwnerEmail: async (ownerEmail: string) => [...store.values()].filter((r) => r.owner_email === ownerEmail.toLowerCase()),
+      listByBackendUsernameCi: async (usernameCi: string) =>
+        [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === usernameCi.toLowerCase()),
       countByOwnerEmail: async (ownerEmail: string) => [...store.values()].filter((r) => r.owner_email === ownerEmail.toLowerCase()).length,
       create: async (input: { id: string; ownerEmail: string; slug: string; baseUrl: string; displayName: string | null; now: number }) => {
         store.set(input.id, {
@@ -129,15 +133,23 @@ describe('BackendService with fakes', () => {
           updated_at: input.now,
           last_seen_at: null,
           last_status: null,
+          backend_username: null,
+          backend_username_ci: null,
         });
       },
-      update: async (id: string, patch: { baseUrl?: string; displayName?: string | null; now: number }) => {
+      update: async (
+        id: string,
+        patch: { baseUrl?: string; displayName?: string | null; now: number; backendUsername?: string | null },
+      ) => {
         const cur = store.get(id);
         if (!cur) return;
         store.set(id, {
           ...cur,
           base_url: patch.baseUrl ?? cur.base_url,
           display_name: patch.displayName !== undefined ? patch.displayName : cur.display_name,
+          backend_username: patch.backendUsername !== undefined ? patch.backendUsername : cur.backend_username,
+          backend_username_ci:
+            patch.backendUsername !== undefined ? (patch.backendUsername ? patch.backendUsername.toLowerCase() : null) : cur.backend_username_ci,
           updated_at: patch.now,
         });
       },

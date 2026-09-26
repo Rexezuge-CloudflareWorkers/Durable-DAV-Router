@@ -54,7 +54,7 @@ class EmailAddress {
 
 /**
  * Canonical `owner/name` identifier patterns.
- * `OWNER_PATTERN` validates usernames (also used for volume owners);
+ * `OWNER_PATTERN` validates backend owner handles (volume owners);
  * `REPO_PATTERN` validates volume names.
  */
 const OWNER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/i;

@@ -1,5 +1,5 @@
 // Service bindings for the per-request composition root.
-import type { NamespaceDAO, RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
+import type { RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
 import type { Container, Token } from '@durable-dav-router/backend-runtime/di';
 import { Tokens } from './tokens';
 import type { RequestScopeEnv } from './serviceFactory';
@@ -11,7 +11,6 @@ function bindServiceBindings(scope: Container, env: RequestScopeEnv): void {
 
   const daos: DaoThunks = {
     userDAO: getDao<UserDAO>(Tokens.UserDAO),
-    namespaceDAO: getDao<NamespaceDAO>(Tokens.NamespaceDAO),
     routerBackendDAO: getDao<RouterBackendDAO>(Tokens.RouterBackendDAO),
   };
 

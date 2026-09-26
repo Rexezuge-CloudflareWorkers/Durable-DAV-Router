@@ -1,4 +1,4 @@
-import type { NamespaceDAO, RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
+import type { RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
 import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
 import type { Token } from '@durable-dav-router/backend-runtime/di';
 import type { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
@@ -21,7 +21,6 @@ const Tokens = {
   Db: Symbol('Db') as Token<D1Queryable>,
   AppConfig: Symbol('AppConfig') as Token<AppConfiguration>,
   UserDAO: Symbol('UserDAO') as Token<() => Promise<UserDAO>>,
-  NamespaceDAO: Symbol('NamespaceDAO') as Token<() => Promise<NamespaceDAO>>,
   RouterBackendDAO: Symbol('RouterBackendDAO') as Token<() => Promise<RouterBackendDAO>>,
   AccessAuthService: Symbol('AccessAuthService') as Token<AccessAuthService>,
   UserService: Symbol('UserService') as Token<UserService>,

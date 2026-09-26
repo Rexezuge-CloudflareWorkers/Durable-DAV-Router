@@ -45,6 +45,11 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
         },
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
+          if (state.sql.includes('backend_username_ci = ?')) {
+            return {
+              results: [...rows.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === String(v0).toLowerCase()) as T[],
+            };
+          }
           return { results: [...rows.values()].filter((r) => r.owner_email.toLowerCase() === String(v0).toLowerCase()) as T[] };
         },
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
@@ -55,6 +60,7 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
             rows.set(id, {
               id, owner_email: ownerEmail, slug, slug_ci: slugCi, base_url: baseUrl, display_name: displayName,
               created_at: createdAt, updated_at: updatedAt, last_seen_at: null, last_status: null,
+              backend_username: null, backend_username_ci: null,
             });
             return { success: true, meta: { changes: 1 } };
           }
@@ -68,7 +74,7 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
             rows.delete(String(state.values[0]));
             return { success: true, meta: { changes: 1 } };
           }
-          if (state.sql.startsWith('INSERT INTO users') || state.sql.startsWith('UPDATE users') || state.sql.startsWith('INSERT OR IGNORE INTO namespaces')) {
+          if (state.sql.startsWith('INSERT INTO users')) {
             return { success: true, meta: { changes: 1 } };
           }
           return { success: true, meta: { changes: 0 } };

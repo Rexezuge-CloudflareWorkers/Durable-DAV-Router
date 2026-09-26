@@ -12,7 +12,6 @@ export function ProfileSettingsCard({ user }: { user: CurrentUser; setUser: (use
       </CardHeader>
       <div className="space-y-3">
         <ReadOnlyField label={t('settings.email', 'Email')} value={user.email} />
-        <ReadOnlyField label={t('settings.username', 'Username')} value={user.username ?? ''} />
       </div>
     </Card>
   );

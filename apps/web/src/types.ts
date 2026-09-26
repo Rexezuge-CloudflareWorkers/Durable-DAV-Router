@@ -1,6 +1,5 @@
 export interface CurrentUser {
   email: string;
-  username?: string | null;
   /**
    * Preferred UI language (BCP 47 tag). Optional: persisted locally only
    * (`localStorage > navigator > en`).
@@ -31,6 +30,7 @@ export interface RouterBackend {
   updatedAt: number;
   lastSeenAt: number | null;
   lastStatus: number | null;
+  backendUsername?: string | null;
 }
 
 export interface BackendHealth {
@@ -63,10 +63,6 @@ export interface CreatedBucketCredential {
   expiresAt: number;
   passwordPrefix: string;
   passwordLastFour: string;
-}
-
-export interface UserProfile {
-  username: string;
 }
 
 export interface DavEntry {

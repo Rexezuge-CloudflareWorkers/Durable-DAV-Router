@@ -4,7 +4,6 @@ import type { HonoOpenAPIRouterType } from 'chanfana';
 import { Hono } from 'hono';
 import { MiddlewareHandlers, securityHeaders } from '@/middleware';
 import { scopeMiddleware } from '@/middleware/scopeMiddleware';
-import { RESERVED_NAMESPACE_NAMES } from '@durable-dav-router/shared/constants';
 import { registerBackendRoutes } from './routes/BackendRoutes';
 import { registerAggregatedVolumeRoutes } from './routes/AggregatedVolumeRoutes';
 import { registerRouterDavProxyRoutes } from './routes/RouterDavProxyRoutes';
@@ -41,21 +40,12 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
 
     // Web SPA shell (Vite build embeds `apps/web/dist/index.html` into
     // `apps/api/src/generated/spa-shell.ts`; no per-request scope needed).
+    // No profile shell: usernames are per-backend, the router has no global
+    // user pages. `/:owner/:volume` below serves VolumeView for browsers.
     app.get('/', (c) => c.html(SPA_HTML));
     app.get('/new', (c) => c.html(SPA_HTML));
     app.get('/backends/new', (c) => c.html(SPA_HTML));
     app.get('/settings', (c) => c.html(SPA_HTML));
-    // Single-segment profile shell — never shadow reserved API/UI roots
-    // (`/health`, `/docs`, `/user`, …). Reserved names fall through so the
-    // exact routes (including fromHono's `/docs`, registered later) win.
-    app.get('/:username', async (c, next) => {
-      const segment = (c.req.param('username') ?? '').toLowerCase();
-      if (RESERVED_NAMESPACE_NAMES.has(segment)) {
-        await next();
-        return;
-      }
-      return c.html(SPA_HTML);
-    });
 
     app.use('*', scopeMiddleware);
 

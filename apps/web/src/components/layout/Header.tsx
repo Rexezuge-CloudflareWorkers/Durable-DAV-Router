@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Logo } from './Logo';
 
-export function Header({ userEmail, username }: { userEmail: string | null; username?: string | null }) {
+export function Header({ userEmail }: { userEmail: string | null }) {
   const navigate = useNavigate();
   const { t } = useTranslation();
 
@@ -54,13 +54,7 @@ export function Header({ userEmail, username }: { userEmail: string | null; user
         </div>
 
         <div className="flex items-center gap-3">
-          {username ? (
-            <Link to={`/${username}`} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-accent)] truncate max-w-xs">
-              {userEmail ?? ''}
-            </Link>
-          ) : (
-            <div className="text-sm text-[var(--color-text-muted)] truncate max-w-xs">{userEmail ?? ''}</div>
-          )}
+          <div className="text-sm text-[var(--color-text-muted)] truncate max-w-xs">{userEmail ?? ''}</div>
         </div>
       </div>
     </header>

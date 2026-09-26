@@ -1,4 +1,4 @@
-import { NamespaceDAO, RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
+import { RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
 import { Container, memoizeAsync } from '@durable-dav-router/backend-runtime/di';
 import type { Token } from '@durable-dav-router/backend-runtime/di';
 import { Tokens } from './tokens';
@@ -12,7 +12,6 @@ import type { RequestScopeEnv } from './serviceFactory';
 function bindDaoBindings(scope: Container, env: RequestScopeEnv): void {
   const daoDefs: Array<[Token<() => Promise<unknown>>, () => Promise<unknown>]> = [
     [Tokens.UserDAO, () => Promise.resolve(new UserDAO(env.DB))],
-    [Tokens.NamespaceDAO, () => Promise.resolve(new NamespaceDAO(env.DB))],
     [Tokens.RouterBackendDAO, () => Promise.resolve(new RouterBackendDAO(env.DB))],
   ];
   for (const [token, create] of daoDefs) {
