@@ -4,15 +4,24 @@ import {
   describeBackendFailure,
   fetchWithTimeout,
   getProxyTimeoutMs,
+  invalidateCachedRoute,
   joinBackendUrl,
   joinBackendUrlWithoutSelector,
   resolveBackend,
   truncateSnippet,
 } from '@durable-dav-router/backend-services/router';
+import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 
 type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
 
+function kvOf(scope: { get: (token: never) => KvCache }): KvCache | null {
+  try {
+    return scope.get(Tokens.KvCache as never);
+  } catch {
+    return null;
+  }
+}
 function authForwardHeaders(request: Request): Headers {
   const out = new Headers();
   const jwt = request.headers.get('Cf-Access-Jwt-Assertion') ?? request.headers.get('cf-access-jwt-assertion');
@@ -77,6 +86,10 @@ async function proxyOne(c: ProxyOneContext): Promise<Response> {
       timeoutMs,
     );
     const text = await res.text().catch(() => '');
+    // Volume deletion changes future probe outcomes → evict the cached owner.
+    if (method === 'DELETE' && res.status >= 200 && res.status < 300) {
+      await invalidateCachedRoute(kvOf(scope as never), owner, volume).catch(() => undefined);
+    }
     return new Response(text, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' } });
   } catch (error) {
     return BaseRoute.toErrorResponse(c as never, error);

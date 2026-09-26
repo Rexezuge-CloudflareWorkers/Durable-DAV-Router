@@ -29,6 +29,12 @@
       "database_name": "durable-dav-router-db"
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "00000000000000000000000000000000"
+    }
+  ],
   "vars": {
     "ENVIRONMENT": "production",
     "DEBUG_MODE": "false",
@@ -37,6 +43,7 @@
     "TEAM_DOMAIN": "",
     "MAX_BACKENDS_PER_USER": "20",
     "BACKEND_FETCH_TIMEOUT_MS": "8000",
+    "ROUTE_CACHE_TTL_SECONDS": "86400",
     "DEV_AUTH_EMAIL": "test@example.com"
   }
 }

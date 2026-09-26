@@ -6,7 +6,7 @@ Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS
 - `apps/web/vite.config.ts` proxies `/user` → `http://localhost:8787` in dev; `closeBundle` embeds `dist/index.html` into `apps/api/src/generated/spa-shell.ts` (`SPA_HTML`) on build.
 - `apps/api/wrangler.template.jsonc` is the config template — copy to `wrangler.jsonc` per deployer; no committed `wrangler.jsonc`. Local `wrangler.jsonc` uses `DEV_AUTH_EMAIL=test@example.com`.
 - The Worker serves the SPA from `/`, `/new`, `/backends/new`, `/settings` plus `/:owner/:volume` (content-negotiated: `Accept: text/html` → shell, else backend WebDAV proxy) in `DurableDavRouterWorker`.
-- Bindings: D1 `DB` only (stateless router: no DOs, no KV, no cron, no R2/Queues/AI bindings).
+- Bindings: D1 `DB` + KV `CACHE` (single namespace, `davRoute` owner/volume→backend lookaside via `KvCache` in `@durable-dav-router/backend-runtime/kv`; stateless router: no DOs, no cron, no R2/Queues/AI bindings).
 
 ## Required vars (no defaults)
 
@@ -21,13 +21,13 @@ Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS
 | Group  | Vars (default)                                                                                                                                                     |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | App    | `DEBUG_MODE` (`false`), `SITE_URL` (`""`)                                                                                                                          |
-| Limits | `MAX_BACKENDS_PER_USER` (`20`), `BACKEND_FETCH_TIMEOUT_MS` (`8000`) |
+| Limits | `MAX_BACKENDS_PER_USER` (`20`), `BACKEND_FETCH_TIMEOUT_MS` (`8000`), `ROUTE_CACHE_TTL_SECONDS` (`86400`) |
 
 Add new env vars in `ConfigurationDefaults.ts` (+ `ConfigurationManager` getter + `AppConfiguration` method), not inline.
 
 ## Dependency injection (`packages/backend-runtime/src/di/` + `config/`)
 
-- `AppConfiguration` — injectable instance view over env parsing (thin facade over limit sections, one method per setting, incl. `getMaxBackendsPerUser`/`getBackendFetchTimeoutMs`); `ConfigurationManager` statics remain as thin facade. Prefer injecting `AppConfiguration` in new services; mock via constructor deps.
+- `AppConfiguration` — injectable instance view over env parsing (thin facade over limit sections, one method per setting, incl. `getMaxBackendsPerUser`/`getBackendFetchTimeoutMs`/`getRouteCacheTtlSeconds`); `ConfigurationManager` statics remain as thin facade. Prefer injecting `AppConfiguration` in new services; mock via constructor deps.
 - `Container` — minimal Factory + Singleton DI (`bind`/`bindValue`/`get`/`resolve`/`createChild`). `createRequestScope(env)` in `backend-services/composition` is the standard composition root (table-driven lazy DAO wiring + single `BackendService` binding; `scope.get(Tokens.X)`). `scopeMiddleware` installs a single scope per request (`getScope(c)`; `getRequestScope` fallback creates a fresh scope for helpers/tests).
 - `createServiceContext(env, overrides?)` — single request-scoped `{ env, logger, clock }`; prefer extending `ServiceContext` over new `*Env` interfaces; never reintroduce `as` env casts.
 - Helpers: `memoizeAsync` (composition-root memoization; rejections are never cached so transient D1 failures retry), `NullLogger`/`FixedClock` (test doubles), `setRequestScope/getRequestScope/getServiceContext` (request plumbing), `asScopedContext` (single audited Hono→`ScopedContext` adapter — call sites must use it instead of `c as never`).

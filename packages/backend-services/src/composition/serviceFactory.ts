@@ -1,8 +1,10 @@
 import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
+import type { KvNamespaceLike } from '@durable-dav-router/backend-runtime/kv';
 
 // Minimal structural env for scope creation.
 interface RequestScopeEnv {
   DB: D1Queryable;
+  CACHE?: KvNamespaceLike | null;
 }
 
 // Single audited unsafe-cast location for service envs. Services declare

@@ -51,6 +51,10 @@ class AppConfiguration {
     return this.router.getBackendFetchTimeoutMs();
   }
 
+  public getRouteCacheTtlSeconds(): number {
+    return this.router.getRouteCacheTtlSeconds();
+  }
+
   public isDemoMode(): boolean {
     return this.auth.isDemoMode();
   }
@@ -86,7 +90,7 @@ class AppConfiguration {
    */
   public validate(): string[] {
     const warnings: string[] = [];
-    const numericKeys = ['MAX_BACKENDS_PER_USER', 'BACKEND_FETCH_TIMEOUT_MS'];
+    const numericKeys = ['MAX_BACKENDS_PER_USER', 'BACKEND_FETCH_TIMEOUT_MS', 'ROUTE_CACHE_TTL_SECONDS'];
     for (const key of numericKeys) {
       if (!EnvParser.isValidPositiveInt(this.env, key)) {
         warnings.push(`Invalid configuration: ${key} must be a positive integer`);

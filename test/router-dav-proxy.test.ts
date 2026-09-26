@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearRouteCacheL1 } from '@durable-dav-router/backend-services/router';
+import { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { registerRouterDavProxyRoutes } from '../apps/api/src/workers/routes/RouterDavProxyRoutes';
 
 interface CapturedFetch {
@@ -118,7 +120,8 @@ function stubFetchWithProbes(probeStatusByOrigin: Record<string, number>, forwar
         return new Response(status === 207 ? '<ok/>' : 'probe', { status });
       }
       const status = forwardStatus;
-      return new Response(status === 401 ? 'unauthorized' : '<ok/>', {
+      const noBody = status === 204 || status === 205 || status === 304;
+      return new Response(noBody ? null : status === 401 ? 'unauthorized' : '<ok/>', {
         status,
         headers:
           status === 207
@@ -131,8 +134,12 @@ function stubFetchWithProbes(probeStatusByOrigin: Record<string, number>, forwar
 }
 
 describe('RouterDavProxyRoutes owner routing', () => {
+  beforeEach(() => {
+    clearRouteCacheL1();
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
+    clearRouteCacheL1();
   });
 
   it('returns 404 (not 401) for unknown owners without Access identity', async () => {
@@ -319,5 +326,208 @@ describe('RouterDavProxyRoutes owner routing', () => {
     // Volume-root probe misses everywhere → router reports Not Found; the
     // dashboard create flow (`POST /user/volumes?backend=`) stays explicit.
     expect([404, 409]).toContain(res.status);
+  });
+});
+
+// In-memory fake of the single CACHE binding (structural KvNamespaceLike).
+function makeFakeKv(initial: Record<string, string> = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    store,
+    get(key: string): Promise<string | null> {
+      return Promise.resolve(store.has(key) ? (store.get(key) as string) : null);
+    },
+    put(key: string, value: string): Promise<void> {
+      store.set(key, value);
+      return Promise.resolve();
+    },
+    delete(key: string): Promise<boolean> {
+      return Promise.resolve(store.delete(key));
+    },
+    list(options: { prefix: string }): Promise<{ keys: Array<{ name: string }>; list_complete: boolean }> {
+      return Promise.resolve({
+        keys: [...store.keys()].filter((name) => name.startsWith(options.prefix)).map((name) => ({ name })),
+        list_complete: true,
+      });
+    },
+  };
+}
+
+function probeCount(calls: CapturedFetch[]): number {
+  return calls.filter((c) => new Headers(c.init.headers as HeadersInit).get('Depth') === '0').length;
+}
+
+describe('RouterDavProxyRoutes KV route cache', () => {
+  beforeEach(() => {
+    clearRouteCacheL1();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearRouteCacheL1();
+  });
+
+  it('serves repeat bare requests from cache without re-probing', async () => {
+    const calls = stubFetchWithProbes({ 'https://a.example.com': 404, 'https://b.example.com': 207 });
+    const kv = makeFakeKv();
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const handler = routes.get('ON /:owner/:volume')!;
+    const ctx = () =>
+      fakeContext({
+        url: 'https://router.example.com/owner/cachedvol',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'cachedvol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never;
+    const first = await handler(ctx());
+    expect(first.status).toBe(207);
+    expect(probeCount(calls)).toBe(2);
+    expect([...kv.store.keys()].some((k) => k.startsWith('davRoute:'))).toBe(true);
+    const second = await handler(ctx());
+    expect(second.status).toBe(207);
+    // Cache hit: one more forward, zero new probes.
+    expect(probeCount(calls)).toBe(2);
+    expect(calls).toHaveLength(4);
+    expect(calls.at(-1)?.url).toBe('https://b.example.com/owner/cachedvol');
+  });
+
+  it('works without a CACHE binding (fail-soft probe path)', async () => {
+    const calls = stubFetchWithProbes({ 'https://a.example.com': 404, 'https://b.example.com': 207 });
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const handler = routes.get('ON /:owner/:volume')!;
+    const res = await handler(
+      fakeContext({
+        url: 'https://router.example.com/owner/nocachevol',
+        env: { DB: db },
+        params: { owner: 'owner', volume: 'nocachevol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+    expect(res.status).toBe(207);
+    expect(probeCount(calls)).toBe(2);
+  });
+
+  it('explicit selectors bypass the cached route and never overwrite it', async () => {
+    const calls = stubFetchWithProbes({ 'https://a.example.com': 404, 'https://b.example.com': 207 });
+    const kv = makeFakeKv();
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const handler = routes.get('ON /:owner/:volume')!;
+    const bare = await handler(
+      fakeContext({
+        url: 'https://router.example.com/owner/selvol',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'selvol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+    expect(bare.status).toBe(207);
+    expect(calls.at(-1)?.url).toBe('https://b.example.com/owner/selvol');
+    const probesBefore = probeCount(calls);
+    const explicit = await handler(
+      fakeContext({
+        url: 'https://router.example.com/owner/selvol?backend=a',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'selvol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+    expect(explicit.status).toBe(207);
+    expect(calls.at(-1)?.url).toBe('https://a.example.com/owner/selvol');
+    // Explicit path never probes …
+    expect(probeCount(calls)).toBe(probesBefore);
+    // … and the bare default still resolves to the probed owner.
+    const again = await handler(
+      fakeContext({
+        url: 'https://router.example.com/owner/selvol',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'selvol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+    expect(again.status).toBe(207);
+    expect(calls.at(-1)?.url).toBe('https://b.example.com/owner/selvol');
+    expect(probeCount(calls)).toBe(probesBefore);
+  });
+
+  it('stale hits self-heal: forward 404 evicts and re-resolves', async () => {
+    const calls: CapturedFetch[] = [];
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+        calls.push({ url, init: init ?? {} });
+        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+        const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0';
+        if (isProbe) {
+          // Volume moved from b to a between requests.
+          return new Response('probe', { status: url.startsWith('https://a.example.com') ? 207 : 404 });
+        }
+        // Forward to the stale backend 404s; the new owner serves.
+        return new Response(url.startsWith('https://b.example.com') ? 'gone' : '<ok/>', {
+          status: url.startsWith('https://b.example.com') ? 404 : 207,
+        });
+      },
+    );
+    const kv = makeFakeKv();
+    // Seed the stale entry directly (as if an earlier probe resolved to b).
+    const seeder = new KvCache(kv as never);
+    await seeder.putJson('davRoute', ['owner', 'movedvol'], { backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' });
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const res = await routes.get('ON /:owner/:volume')!(
+      fakeContext({
+        url: 'https://router.example.com/owner/movedvol',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'movedvol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+    expect(res.status).toBe(207);
+    expect(calls.at(-1)?.url).toBe('https://a.example.com/owner/movedvol');
+  });
+
+  it('volume-root DELETE evicts; inner-file PUT does not', async () => {
+    const calls = stubFetchWithProbes({ 'https://a.example.com': 404, 'https://b.example.com': 207 }, 204);
+    const kv = makeFakeKv();
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const rootHandler = routes.get('ON /:owner/:volume')!;
+    const subHandler = routes.get('ON /:owner/:volume/*')!;
+    const rootCtx = (method: string) =>
+      fakeContext({
+        method,
+        url: 'https://router.example.com/owner/mutvol',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'mutvol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never;
+    // Seed via PROPFIND (forward 204 here is fine; status only matters later).
+    await rootHandler(rootCtx('PROPFIND'));
+    expect(probeCount(calls)).toBe(2);
+    // Inner PUT (forward 204): ownership unchanged → still cached.
+    const putRes = await subHandler(
+      fakeContext({
+        method: 'PUT',
+        url: 'https://router.example.com/owner/mutvol/file.txt',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'mutvol' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+    expect(putRes.status).toBe(204);
+    await rootHandler(rootCtx('PROPFIND'));
+    expect(probeCount(calls)).toBe(2);
+    // Volume-root DELETE: evicted → next request re-probes.
+    const delRes = await rootHandler(rootCtx('DELETE'));
+    expect(delRes.status).toBe(204);
+    await rootHandler(rootCtx('PROPFIND'));
+    expect(probeCount(calls)).toBe(4);
   });
 });

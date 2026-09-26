@@ -5,13 +5,22 @@ import {
   fetchWithTimeout,
   getProxyTimeoutMs,
   joinBackendUrl,
+  purgeCachedRoutes,
   stripTrailingSlashes,
   truncateSnippet,
 } from '@durable-dav-router/backend-services/router';
+import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 
 type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
 
+function kvOf(scope: { get: (token: never) => KvCache }): KvCache | null {
+  try {
+    return scope.get(Tokens.KvCache as never);
+  } catch {
+    return null;
+  }
+}
 function toBackendJson(r: {
   slug: string;
   base_url: string;
@@ -115,6 +124,8 @@ function registerBackendRoutes(app: App): void {
     const body = (await c.req.json().catch(() => ({}))) as { baseUrl?: string; displayName?: string | null };
     try {
       const updated = await scope.get(Tokens.BackendService).updateBackend(email, c.req.param('slug') ?? '', body);
+      // base_url snapshots cached in `davRoute` go stale on edit → purge.
+      await purgeCachedRoutes(kvOf(scope as never)).catch(() => 0);
       const timeoutMs = getProxyTimeoutMs(c.env);
       const status = await probeBackendHealth(updated.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
       await scope.get(Tokens.BackendService).recordProbe(email, updated.slug, status);
@@ -130,6 +141,9 @@ function registerBackendRoutes(app: App): void {
     const email = c.get('AuthenticatedUserEmailAddress');
     try {
       await scope.get(Tokens.BackendService).deleteBackend(email, c.req.param('slug') ?? '');
+      // Owner→backend candidate sets changed → cached resolutions may pin a
+      // removed backend. Purge the `davRoute` lookaside (fail-soft).
+      await purgeCachedRoutes(kvOf(scope as never)).catch(() => 0);
       return c.json({ ok: true });
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);

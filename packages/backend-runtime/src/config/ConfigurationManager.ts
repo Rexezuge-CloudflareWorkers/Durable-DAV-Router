@@ -15,6 +15,7 @@ class ConfigurationManager {
   public static readonly router = {
     getMaxBackendsPerUser: (env: unknown): number => AppConfiguration.fromEnv(env).getMaxBackendsPerUser(),
     getBackendFetchTimeoutMs: (env: unknown): number => AppConfiguration.fromEnv(env).getBackendFetchTimeoutMs(),
+    getRouteCacheTtlSeconds: (env: unknown): number => AppConfiguration.fromEnv(env).getRouteCacheTtlSeconds(),
   };
 
   public static readonly site = {

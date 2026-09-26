@@ -2,6 +2,7 @@ import type { RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data
 import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
 import type { Token } from '@durable-dav-router/backend-runtime/di';
 import type { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
+import type { KvCache, KvNamespaceLike } from '@durable-dav-router/backend-runtime/kv';
 import type { AccessAuthService } from '../auth/AccessAuthService';
 import type { UserService } from '../user/UserService';
 import type { BackendService } from '../router/BackendService';
@@ -14,11 +15,13 @@ import type { BackendService } from '../router/BackendService';
 // service type without an explicit generic at call sites.
 interface RequestScopeEnvShape {
   DB: D1Queryable;
+  CACHE?: KvNamespaceLike | null;
 }
 
 const Tokens = {
   Env: Symbol('Env') as Token<RequestScopeEnvShape>,
   Db: Symbol('Db') as Token<D1Queryable>,
+  KvCache: Symbol('KvCache') as Token<KvCache>,
   AppConfig: Symbol('AppConfig') as Token<AppConfiguration>,
   UserDAO: Symbol('UserDAO') as Token<() => Promise<UserDAO>>,
   RouterBackendDAO: Symbol('RouterBackendDAO') as Token<() => Promise<RouterBackendDAO>>,
