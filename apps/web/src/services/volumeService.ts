@@ -52,7 +52,3 @@ export async function deleteVolume(owner: string, volume: string, backend?: stri
   const qs = backend ? `?backend=${encodeURIComponent(backend)}` : '';
   return apiDelete<{ ok: boolean }>(`/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}${qs}`);
 }
-
-
-
-export {type Volume, type VolumeDetail} from '../types';

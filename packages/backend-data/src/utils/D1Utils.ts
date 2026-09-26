@@ -9,14 +9,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve: (value: void) => void): unknown => setTimeout(resolve, ms));
 }
 
-function assertD1Success(result: D1Result, context: string): void {
-  if (result.success) {
-    return;
-  }
-
-  const errorMessage: string = result.error ?? 'Unknown database error';
-  const retryable: boolean = isD1ErrorRetryable(errorMessage);
-  throw new DatabaseError(`Failed to ${context}: ${errorMessage}`, retryable);
+/**
+Exponential backoff: 100ms, 200ms, 400ms… up to `maxRetries` attempts.
+*/
+function backoffDelay(baseDelayMs: number, attempt: number): number {
+  return baseDelayMs * Math.pow(2, attempt);
 }
 
 async function executeD1WithRetry(
@@ -35,7 +32,7 @@ async function executeD1WithRetry(
         const errorMessage: string = result.error ?? 'Unknown database error';
         const retryable: boolean = isD1ErrorRetryable(errorMessage);
         if (retryable && attempt < maxRetries) {
-          await sleep(baseDelayMs * Math.pow(2, attempt));
+          await sleep(backoffDelay(baseDelayMs, attempt));
           continue;
         }
         throw new DatabaseError(`Failed to ${context}: ${errorMessage}`, retryable);
@@ -44,7 +41,7 @@ async function executeD1WithRetry(
     } catch (error: unknown) {
       if (error instanceof DatabaseError) {
         if (error.retryable && attempt < maxRetries) {
-          await sleep(baseDelayMs * Math.pow(2, attempt));
+          await sleep(backoffDelay(baseDelayMs, attempt));
           lastError = error;
           continue;
         }
@@ -53,7 +50,7 @@ async function executeD1WithRetry(
       if (error instanceof Error) {
         const retryable: boolean = isD1ErrorRetryable(error.message);
         if (retryable && attempt < maxRetries) {
-          await sleep(baseDelayMs * Math.pow(2, attempt));
+          await sleep(backoffDelay(baseDelayMs, attempt));
           lastError = error;
           continue;
         }
@@ -66,4 +63,4 @@ async function executeD1WithRetry(
   throw lastError ?? new DatabaseError(`Failed to ${context} after ${maxRetries + 1} attempts`);
 }
 
-export { assertD1Success, executeD1WithRetry, sleep };
+export { executeD1WithRetry, sleep };

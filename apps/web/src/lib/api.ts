@@ -14,10 +14,6 @@ function getBackendErrorType(error: unknown): string | null {
   return error instanceof BackendError ? error.errorType : null;
 }
 
-function getBackendErrorStatus(error: unknown): number | null {
-  return error instanceof BackendError ? error.status : null;
-}
-
 function extractErrorMessage(payloadText: string, status: number): { message: string; type: string | null } {
   if (!payloadText) return { message: `HTTP ${status}`, type: null };
   const MAX_MESSAGE_CHARS = 500;
@@ -102,4 +98,4 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
 
 export { buildQuery };
 
-export { BackendError, getBackendErrorStatus, getBackendErrorType };
+export { BackendError, getBackendErrorType };

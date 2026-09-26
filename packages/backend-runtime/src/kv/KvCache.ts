@@ -38,10 +38,6 @@ class KvCache {
     return !!this.namespace;
   }
 
-  public keyFor(domain: KvDomainName, parts: readonly string[]): string {
-    return buildKvKey(domain, parts);
-  }
-
   public async getText(domain: KvDomainName, parts: readonly string[]): Promise<string | null> {
     const ns = this.namespace;
     if (!ns) return null;

@@ -9,21 +9,29 @@ import {
   resolveLocalizedStrings,
 } from '@durable-dav-router/shared/i18n';
 
-// NOTE: `apps/web/src/i18n.ts` (+ `lib/locale.ts`) is not importable in this
-// node unit-test env — it pulls `i18next`/`react-i18next` (web-only deps, not
-// resolvable from the repo root) and a Vite `import.meta.glob` locale chunk
-// map. Web `normalizeLanguage`/`detectInitialLanguage` are therefore covered
-// indirectly here by invoking `pnpm run validate:locales` (key/placeholder
-// parity of all 12 bundles + bundle-dir parity with `SUPPORTED_LANGUAGES`)
-// below.
+// NOTE: `apps/web/src/i18n.ts` is not importable in this node unit-test env —
+// it pulls `i18next`/`react-i18next` (web-only deps, not resolvable from the repo
+// root) and a Vite `import.meta.glob` locale chunk map. Web-side
+// `normalizeLanguage`/`detectInitialLanguage` are therefore covered by
+// `pnpm run validate:locales` (key parity of all bundles + bundle-dir parity
+// with `SUPPORTED_LANGUAGES`) and by `test/web-i18n.test.ts` for the pure
+// helpers that have no web-only dependency.
 
 describe('backend strings (en)', () => {
   it('serves Title Case English strings', () => {
     const strings = getBackendStrings('en');
     expect(strings).toBe(BACKEND_STRINGS.en);
-    expect(strings.repo.notFound).toBe('Repository Not Found.');
-    expect(strings.token.limitReached).toContain('{max}');
-    expect(strings.git.pushRejected).toContain('{reason}');
+    expect(strings.common.unauthorized).toBe('Authentication Required.');
+    expect(strings.common.forbidden).toBe('Access Denied.');
+    expect(strings.common.internalError).toBe('Internal Server Error.');
+  });
+
+  it('exposes only the namespaces the router actually returns', () => {
+    // The router has no repos, tokens, issues, or namespaces. Those namespaces
+    // came from the Durable-DAV backend and were unreachable here.
+    for (const locale of SUPPORTED_BACKEND_LOCALES) {
+      expect(Object.keys(BACKEND_STRINGS[locale])).toEqual(['common']);
+    }
   });
 
   it('keeps locale bundles structurally identical', () => {
@@ -32,12 +40,22 @@ describe('backend strings (en)', () => {
     expect(Object.keys(BACKEND_STRINGS)).toEqual([...SUPPORTED_BACKEND_LOCALES]);
     for (const locale of SUPPORTED_BACKEND_LOCALES) {
       expect(Object.keys(BACKEND_STRINGS[locale]).sort()).toEqual(enKeys);
+      expect(Object.keys(BACKEND_STRINGS[locale].common).sort()).toEqual(Object.keys(BACKEND_STRINGS.en.common).sort());
+    }
+  });
+
+  it('gives every locale a non-empty translation for every key', () => {
+    // A missing or blank string would surface to a client as an empty `Message`.
+    for (const locale of SUPPORTED_BACKEND_LOCALES) {
+      for (const [key, value] of Object.entries(BACKEND_STRINGS[locale].common)) {
+        expect(typeof value, `${locale}:${key}`).toBe('string');
+        expect(value.trim().length, `${locale}:${key}`).toBeGreaterThan(0);
+      }
     }
   });
 
   it('keeps {placeholder} parity across all locales', () => {
-    const varsOf = (value: string): string[] =>
-      [...new Set(value.match(/\{(\w+)\}/g) ?? [])].sort();
+    const varsOf = (value: string): string[] => [...new Set(value.match(/\{(\w+)\}/g) ?? [])].sort();
     const collect = (node: object, out: Map<string, string[]>): void => {
       for (const [key, value] of Object.entries(node)) {
         if (value !== null && typeof value === 'object') collect(value as object, out);
@@ -55,14 +73,19 @@ describe('backend strings (en)', () => {
       }
     }
   });
+
+  it('actually localizes rather than echoing English everywhere', () => {
+    // Guards against a bundle silently falling back to the English text.
+    expect(getBackendStrings('ja').common.internalError).not.toBe(BACKEND_STRINGS.en.common.internalError);
+    expect(getBackendStrings('de').common.unauthorized).not.toBe(BACKEND_STRINGS.en.common.unauthorized);
+  });
 });
 
 describe('backend strings (zh-CN)', () => {
-  it('serves Chinese strings with matching placeholders', () => {
+  it('serves Chinese strings', () => {
     const strings = getBackendStrings('zh-CN');
-    expect(strings.repo.notFound).toBe('仓库不存在。');
-    expect(strings.token.limitReached).toContain('{max}');
-    expect(strings.repo.created).toContain('{fullName}');
+    expect(strings.common.internalError).toBe('服务器内部错误。');
+    expect(strings.common.internalError).not.toBe(BACKEND_STRINGS.en.common.internalError);
   });
 });
 
@@ -117,5 +140,10 @@ describe('formatBackendString', () => {
   it('leaves unknown placeholders untouched', () => {
     expect(formatBackendString('Hello {name}.', {})).toBe('Hello {name}.');
     expect(formatBackendString('No vars here.')).toBe('No vars here.');
+  });
+
+  it('ignores non-scalar variable values', () => {
+    // A substituted `[object Object]` would reach a client verbatim.
+    expect(formatBackendString('Value: {v}', { v: {} as unknown as string })).toBe('Value: {v}');
   });
 });

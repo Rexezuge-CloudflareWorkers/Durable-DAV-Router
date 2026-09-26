@@ -1,4 +1,5 @@
 import type { Context, Next } from 'hono';
+import { RateLimitedError } from '@durable-dav-router/backend-errors';
 
 type RateLimitContext = Context<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
 
@@ -98,7 +99,11 @@ function rateLimit(opts: {
       }
       if (existing.count >= opts.max) {
         const retryAfter = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
-        return c.json({ Exception: { Type: 'RateLimited', Message: 'Rate limit exceeded; try again later.' } }, 429, {
+        // Reuse the error type so the wire envelope cannot drift from the
+        // canonical mapping: hand-building the JSON here is how this response
+        // ended up bypassing `BaseRoute.toErrorResponse` entirely.
+        const limited = new RateLimitedError();
+        return c.json({ Exception: { Type: limited.getErrorType(), Message: limited.getErrorMessage() } }, 429, {
           'Retry-After': String(retryAfter),
         });
       }

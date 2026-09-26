@@ -1,42 +1,28 @@
 import type { Context } from 'hono';
-import { ServiceError, DatabaseError, DefaultInternalServerError } from '@durable-dav-router/backend-errors';
-import { getBackendStrings } from '@durable-dav-router/shared/i18n';
 import { ErrorSanitizationUtil, canonicalizeLanguageTag } from '@durable-dav-router/shared/utils';
 import { createRequestScope } from '@durable-dav-router/backend-services/composition';
 import { getRequestScope, asScopedContext } from '@durable-dav-router/backend-runtime/di';
-import { toServiceStatus as toMappedStatus } from '@durable-dav-router/backend-services/errors';
+import { mapServiceError } from '@durable-dav-router/backend-services/errors';
 
 type HonoContext = Context<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
 
 /**
- * Template Method base for Hono route handlers (Otter `IBaseRoute` pattern).
- * Subclasses implement `handleRequest`; the base owns error mapping so
- * handlers stop duplicating `catch(()=>null)` / status-code switches and
- * private-repo existence hiding stays consistent.
+ * Route helpers for the Hono app.
  *
- * Backend `Message` stays English (translate display-side per Otter i18n
- * guidance); `getBackendStrings` is wired here so the shared backend locale
- * bundle is live code, not dead code.
+ * Every route is a `registerX(app)` closure rather than a class, so this is a
+ * namespace of statics rather than a template-method base — the error mapping
+ * and scope resolution still need exactly one implementation each, and that is
+ * what this provides.
  *
- * Shared statics (`getScope`, `readJson`, `parseLimit`, `toServiceStatus`,
- * `toSafeErrorMessage`, `toErrorResponse`) are the single source of truth;
- * `PublicViewerResolver` delegates to them so both stay consistent.
+ * Backend `Message` stays English for domain errors; only the masked 5xx path
+ * localizes, since a client seeing an opaque internal error gains nothing from
+ * a translated one.
  */
 abstract class BaseRoute {
-  protected abstract handleRequest(c: HonoContext): Promise<Response>;
-
-  public async handle(c: HonoContext): Promise<Response> {
-    try {
-      return await this.handleRequest(c);
-    } catch (error) {
-      return BaseRoute.toErrorResponse(c, error);
-    }
-  }
-
   /**
-   * Single-scope resolution (Otter pattern). Prefers the per-request container
-   * installed by `scopeMiddleware`; falls back to a fresh scope for call sites
-   * outside middleware ordering (tests, git auth helpers).
+   * Single-scope resolution. Prefers the per-request container installed by
+   * `scopeMiddleware`; falls back to a fresh scope for call sites outside
+   * middleware ordering (tests, startup helpers).
    */
   public static getScope(c: { get(key: string): unknown; env: unknown }): ReturnType<typeof createRequestScope> {
     try {
@@ -49,7 +35,8 @@ abstract class BaseRoute {
   /**
    * Strict JSON body reader. Distinguishes malformed JSON (`malformed: true`)
    * from a valid empty object — callers must return 400 on malformed instead
-   * of collapsing to `{}` and surfacing a misleading `required` error.
+   * of collapsing to `{}` and surfacing a misleading `required` error — and
+   * rejects an oversized body before it is buffered.
    */
   public static async readJson<T>(
     c: HonoContext | Context | { req: { json: () => Promise<unknown>; header?: (name: string) => string | undefined } },
@@ -65,7 +52,7 @@ abstract class BaseRoute {
           return NaN;
         }
       })();
-      if (Number.isFinite(contentLength) && (contentLength) > 1_048_576) {
+      if (Number.isFinite(contentLength) && contentLength > MAX_JSON_BODY_BYTES) {
         return { malformed: false, oversized: true, body: {} as T };
       }
       const body = (await (c as { req: { json: () => Promise<unknown> } }).req.json()) as T;
@@ -76,45 +63,11 @@ abstract class BaseRoute {
   }
 
   /**
-   * Clamped `?limit=` parser. Returns `def` when missing/unparsable, clamped
-   * to `[1, max]` otherwise. Trims whitespace so `?limit= 20 ` and
-   * `?limit=` both fall back to `def` instead of producing 0/1 via
-   * `Number("   ")`.
-   */
-  public static parseLimit(url: string, def = 100, max = 100): number {
-    try {
-      const raw = new URL(url).searchParams.get('limit');
-      if (raw === null || raw.trim() === '') return def;
-      const n = Number(raw.trim());
-      return Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : def;
-    } catch {
-      return def;
-    }
-  }
-
-  public static toServiceStatus(error: unknown): 400 | 401 | 403 | 404 | 409 | 413 | 429 | 500 {
-    return toMappedStatus(error);
-  }
-
-  /**
-   * Mask internal details on 500: callers must use this instead of echoing
-   * `error.message` directly, otherwise D1/DO internals leak to clients.
-   */
-  public static toSafeErrorMessage(error: unknown, fallback: string): string {
-    const status = this.toServiceStatus(error);
-    if (status === 500) return fallback;
-    return error instanceof Error && error.message ? error.message : fallback;
-  }
-
-  /**
-   * Status → AWS `Exception.Type` mapping for direct validation returns.
-   * Call sites that previously wrote `c.json({ error: msg }, status)` must
-   * use `jsonError` so the wire shape stays `{Exception:{Type,Message}}`.
+   * Status → `Exception.Type` for direct validation returns, so a hand-written
+   * error cannot drift from the canonical AWS-style envelope.
    *
-   * Why a registry over `switch`: the mapping is data, not branching logic —
-   * a `Record` keeps the 8-entry table scannable and unit-testable as data
-   * (see `ERROR_TYPE_REGISTRY`), and unknown codes fall through to
-   * `InternalServerError` without a `default:` branch.
+   * A registry rather than a `switch`: the mapping is data, and an unknown
+   * code falls through to `InternalServerError` with no `default:` branch.
    */
   private static readonly ERROR_TYPE_REGISTRY: Readonly<Record<number, string>> = {
     400: 'BadRequest',
@@ -130,52 +83,28 @@ abstract class BaseRoute {
     return this.ERROR_TYPE_REGISTRY[status] ?? 'InternalServerError';
   }
 
-  public static toErrorBody(status: number, message: string): { Exception: { Type: string; Message: string } } {
-    return { Exception: { Type: this.toErrorType(status), Message: message } };
-  }
-
   public static jsonError(c: HonoContext, message: string, status: number): Response;
   public static jsonError(c: HonoContext, type: string, message: string, status: number): Response;
   public static jsonError(c: HonoContext, typeOrMessage: string, messageOrStatus: string | number, status = 400): Response {
-    return typeof messageOrStatus === 'number' ? c.json({ Exception: { Type: this.toErrorType(messageOrStatus), Message: typeOrMessage } }, messageOrStatus as 400) : c.json({ Exception: { Type: typeOrMessage, Message: messageOrStatus } }, status as 400);
+    return typeof messageOrStatus === 'number'
+      ? c.json({ Exception: { Type: this.toErrorType(messageOrStatus), Message: typeOrMessage } }, messageOrStatus as 400)
+      : c.json({ Exception: { Type: typeOrMessage, Message: messageOrStatus } }, status as 400);
   }
 
+  /**
+   * Map any thrown value to a response.
+   *
+   * Delegates the status/envelope decision to the shared mapper, which masks
+   * every 5xx body and logs the cause, then adds the one thing the mapper
+   * cannot know: this request's locale.
+   */
   public static toErrorResponse(c: HonoContext, error: unknown): Response {
-    if (error instanceof DatabaseError) {
-      // Log the cause, return a masked body. `DatabaseError` carries raw D1
-      // text — table names, column names, and the constraint that fired — so
-      // echoing its message discloses the schema. The masked 500 below is
-      // exactly what the untyped branch does; keep the two consistent.
-      console.error('Caught database error during execution:', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-      return Response.json({ Exception: { Type: DefaultInternalServerError.getErrorType(), Message: this.localizedInternalError(c) } }, { status: 500 });
+    const { status, body } = mapServiceError(error, this.resolveLocale(c));
+    if (status < 500) {
+      const type = body.Exception?.Type ?? 'Error';
+      console.warn(`Responding with ${type}:`, ErrorSanitizationUtil.sanitizeErrorForLogging(error));
     }
-    if (error instanceof ServiceError) {
-      const code = error.getErrorCode();
-      // A 5xx from a service error is a bug, not a client mistake, and its
-      // message may embed driver detail. Mask it the same way.
-      if (code < 500) {
-        const body = { Exception: { Type: error.getErrorType(), Message: error.getErrorMessage() } };
-        console.warn(`Responding with ${error.getErrorType()}:`, ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-        return Response.json(body, { status: code });
-      }
-      console.error('Caught service error during execution:', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-      return Response.json({ Exception: { Type: error.getErrorType(), Message: this.localizedInternalError(c) } }, { status: code });
-    }
-    // Untyped errors are masked as 500; log the cause server-side only.
-    console.error('Unhandled route error', ErrorSanitizationUtil.sanitizeErrorForLogging(error));
-    return Response.json(
-      {
-        Exception: {
-          Type: DefaultInternalServerError.getErrorType(),
-          Message: this.localizedInternalError(c),
-        },
-      },
-      { status: 500 },
-    );
-  }
-
-  private static localizedInternalError(c: HonoContext): string {
-    return getBackendStrings(this.resolveLocale(c)).common.internalError;
+    return Response.json(body, { status });
   }
 
   private static resolveLocale(c: HonoContext): string {
@@ -184,23 +113,22 @@ abstract class BaseRoute {
       if (!header) return 'en';
       const first = header.split(',', 1)[0]?.split(';', 1)[0]?.trim();
       if (!first) return 'en';
-      // Canonicalize (`en_us` → `en-US`) so backend string lookup and logs
-      // see one tag shape; unknown tags still fall back to `en` downstream
-      // via `normalizeBackendLocale`.
+      // Canonicalize (`en_us` → `en-US`) so backend string lookup and logs see
+      // one tag shape; unknown tags still fall back to `en` downstream via
+      // `normalizeBackendLocale`.
       return canonicalizeLanguageTag(first);
     } catch {
       return 'en';
     }
   }
-
-  protected json(c: HonoContext, data: unknown, status = 200): Response {
-    return c.json(data, status as 200);
-  }
-
-  protected fail(message: string, status = 400): Response {
-    return Response.json({ Exception: { Type: 'BadRequest', Message: message } }, { status });
-  }
 }
 
-export { BaseRoute };
+/**
+ * Cap on a request body the router will buffer. Registration and volume
+ * payloads are small; anything larger is either a mistake or an attempt to
+ * exhaust the isolate, and either way does not need to be parsed.
+ */
+const MAX_JSON_BODY_BYTES = 1_048_576;
+
+export { BaseRoute, MAX_JSON_BODY_BYTES };
 export type { HonoContext };
