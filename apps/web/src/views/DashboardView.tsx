@@ -75,11 +75,19 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
           <CardTitle>{t('dashboard.connect', 'Connect')}</CardTitle>
         </CardHeader>
         <div className="space-y-3">
-          <ReadOnlyField label={t('dashboard.mountAnyVolume', 'Mount Any Volume')} value={`${globalThis.location?.origin ?? ''}/<owner>/<volume>/?backend=<slug>`} showCopy />
+          <ReadOnlyField
+            label={t('dashboard.mountAnyVolume', 'Mount Any Volume')}
+            value={`${globalThis.location?.origin ?? ''}/<owner>/<volume>/?backend=<slug>`}
+            showCopy
+          />
           <p className="text-sm text-[var(--color-text-secondary)]">
-            {t('dashboard.connectHelp', 'Each Bucket Lives On One Backend. Open A Bucket, Go To Settings, Create A Credential On That Backend, Then Connect With: {{example}}.', {
-              example: 'https://<username>:<password>@backend-host/owner/volume/',
-            })}
+            {t(
+              'dashboard.connectHelp',
+              'Each Bucket Lives On One Backend. Open A Bucket, Go To Settings, Create A Credential On That Backend, Then Connect With: {{example}}.',
+              {
+                example: 'https://<username>:<password>@backend-host/owner/volume/',
+              },
+            )}
           </p>
         </div>
       </Card>
@@ -98,7 +106,13 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
           <ul className="divide-y divide-[var(--color-border)]">
             {backends.map((b) => {
               const h = health.find((x) => x.slug === b.slug);
-              const statusText = h ? (h.ok ? '● ok' : `● ${h.status ?? ''} ${h.error ?? 'unreachable'}`.trim()) : b.lastStatus ? `● ${b.lastStatus}` : '● unknown';
+              const statusText = h
+                ? h.ok
+                  ? '● ok'
+                  : `● ${h.status ?? ''} ${h.error ?? 'unreachable'}`.trim()
+                : b.lastStatus
+                  ? `● ${b.lastStatus}`
+                  : '● unknown';
               const showProbe = h && !h.ok;
               return (
                 <li key={b.slug} className="py-3 flex items-start justify-between gap-3 first:pt-0 last:pb-0">
@@ -133,9 +147,7 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
                           .finally(() => setProbing(null));
                       }}
                     >
-                      {probing === b.slug
-                        ? t('dashboard.probing', 'Checking…')
-                        : t('dashboard.probe', 'Check')}
+                      {probing === b.slug ? t('dashboard.probing', 'Checking…') : t('dashboard.probe', 'Check')}
                     </Button>
                   ) : null}
                 </li>
@@ -169,7 +181,10 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
                   {rows.map((v) => (
                     <li key={`${v.backend}/${v.fullName}`} className="py-3 flex items-center justify-between gap-3 first:pt-0 last:pb-0">
                       <div className="min-w-0">
-                        <Link to={`/${v.owner}/${v.name}?backend=${encodeURIComponent(v.backend)}`} className="font-medium text-[var(--color-accent)] hover:underline truncate">
+                        <Link
+                          to={`/${v.owner}/${v.name}?backend=${encodeURIComponent(v.backend)}`}
+                          className="font-medium text-[var(--color-accent)] hover:underline truncate"
+                        >
                           {v.fullName}
                         </Link>
                       </div>

@@ -65,7 +65,16 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
             // the row only when the owner is under quota, and a duplicate is
             // dropped by the unique index rather than raising.
             const [id, ownerEmail, slug, slugCi, baseUrl, displayName, createdAt, updatedAt, ownerForQuota, max] = state.values as [
-              string, string, string, string, string, string | null, number, number, string, number,
+              string,
+              string,
+              string,
+              string,
+              string,
+              string | null,
+              number,
+              number,
+              string,
+              number,
             ];
             const owned = [...rows.values()].filter((r) => eq(r.owner_email, String(ownerForQuota)));
             if (owned.length >= max) return { success: true, meta: { changes: 0 } };
@@ -192,7 +201,11 @@ describe('POST /user/backends', () => {
 
   it('creates a backend and returns it as camelCase', async () => {
     const { routes, env } = setup();
-    const res = await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, body: { slug: 'office', baseUrl: 'https://b.example.com' } }));
+    const res = await call(
+      routes,
+      'POST /user/backends',
+      fakeContext({ method: 'POST', env, body: { slug: 'office', baseUrl: 'https://b.example.com' } }),
+    );
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.slug).toBe('office');
@@ -203,7 +216,10 @@ describe('POST /user/backends', () => {
   it('rejects a non-string slug with 400, not 500', async () => {
     // A raw cast used to let `{"slug": 1}` reach `raw.trim()` and throw.
     const { routes, env } = setup();
-    for (const body of [{ slug: 1, baseUrl: 'https://b.com' }, { slug: {}, baseUrl: 'https://b.com' }]) {
+    for (const body of [
+      { slug: 1, baseUrl: 'https://b.com' },
+      { slug: {}, baseUrl: 'https://b.com' },
+    ]) {
       const res = await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, body }));
       expect(res.status, JSON.stringify(body)).toBe(400);
     }
@@ -219,7 +235,11 @@ describe('POST /user/backends', () => {
 
   it('rejects a non-string displayName with 400', async () => {
     const { routes, env } = setup();
-    const res = await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, body: { slug: 'a', baseUrl: 'https://b.com', displayName: 5 } }));
+    const res = await call(
+      routes,
+      'POST /user/backends',
+      fakeContext({ method: 'POST', env, body: { slug: 'a', baseUrl: 'https://b.com', displayName: 5 } }),
+    );
     expect(res.status).toBe(400);
   });
 
@@ -270,7 +290,11 @@ describe('POST /user/backends', () => {
     const { routes, env } = setup();
     const body = { slug: 'office', baseUrl: 'https://b.example.com' };
     await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, body }));
-    const res = await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, body: { ...body, baseUrl: 'https://other.example.com' } }));
+    const res = await call(
+      routes,
+      'POST /user/backends',
+      fakeContext({ method: 'POST', env, body: { ...body, baseUrl: 'https://other.example.com' } }),
+    );
     expect(res.status).toBe(409);
     expect(JSON.stringify(await res.json())).not.toMatch(/UNIQUE constraint/i);
   });
@@ -280,7 +304,11 @@ describe('POST /user/backends', () => {
       throw new Error('DNS failure');
     });
     const { routes, env } = setup();
-    const res = await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, body: { slug: 'office', baseUrl: 'https://down.example.com' } }));
+    const res = await call(
+      routes,
+      'POST /user/backends',
+      fakeContext({ method: 'POST', env, body: { slug: 'office', baseUrl: 'https://down.example.com' } }),
+    );
     // The probe is best-effort; registration must still succeed.
     expect(res.status).toBe(201);
     const body = (await res.json()) as { lastStatus: number | null };
@@ -293,8 +321,18 @@ describe('GET /user/backends', () => {
     const { db, rows } = fakeDb();
     const now = Math.floor(Date.now() / 1000);
     rows.set('1', {
-      id: '1', owner_email: 'test@example.com', slug: 'office', slug_ci: 'office', base_url: 'https://b.com', display_name: 'Office',
-      created_at: now, updated_at: now, last_seen_at: null, last_status: null, backend_username: 'alice', backend_username_ci: 'alice',
+      id: '1',
+      owner_email: 'test@example.com',
+      slug: 'office',
+      slug_ci: 'office',
+      base_url: 'https://b.com',
+      display_name: 'Office',
+      created_at: now,
+      updated_at: now,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: 'alice',
+      backend_username_ci: 'alice',
     });
     const { app, routes } = stubApp();
     registerBackendRoutes(app as never);
@@ -319,8 +357,18 @@ describe('GET/PATCH/DELETE /user/backends/:slug', () => {
     const { db, rows } = fakeDb();
     const now = Math.floor(Date.now() / 1000);
     rows.set('1', {
-      id: '1', owner_email: 'test@example.com', slug: 'office', slug_ci: 'office', base_url: 'https://b.com', display_name: null,
-      created_at: now, updated_at: now, last_seen_at: null, last_status: null, backend_username: null, backend_username_ci: null,
+      id: '1',
+      owner_email: 'test@example.com',
+      slug: 'office',
+      slug_ci: 'office',
+      base_url: 'https://b.com',
+      display_name: null,
+      created_at: now,
+      updated_at: now,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: null,
+      backend_username_ci: null,
     });
     const { app, routes } = stubApp();
     registerBackendRoutes(app as never);
@@ -337,13 +385,21 @@ describe('GET/PATCH/DELETE /user/backends/:slug', () => {
     // Owner scoping is enforced in the query, so a different identity simply
     // does not match.
     const { routes, env } = withBackend();
-    const res = await call(routes, 'GET /user/backends/:slug', fakeContext({ env, params: { slug: 'office' }, email: 'other@example.com' }));
+    const res = await call(
+      routes,
+      'GET /user/backends/:slug',
+      fakeContext({ env, params: { slug: 'office' }, email: 'other@example.com' }),
+    );
     expect(res.status).toBe(404);
   });
 
   it('updates the baseUrl', async () => {
     const { routes, env } = withBackend();
-    const res = await call(routes, 'PATCH /user/backends/:slug', fakeContext({ method: 'PATCH', env, params: { slug: 'office' }, body: { baseUrl: 'https://new.example.com' } }));
+    const res = await call(
+      routes,
+      'PATCH /user/backends/:slug',
+      fakeContext({ method: 'PATCH', env, params: { slug: 'office' }, body: { baseUrl: 'https://new.example.com' } }),
+    );
     expect(res.status).toBe(200);
     expect(((await res.json()) as { baseUrl: string }).baseUrl).toBe('https://new.example.com');
   });
@@ -354,7 +410,12 @@ describe('GET/PATCH/DELETE /user/backends/:slug', () => {
     const res = await call(
       routes,
       'PATCH /user/backends/:slug',
-      fakeContext({ method: 'PATCH', env: { ...env, ENVIRONMENT: 'production' }, params: { slug: 'office' }, body: { baseUrl: 'https://10.0.0.1' } }),
+      fakeContext({
+        method: 'PATCH',
+        env: { ...env, ENVIRONMENT: 'production' },
+        params: { slug: 'office' },
+        body: { baseUrl: 'https://10.0.0.1' },
+      }),
     );
     expect(res.status).toBe(400);
   });
@@ -386,8 +447,18 @@ describe('GET /user/backends/:slug/me', () => {
     const { db, rows } = fakeDb();
     const now = Math.floor(Date.now() / 1000);
     rows.set('1', {
-      id: '1', owner_email: 'test@example.com', slug: 'office', slug_ci: 'office', base_url: 'https://b.com', display_name: null,
-      created_at: now, updated_at: now, last_seen_at: null, last_status: null, backend_username: null, backend_username_ci: null,
+      id: '1',
+      owner_email: 'test@example.com',
+      slug: 'office',
+      slug_ci: 'office',
+      base_url: 'https://b.com',
+      display_name: null,
+      created_at: now,
+      updated_at: now,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: null,
+      backend_username_ci: null,
     });
     const { app, routes } = stubApp();
     registerBackendRoutes(app as never);
@@ -395,7 +466,9 @@ describe('GET /user/backends/:slug/me', () => {
   };
 
   it('returns the backend username and caches it for owner routing', async () => {
-    fetchStub.mockImplementation(async () => new Response(JSON.stringify({ username: 'alice' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    fetchStub.mockImplementation(
+      async () => new Response(JSON.stringify({ username: 'alice' }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
     const { routes, env, rows } = setup();
     const res = await call(routes, 'GET /user/backends/:slug/me', fakeContext({ env, params: { slug: 'office' } }));
     expect(res.status).toBe(200);
@@ -441,12 +514,32 @@ describe('GET /user/volumes fan-out', () => {
     const { db, rows } = fakeDb();
     const now = Math.floor(Date.now() / 1000);
     rows.set('1', {
-      id: '1', owner_email: 'test@example.com', slug: 'a', slug_ci: 'a', base_url: 'https://a.com', display_name: null,
-      created_at: now, updated_at: now, last_seen_at: null, last_status: null, backend_username: null, backend_username_ci: null,
+      id: '1',
+      owner_email: 'test@example.com',
+      slug: 'a',
+      slug_ci: 'a',
+      base_url: 'https://a.com',
+      display_name: null,
+      created_at: now,
+      updated_at: now,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: null,
+      backend_username_ci: null,
     });
     rows.set('2', {
-      id: '2', owner_email: 'test@example.com', slug: 'b', slug_ci: 'b', base_url: 'https://b.com', display_name: null,
-      created_at: now, updated_at: 2, last_seen_at: null, last_status: null, backend_username: null, backend_username_ci: null,
+      id: '2',
+      owner_email: 'test@example.com',
+      slug: 'b',
+      slug_ci: 'b',
+      base_url: 'https://b.com',
+      display_name: null,
+      created_at: now,
+      updated_at: 2,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: null,
+      backend_username_ci: null,
     });
     const { app, routes } = stubApp();
     registerAggregatedVolumeRoutes(app as never);
@@ -509,8 +602,18 @@ describe('POST /user/volumes', () => {
     const { db, rows } = fakeDb();
     const now = Math.floor(Date.now() / 1000);
     rows.set('1', {
-      id: '1', owner_email: 'test@example.com', slug: 'a', slug_ci: 'a', base_url: 'https://a.com', display_name: null,
-      created_at: now, updated_at: now, last_seen_at: null, last_status: null, backend_username: null, backend_username_ci: null,
+      id: '1',
+      owner_email: 'test@example.com',
+      slug: 'a',
+      slug_ci: 'a',
+      base_url: 'https://a.com',
+      display_name: null,
+      created_at: now,
+      updated_at: now,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: null,
+      backend_username_ci: null,
     });
     const { app, routes } = stubApp();
     registerAggregatedVolumeRoutes(app as never);
@@ -529,17 +632,34 @@ describe('POST /user/volumes', () => {
   it('never leaks the ?backend= selector to the backend', async () => {
     fetchStub.mockImplementation(async () => Response.json({ owner: 'alice' }));
     const { routes, env } = oneBackend();
-    await call(routes, 'POST /user/volumes', fakeContext({ method: 'POST', env, url: 'https://router.example.com/user/volumes?backend=a', body: {} }));
+    await call(
+      routes,
+      'POST /user/volumes',
+      fakeContext({ method: 'POST', env, url: 'https://router.example.com/user/volumes?backend=a', body: {} }),
+    );
     expect(String(fetchStub.mock.calls.at(-1)?.[0])).not.toContain('backend=');
   });
 
   it('requires a selector when several backends exist, listing the candidates', async () => {
     const { db, rows } = fakeDb();
     const now = Math.floor(Date.now() / 1000);
-    for (const [id, slug] of [['1', 'a'], ['2', 'b']]) {
+    for (const [id, slug] of [
+      ['1', 'a'],
+      ['2', 'b'],
+    ]) {
       rows.set(id, {
-        id, owner_email: 'test@example.com', slug, slug_ci: slug, base_url: `https://${slug}.com`, display_name: null,
-        created_at: now, updated_at: now, last_seen_at: null, last_status: null, backend_username: null, backend_username_ci: null,
+        id,
+        owner_email: 'test@example.com',
+        slug,
+        slug_ci: slug,
+        base_url: `https://${slug}.com`,
+        display_name: null,
+        created_at: now,
+        updated_at: now,
+        last_seen_at: null,
+        last_status: null,
+        backend_username: null,
+        backend_username_ci: null,
       });
     }
     const { app, routes } = stubApp();
@@ -629,7 +749,17 @@ describe('error responses carry the canonical envelope', () => {
     // A D1 failure must be a masked 500, not a schema disclosure.
     const exploding = {
       prepare: () => ({
-        bind: () => ({ first: async () => { throw new Error('UNIQUE constraint failed: router_backends.owner_email, router_backends.slug_ci'); }, all: async () => { throw new Error('x'); }, run: async () => { throw new Error('x'); } }),
+        bind: () => ({
+          first: async () => {
+            throw new Error('UNIQUE constraint failed: router_backends.owner_email, router_backends.slug_ci');
+          },
+          all: async () => {
+            throw new Error('x');
+          },
+          run: async () => {
+            throw new Error('x');
+          },
+        }),
       }),
     };
     const { app, routes } = stubApp();

@@ -12,28 +12,28 @@
       "enabled": true,
       "head_sampling_rate": 1,
       "invocation_logs": true,
-      "persist": true
-    }
+      "persist": true,
+    },
   },
   "routes": [],
   "placement": {
-    "mode": "off"
+    "mode": "off",
   },
   "assets": {
-    "directory": "./apps/web/dist/"
+    "directory": "./apps/web/dist/",
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_id": "00000000-0000-0000-0000-000000000000",
-      "database_name": "durable-dav-router-db"
-    }
+      "database_name": "durable-dav-router-db",
+    },
   ],
   "kv_namespaces": [
     {
       "binding": "CACHE",
-      "id": "00000000000000000000000000000000"
-    }
+      "id": "00000000000000000000000000000000",
+    },
   ],
   // No DEV_AUTH_EMAIL / DEMO_MODE here on purpose. Those are authentication
   // bypasses: with either set, every unauthenticated request authenticates as
@@ -51,6 +51,6 @@
     "TEAM_DOMAIN": "",
     "MAX_BACKENDS_PER_USER": "20",
     "BACKEND_FETCH_TIMEOUT_MS": "8000",
-    "ROUTE_CACHE_TTL_SECONDS": "86400"
-  }
+    "ROUTE_CACHE_TTL_SECONDS": "86400",
+  },
 }

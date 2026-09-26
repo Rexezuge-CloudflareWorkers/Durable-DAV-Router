@@ -146,7 +146,13 @@ describe('readDav', () => {
   });
 
   it('tolerates an unreadable failure body', async () => {
-    const res = { ok: false, status: 500, text: async () => { throw new Error('stream error'); } } as unknown as Response;
+    const res = {
+      ok: false,
+      status: 500,
+      text: async () => {
+        throw new Error('stream error');
+      },
+    } as unknown as Response;
     await expect(readDav(res)).rejects.toBeInstanceOf(BackendError);
   });
 });
@@ -372,13 +378,25 @@ describe('toLocalizedErrorMessage', () => {
   it('has an i18n key and fallback for every type the router can emit', () => {
     // The router's `Exception.Type` values are a wire contract; an unmapped one
     // silently degrades to the generic message.
-    for (const type of ['BadRequest', 'Unauthorized', 'Forbidden', 'NotFound', 'Conflict', 'PayloadTooLarge', 'RateLimited', 'MethodNotAllowed', 'InternalServerError']) {
+    for (const type of [
+      'BadRequest',
+      'Unauthorized',
+      'Forbidden',
+      'NotFound',
+      'Conflict',
+      'PayloadTooLarge',
+      'RateLimited',
+      'MethodNotAllowed',
+      'InternalServerError',
+    ]) {
       expect(BACKEND_TYPE_TO_I18N_KEY[type], type).toBeTruthy();
     }
   });
 
   it('falls back for an unmapped type', () => {
-    expect(toLocalizedErrorMessage(t, new BackendError('x', 'SomethingNew', 400), 'errors.generic', 'Generic.')).toBe('t(errors.generic)|Generic.');
+    expect(toLocalizedErrorMessage(t, new BackendError('x', 'SomethingNew', 400), 'errors.generic', 'Generic.')).toBe(
+      't(errors.generic)|Generic.',
+    );
   });
 
   it('falls back for a non-BackendError', () => {
@@ -387,6 +405,8 @@ describe('toLocalizedErrorMessage', () => {
 
   it('falls back for an untyped BackendError', () => {
     // A proxied HTML login page yields a BackendError with no Exception.Type.
-    expect(toLocalizedErrorMessage(t, new BackendError('<html>', null, 403), 'errors.generic', 'Generic.')).toBe('t(errors.generic)|Generic.');
+    expect(toLocalizedErrorMessage(t, new BackendError('<html>', null, 403), 'errors.generic', 'Generic.')).toBe(
+      't(errors.generic)|Generic.',
+    );
   });
 });

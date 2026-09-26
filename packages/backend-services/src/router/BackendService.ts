@@ -169,7 +169,12 @@ class BackendService {
     return d1Read(() => dao.getByOwnerSlug(ownerEmail.toLowerCase(), slug), 'lookup router backend', null);
   }
 
-  public async createBackend(input: { ownerEmail: string; slug: string; baseUrl: string; displayName?: string | null }): Promise<RouterBackendRow> {
+  public async createBackend(input: {
+    ownerEmail: string;
+    slug: string;
+    baseUrl: string;
+    displayName?: string | null;
+  }): Promise<RouterBackendRow> {
     const ownerEmail = input.ownerEmail.toLowerCase();
     const slug = normalizeSlug(input.slug);
     const baseUrl = normalizeBaseUrl(input.baseUrl, this.allowPrivateHosts);
@@ -253,11 +258,9 @@ class BackendService {
     const row = await this.findBackend(ownerEmail, slug);
     if (!row) return;
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
-    await dao
-      .update(row.id, { now, lastSeenAt: now, lastStatus: status })
-      .catch((error: unknown) => {
-        console.warn(`recordProbe failed for backend ${slug}: ${error instanceof Error ? error.message : String(error)}`);
-      });
+    await dao.update(row.id, { now, lastSeenAt: now, lastStatus: status }).catch((error: unknown) => {
+      console.warn(`recordProbe failed for backend ${slug}: ${error instanceof Error ? error.message : String(error)}`);
+    });
   }
 
   public async recordBackendUsername(ownerEmail: string, slug: string, username: string | null): Promise<void> {

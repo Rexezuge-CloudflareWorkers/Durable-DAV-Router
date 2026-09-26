@@ -81,7 +81,9 @@ async function forwardToBackend(request: Request, target: string, env: Env, body
     );
   } catch (error) {
     const isTimeout = error instanceof Error && (error.name === 'AbortError' || /aborted|timeout/i.test(error.message));
-    console.warn(`backend ${new URL(target).origin} ${isTimeout ? 'timed out' : 'unreachable'} for ${method}: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `backend ${new URL(target).origin} ${isTimeout ? 'timed out' : 'unreachable'} for ${method}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return new Response(isTimeout ? 'Backend timed out' : 'Backend unreachable', { status: isTimeout ? 504 : 502 });
   }
   const text = await res.text().catch(() => '');
@@ -89,7 +91,12 @@ async function forwardToBackend(request: Request, target: string, env: Env, body
 }
 
 interface ProxyOneContext {
-  req: { raw: Request; param: (n: string) => string | undefined; query: (k: string) => string | undefined; header: (k: string) => string | undefined };
+  req: {
+    raw: Request;
+    param: (n: string) => string | undefined;
+    query: (k: string) => string | undefined;
+    header: (k: string) => string | undefined;
+  };
   env: Env;
   // oxlint-disable-next-line no-explicit-any
   json: (data: unknown, status?: number) => any;
@@ -149,7 +156,12 @@ async function proxySubpath(c: ProxySubpathContext): Promise<Response> {
     const incomingUrl = new URL(raw.url);
     // The full path is preserved so the backend sees the same resource shape the
     // caller asked for; only the router's own selector is stripped.
-    return forwardToBackend(raw, joinBackendUrlWithoutSelector(backend.base_url, incomingUrl.pathname, incomingUrl.search), c.env, raw.body);
+    return forwardToBackend(
+      raw,
+      joinBackendUrlWithoutSelector(backend.base_url, incomingUrl.pathname, incomingUrl.search),
+      c.env,
+      raw.body,
+    );
   } catch (error) {
     return BaseRoute.toErrorResponse(c as never, error);
   }
@@ -235,10 +247,7 @@ function registerAggregatedVolumeRoutes(app: App): void {
         const upstreamStatus = typeof reason?.backendStatus === 'number' ? reason.backendStatus : null;
         const isTimeout = reason?.name === 'AbortError' || /aborted|timeout/i.test(reason?.message ?? '');
         const status = upstreamStatus ?? (isTimeout ? 504 : 502);
-        const message =
-          reason instanceof Error
-            ? reason.message
-            : 'backend unreachable';
+        const message = reason instanceof Error ? reason.message : 'backend unreachable';
         console.warn('backend fan-out failed', { slug, status, error: message.slice(0, 300) });
         return { slug, ok: false, status, error: message };
       });
@@ -252,8 +261,25 @@ function registerAggregatedVolumeRoutes(app: App): void {
   app.patch('/user/volumes/:owner/:volume', async (c) => proxyOne(c as never));
   app.delete('/user/volumes/:owner/:volume', async (c) => proxyOne(c as never));
 
-  app.on(['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'PROPFIND', 'PROPPATCH', 'MKCOL', 'COPY', 'MOVE', 'LOCK', 'UNLOCK', 'HEAD', 'OPTIONS'] as never[], '/user/volumes/:owner/:volume/*', async (c) =>
-    proxySubpath(c as never),
+  app.on(
+    [
+      'GET',
+      'POST',
+      'PATCH',
+      'PUT',
+      'DELETE',
+      'PROPFIND',
+      'PROPPATCH',
+      'MKCOL',
+      'COPY',
+      'MOVE',
+      'LOCK',
+      'UNLOCK',
+      'HEAD',
+      'OPTIONS',
+    ] as never[],
+    '/user/volumes/:owner/:volume/*',
+    async (c) => proxySubpath(c as never),
   );
 }
 

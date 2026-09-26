@@ -101,7 +101,6 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
     }
     return this.app.fetch(request, env, ctx);
   }
-
 }
 
 export { DurableDavRouterWorker };

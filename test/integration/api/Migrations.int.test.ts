@@ -25,18 +25,13 @@ describe('migrations preserve registered backends', () => {
   const db = (): D1Database => (env as unknown as TestEnv).DB;
 
   async function countBackends(): Promise<number> {
-    const row = await db()
-      .prepare('SELECT COUNT(*) AS cnt FROM router_backends')
-      .first<{ cnt: number }>();
+    const row = await db().prepare('SELECT COUNT(*) AS cnt FROM router_backends').first<{ cnt: number }>();
     return row?.cnt ?? 0;
   }
 
   async function seedUserAndBackend(): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
-    await db()
-      .prepare('INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)')
-      .bind(SEED_OWNER, now)
-      .run();
+    await db().prepare('INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)').bind(SEED_OWNER, now).run();
     await db()
       .prepare(
         `INSERT OR IGNORE INTO router_backends (id, owner_email, slug, slug_ci, base_url, created_at, updated_at)

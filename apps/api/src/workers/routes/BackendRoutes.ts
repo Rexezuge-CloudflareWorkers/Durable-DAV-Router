@@ -124,7 +124,9 @@ async function readCreateBody(c: HonoContext): Promise<{ body: CreateBackendBody
   if (typeof body.baseUrl !== 'string' || body.baseUrl.trim().length === 0) {
     return { error: BaseRoute.jsonError(c, 'baseUrl is required', 400) };
   }
-  return body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== 'string' ? { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) } : { body };
+  return body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== 'string'
+    ? { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) }
+    : { body };
 }
 
 function registerBackendRoutes(app: App): void {
@@ -155,7 +157,10 @@ function registerBackendRoutes(app: App): void {
       const timeoutMs = getProxyTimeoutMs(c.env);
       const status = await probeBackendHealth(created.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
       await scope.get(Tokens.BackendService).recordProbe(email, created.slug, status);
-      const refreshed = await scope.get(Tokens.BackendService).getBackend(email, created.slug).catch(() => created);
+      const refreshed = await scope
+        .get(Tokens.BackendService)
+        .getBackend(email, created.slug)
+        .catch(() => created);
       return c.json(toBackendJson(refreshed), 201);
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
@@ -188,15 +193,18 @@ function registerBackendRoutes(app: App): void {
     }
     try {
       const updated = await scope.get(Tokens.BackendService).updateBackend(email, c.req.param('slug') ?? '', {
-        ...((body.baseUrl !== undefined) && { baseUrl: body.baseUrl }),
-        ...((body.displayName !== undefined) && { displayName: body.displayName }),
+        ...(body.baseUrl !== undefined && { baseUrl: body.baseUrl }),
+        ...(body.displayName !== undefined && { displayName: body.displayName }),
       });
       // base_url snapshots cached in `davRoute` go stale on edit → purge.
       await purgeCachedRoutes(kvOf(scope as never)).catch(() => 0);
       const timeoutMs = getProxyTimeoutMs(c.env);
       const status = await probeBackendHealth(updated.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
       await scope.get(Tokens.BackendService).recordProbe(email, updated.slug, status);
-      const refreshed = await scope.get(Tokens.BackendService).getBackend(email, updated.slug).catch(() => updated);
+      const refreshed = await scope
+        .get(Tokens.BackendService)
+        .getBackend(email, updated.slug)
+        .catch(() => updated);
       return c.json(toBackendJson(refreshed));
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
@@ -247,7 +255,10 @@ function registerBackendRoutes(app: App): void {
           headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' },
         });
       }
-      await scope.get(Tokens.BackendService).recordBackendUsername(email, row.slug, username).catch(() => undefined);
+      await scope
+        .get(Tokens.BackendService)
+        .recordBackendUsername(email, row.slug, username)
+        .catch(() => undefined);
       return c.json({ slug: row.slug, username });
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
@@ -289,7 +300,10 @@ function registerBackendRoutes(app: App): void {
       }
 
       const [health, volumes] = await Promise.all([check('/health'), check('/user/volumes')]);
-      await scope.get(Tokens.BackendService).recordProbe(email, row.slug, health.status).catch(() => undefined);
+      await scope
+        .get(Tokens.BackendService)
+        .recordProbe(email, row.slug, health.status)
+        .catch(() => undefined);
       return c.json({
         slug: row.slug,
         baseUrl: row.base_url,

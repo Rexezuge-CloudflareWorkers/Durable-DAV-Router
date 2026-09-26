@@ -88,19 +88,10 @@ const STALE_CACHED_STATUSES = new Set([404, 410]);
 // twice — once to each of two different backends.
 const REPLAY_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PROPFIND']);
 
-async function handleProxy(
-  c: ProxyContext,
-  owner: string,
-  volume: string,
-  inner: string,
-  trailingSlash: boolean,
-): Promise<Response> {
+async function handleProxy(c: ProxyContext, owner: string, volume: string, inner: string, trailingSlash: boolean): Promise<Response> {
   const method = c.req.raw.method;
   if (!SUPPORT_METHODS.includes(method)) {
-    return applyCors(
-      new Response('Method Not Allowed', { status: 405, headers: { Allow: SUPPORT_METHODS.join(', ') } }),
-      c.req.raw,
-    );
+    return applyCors(new Response('Method Not Allowed', { status: 405, headers: { Allow: SUPPORT_METHODS.join(', ') } }), c.req.raw);
   }
   const scope = BaseRoute.getScope(c as never);
   const kv = resolveKvCache(scope);
@@ -149,7 +140,10 @@ async function handleProxy(
   // public-vs-private itself with the verbatim-proxied credentials.
   let backends: Array<{ slug: string; base_url: string }> = [];
   try {
-    backends = await scope.get(Tokens.BackendService).listByBackendUsername(owner).catch(() => []);
+    backends = await scope
+      .get(Tokens.BackendService)
+      .listByBackendUsername(owner)
+      .catch(() => []);
   } catch {
     backends = [];
   }
@@ -242,14 +236,7 @@ async function proxyAndTrack(
 
 // Volume-existence mutations change future probe outcomes, so the cached
 // owner must go. Inner-file writes never change ownership → no invalidation.
-function trackVolumeMutation(
-  c: ProxyContext,
-  kv: KvCache | null,
-  owner: string,
-  volume: string,
-  inner: string,
-  status: number,
-): void {
+function trackVolumeMutation(c: ProxyContext, kv: KvCache | null, owner: string, volume: string, inner: string, status: number): void {
   if (status < 200 || status >= 300) return;
   const method = c.req.raw.method;
   if (inner === '' && ['MKCOL', 'DELETE', 'MOVE'].includes(method)) {

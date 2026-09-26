@@ -33,7 +33,8 @@ const KV_DOMAINS: Record<KvDomainName, KvDomainDef> = {
   davRoute: {
     ttlSeconds: 86_400,
     maxValueBytes: 4096,
-    description: 'Owner/volume to owning backend resolution; buckets rarely change so long-lived (24h), invalidated on volume/backend mutation plus self-heal on forward 404/410.',
+    description:
+      'Owner/volume to owning backend resolution; buckets rarely change so long-lived (24h), invalidated on volume/backend mutation plus self-heal on forward 404/410.',
   },
 };
 

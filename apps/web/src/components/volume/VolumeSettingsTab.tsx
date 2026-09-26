@@ -68,9 +68,14 @@ export function VolumeSettingsTab({
     e.preventDefault();
     setSaving(true);
     try {
-      const updated = await updateVolume(owner, volume, {
-        description: description.trim() === '' ? null : description.trim(),
-      }, backend);
+      const updated = await updateVolume(
+        owner,
+        volume,
+        {
+          description: description.trim() === '' ? null : description.trim(),
+        },
+        backend,
+      );
       setDetail(updated);
       onUpdated(updated);
       showNotice('success', t('volumes.settingsUpdated', 'Bucket Settings Updated.'));

@@ -86,9 +86,7 @@ describe('RouteCacheService', () => {
     await expect(getCachedRoute(kv, 'owner', 'Vol')).resolves.toEqual(ROUTE);
     const bad = new KvCache(makeFakeKv({ [buildKvKey('davRoute', ['owner', 'bad'])]: 'not-json{' }) as never);
     await expect(getCachedRoute(bad, 'owner', 'bad')).resolves.toBeNull();
-    const wrongShape = new KvCache(
-      makeFakeKv({ [buildKvKey('davRoute', ['owner', 'ws'])]: JSON.stringify({ nope: 1 }) }) as never,
-    );
+    const wrongShape = new KvCache(makeFakeKv({ [buildKvKey('davRoute', ['owner', 'ws'])]: JSON.stringify({ nope: 1 }) }) as never);
     await expect(getCachedRoute(wrongShape, 'owner', 'ws')).resolves.toBeNull();
   });
 

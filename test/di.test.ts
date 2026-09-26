@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Container, providerOf, memoizeAsync, setRequestScope, getRequestScope, asScopedContext, SCOPE_KEY } from '@durable-dav-router/backend-runtime/di';
+import {
+  Container,
+  providerOf,
+  memoizeAsync,
+  setRequestScope,
+  getRequestScope,
+  asScopedContext,
+  SCOPE_KEY,
+} from '@durable-dav-router/backend-runtime/di';
 import type { Token } from '@durable-dav-router/backend-runtime/di';
 
 const A = Symbol('A') as Token<{ name: string }>;

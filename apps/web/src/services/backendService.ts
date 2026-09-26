@@ -10,10 +10,7 @@ export async function createBackend(input: { slug: string; baseUrl: string; disp
   return apiPost<RouterBackend>('/user/backends', input);
 }
 
-export async function updateBackend(
-  slug: string,
-  patch: { baseUrl?: string; displayName?: string | null },
-): Promise<RouterBackend> {
+export async function updateBackend(slug: string, patch: { baseUrl?: string; displayName?: string | null }): Promise<RouterBackend> {
   return apiPatch<RouterBackend>(`/user/backends/${encodeURIComponent(slug)}`, patch);
 }
 

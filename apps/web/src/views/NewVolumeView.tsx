@@ -12,11 +12,7 @@ import { ContextBar } from '../components/layout/ContextBar';
 import { AppPage } from '../components/layout/AppPage';
 
 type OwnerState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'ready'; username: string }
-  | { status: 'missing' }
-  | { status: 'error' };
+  { status: 'idle' } | { status: 'loading' } | { status: 'ready'; username: string } | { status: 'missing' } | { status: 'error' };
 
 export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | 'error', text: string) => void }) {
   const navigate = useNavigate();
@@ -66,7 +62,7 @@ export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | '
 
   const handleBackendChange = (slug: string) => {
     setBackend(slug);
-    setOwnerState(({ status: slug.trim() ? 'loading' : 'idle' }));
+    setOwnerState({ status: slug.trim() ? 'loading' : 'idle' });
   };
 
   const ownerUsername = ownerState.status === 'ready' ? ownerState.username : '';
@@ -83,10 +79,11 @@ export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | '
     }
     setSaving(true);
     try {
-      const created = await apiPost<{ owner: string; name: string }>(
-        `/user/volumes?backend=${encodeURIComponent(backend.trim())}`,
-        { owner: ownerUsername, name: name.trim(), isPrivate },
-      );
+      const created = await apiPost<{ owner: string; name: string }>(`/user/volumes?backend=${encodeURIComponent(backend.trim())}`, {
+        owner: ownerUsername,
+        name: name.trim(),
+        isPrivate,
+      });
       showNotice('success', t('volumes.volumeCreated', 'Volume {{fullName}} Created.', { fullName: `${created.owner}/${created.name}` }));
       void navigate(`/${created.owner}/${created.name}?backend=${encodeURIComponent(backend.trim())}`);
     } catch (error) {
@@ -108,7 +105,9 @@ export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | '
   return (
     <div>
       <ContextBar
-        crumb={<span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">{t('volumes.newVolume', 'New Volume')}</span>}
+        crumb={
+          <span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">{t('volumes.newVolume', 'New Volume')}</span>
+        }
       />
       <AppPage variant="narrow">
         <Card>
@@ -118,7 +117,12 @@ export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | '
           <form onSubmit={submit} className="space-y-4">
             <div>
               <Label className="mb-1.5">{t('volumes.backend', 'Backend')}</Label>
-              <select value={backend} onChange={(e) => handleBackendChange(e.target.value)} required className="w-full rounded border px-2 py-1.5 text-sm">
+              <select
+                value={backend}
+                onChange={(e) => handleBackendChange(e.target.value)}
+                required
+                className="w-full rounded border px-2 py-1.5 text-sm"
+              >
                 <option value="">{t('volumes.chooseBackend', 'Choose A Backend')}</option>
                 {backends.map((b) => (
                   <option key={b.slug} value={b.slug}>

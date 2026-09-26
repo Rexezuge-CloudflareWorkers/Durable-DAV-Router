@@ -3,7 +3,13 @@ import type { CurrentUser } from '../../types';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
 import { ReadOnlyField } from '../shared/ReadOnlyField';
 
-export function ProfileSettingsCard({ user }: { user: CurrentUser; setUser: (user: CurrentUser) => void; showNotice: (type: 'success' | 'error', text: string) => void }) {
+export function ProfileSettingsCard({
+  user,
+}: {
+  user: CurrentUser;
+  setUser: (user: CurrentUser) => void;
+  showNotice: (type: 'success' | 'error', text: string) => void;
+}) {
   const { t } = useTranslation();
   return (
     <Card>

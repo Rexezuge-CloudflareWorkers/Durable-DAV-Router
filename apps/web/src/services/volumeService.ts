@@ -1,4 +1,4 @@
-import type { AggregatedVolume, BackendHealth,  VolumeDetail } from '../types';
+import type { AggregatedVolume, BackendHealth, VolumeDetail } from '../types';
 import { apiDelete, apiGet, apiPatch } from '../lib/api';
 
 function withBackend(params: Record<string, string | undefined>, backend?: string | null): Record<string, string | undefined> {
@@ -6,10 +6,7 @@ function withBackend(params: Record<string, string | undefined>, backend?: strin
 }
 
 export async function listMyVolumes(backend?: string | null): Promise<{ volumes: AggregatedVolume[]; backends: BackendHealth[] }> {
-  const data = await apiGet<{ volumes?: AggregatedVolume[]; backends?: BackendHealth[] }>(
-    '/user/volumes',
-    withBackend({}, backend),
-  );
+  const data = await apiGet<{ volumes?: AggregatedVolume[]; backends?: BackendHealth[] }>('/user/volumes', withBackend({}, backend));
   return { volumes: data.volumes ?? [], backends: data.backends ?? [] };
 }
 

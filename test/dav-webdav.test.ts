@@ -29,7 +29,8 @@ describe('DuraDAV protocol surface', () => {
 });
 
 describe('CORS origin policy', () => {
-  const request = (origin?: string): Request => new Request('https://router.example.com/o/v', { headers: origin ? { Origin: origin } : {} });
+  const request = (origin?: string): Request =>
+    new Request('https://router.example.com/o/v', { headers: origin ? { Origin: origin } : {} });
 
   it('grants nothing by default, so a cross-origin browser request is refused', () => {
     // Reflecting any Origin let a page on any site drive cross-origin PUT /

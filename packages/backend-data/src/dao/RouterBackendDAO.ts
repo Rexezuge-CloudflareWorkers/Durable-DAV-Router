@@ -48,7 +48,16 @@ class RouterBackendDAO extends BaseDAO {
           .prepare(
             'INSERT INTO router_backends (id, owner_email, slug, slug_ci, base_url, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
           )
-          .bind(input.id, input.ownerEmail.toLowerCase(), input.slug, input.slug.toLowerCase(), input.baseUrl, input.displayName, input.now, input.now)
+          .bind(
+            input.id,
+            input.ownerEmail.toLowerCase(),
+            input.slug,
+            input.slug.toLowerCase(),
+            input.baseUrl,
+            input.displayName,
+            input.now,
+            input.now,
+          )
           .run(),
       'create router backend',
     );
@@ -172,7 +181,11 @@ class RouterBackendDAO extends BaseDAO {
     }
     const { clause, values } = buildSetClause(assignments);
     await this.withRetry(
-      () => this.database.prepare(`UPDATE router_backends SET ${clause} WHERE id = ?`).bind(...values, id).run(),
+      () =>
+        this.database
+          .prepare(`UPDATE router_backends SET ${clause} WHERE id = ?`)
+          .bind(...values, id)
+          .run(),
       'update router backend',
     );
   }

@@ -3,10 +3,12 @@
   "main": "../../apps/api/src/index.ts",
   "compatibility_date": "2025-11-29",
   "compatibility_flags": ["nodejs_compat"],
-  "d1_databases": [{ "binding": "DB", "database_name": "durable-dav-router-test-db", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "durable-dav-router-test-db", "database_id": "00000000-0000-0000-0000-000000000000" },
+  ],
   "vars": {
     "ENVIRONMENT": "development",
     "DEV_AUTH_EMAIL": "test@example.com",
-    "SITE_URL": "https://example.com"
-  }
+    "SITE_URL": "https://example.com",
+  },
 }

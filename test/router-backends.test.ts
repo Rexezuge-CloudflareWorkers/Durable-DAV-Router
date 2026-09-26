@@ -249,7 +249,11 @@ describe('BackendService with fakes', () => {
           display_name: patch.displayName !== undefined ? patch.displayName : cur.display_name,
           backend_username: patch.backendUsername !== undefined ? patch.backendUsername : cur.backend_username,
           backend_username_ci:
-            patch.backendUsername !== undefined ? (patch.backendUsername ? patch.backendUsername.toLowerCase() : null) : cur.backend_username_ci,
+            patch.backendUsername !== undefined
+              ? patch.backendUsername
+                ? patch.backendUsername.toLowerCase()
+                : null
+              : cur.backend_username_ci,
           updated_at: patch.now,
         });
       },
@@ -263,7 +267,9 @@ describe('BackendService with fakes', () => {
     const dao = fakeDAO();
     const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
     await svc.createBackend({ ownerEmail: 'User@Example.com', slug: 'office', baseUrl: 'https://dav.example.com' });
-    await expect(svc.createBackend({ ownerEmail: 'user@example.com', slug: 'office', baseUrl: 'https://other.example.com' })).rejects.toThrow();
+    await expect(
+      svc.createBackend({ ownerEmail: 'user@example.com', slug: 'office', baseUrl: 'https://other.example.com' }),
+    ).rejects.toThrow();
   });
 
   it('resolves concurrent creates without a duplicate (uniqueness enforced in the insert)', async () => {
@@ -283,34 +289,32 @@ describe('BackendService with fakes', () => {
   });
 
   it('rejects a private backend origin in production but allows it in development', async () => {
-    const prod = new BackendService(
-      { DB: {} as never, ENVIRONMENT: 'production' } as never,
-      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
-    );
+    const prod = new BackendService({ DB: {} as never, ENVIRONMENT: 'production' } as never, {
+      backendDAO: () => Promise.resolve(fakeDAO() as never),
+    });
     await expect(prod.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
       /private, loopback/i,
     );
 
     // A co-located backend is a legitimate self-hosted setup, so an unset flag
     // outside production must not block it.
-    const dev = new BackendService(
-      { DB: {} as never, ENVIRONMENT: 'development' } as never,
-      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
-    );
+    const dev = new BackendService({ DB: {} as never, ENVIRONMENT: 'development' } as never, {
+      backendDAO: () => Promise.resolve(fakeDAO() as never),
+    });
     await expect(dev.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).resolves.toBeTruthy();
   });
 
   it('lets ALLOW_PRIVATE_BACKEND_HOSTS override the environment default', async () => {
-    const prodOptIn = new BackendService(
-      { DB: {} as never, ENVIRONMENT: 'production', ALLOW_PRIVATE_BACKEND_HOSTS: 'true' } as never,
-      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
-    );
-    await expect(prodOptIn.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).resolves.toBeTruthy();
+    const prodOptIn = new BackendService({ DB: {} as never, ENVIRONMENT: 'production', ALLOW_PRIVATE_BACKEND_HOSTS: 'true' } as never, {
+      backendDAO: () => Promise.resolve(fakeDAO() as never),
+    });
+    await expect(
+      prodOptIn.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' }),
+    ).resolves.toBeTruthy();
 
-    const devOptOut = new BackendService(
-      { DB: {} as never, ENVIRONMENT: 'development', ALLOW_PRIVATE_BACKEND_HOSTS: 'false' } as never,
-      { backendDAO: () => Promise.resolve(fakeDAO() as never) },
-    );
+    const devOptOut = new BackendService({ DB: {} as never, ENVIRONMENT: 'development', ALLOW_PRIVATE_BACKEND_HOSTS: 'false' } as never, {
+      backendDAO: () => Promise.resolve(fakeDAO() as never),
+    });
     await expect(devOptOut.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
       /private, loopback/i,
     );

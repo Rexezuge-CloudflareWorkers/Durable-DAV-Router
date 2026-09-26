@@ -107,9 +107,7 @@ function filterProxiedResponseHeaders(incoming: Headers): Headers {
 }
 
 type BackendResolution =
-  | { kind: 'single'; backend: RouterBackendRow }
-  | { kind: 'not-found' }
-  | { kind: 'ambiguous'; backends: RouterBackendRow[] };
+  { kind: 'single'; backend: RouterBackendRow } | { kind: 'not-found' } | { kind: 'ambiguous'; backends: RouterBackendRow[] };
 
 function resolveBackend(backends: RouterBackendRow[], explicitSlug?: string | null): BackendResolution {
   // Trim before testing for presence: a whitespace-only selector is an absent
@@ -149,9 +147,7 @@ function stripBackendSelector(search: string): string {
   // mangles signature-bearing query strings (Cloudflare Access signed URLs,
   // S3/R2 presigned URLs) that a backend may require.
   const raw = search.startsWith('?') ? search.slice(1) : search;
-  const kept = raw
-    .split('&')
-    .filter((pair) => pair.length > 0 && !/^backend=/i.test(pair) && pair.toLowerCase() !== 'backend');
+  const kept = raw.split('&').filter((pair) => pair.length > 0 && !/^backend=/i.test(pair) && pair.toLowerCase() !== 'backend');
   return kept.length > 0 ? `?${kept.join('&')}` : '';
 }
 
@@ -268,9 +264,7 @@ async function probeCandidateBackends(input: ProbeCandidatesInput): Promise<Auto
   const hits: RouterBackendRow[] = [];
   const authHits: RouterBackendRow[] = [];
   let unknown = 0;
-  const probed = settled.map((r) =>
-    r.status === 'fulfilled' ? r.value : { backend: null, signal: 'unknown' as ProbeSignal },
-  );
+  const probed = settled.map((r) => (r.status === 'fulfilled' ? r.value : { backend: null, signal: 'unknown' as ProbeSignal }));
   for (const p of probed) {
     if (p.signal === 'hit' && p.backend !== null) hits.push(p.backend);
     if (p.signal === 'auth' && p.backend !== null) authHits.push(p.backend);
@@ -304,10 +298,10 @@ function describeBackendFailure(status: number, bodySnippet: string): string {
       `check backend Access policy and forwarded Cf-Access-Jwt-Assertion/Cookie)${snippet}`
     );
   }
-  return status === 401 || status === 403 ? (
-      `backend responded ${status} (backend rejected router credentials; ` +
-      `check Access JWT audience and forwarded Authorization/Cookie)${snippet}`
-    ) : `backend responded ${status}${snippet}`;
+  return status === 401 || status === 403
+    ? `backend responded ${status} (backend rejected router credentials; ` +
+        `check Access JWT audience and forwarded Authorization/Cookie)${snippet}`
+    : `backend responded ${status}${snippet}`;
 }
 
 export {

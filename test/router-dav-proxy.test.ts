@@ -48,7 +48,7 @@ function fakeDb(opts: { backends: BackendSeed[] }) {
           if (state.sql.includes('FROM router_backends WHERE id = ?')) {
             const id = String(state.values[0]);
             const hit = opts.backends.find((b) => b.id === id);
-            return (hit ? (toRow(hit) as T) : null);
+            return hit ? (toRow(hit) as T) : null;
           }
           return null as T | null;
         },
@@ -118,30 +118,26 @@ const BACKENDS_TWO: BackendSeed[] = [
 /** Fetch stub where volume-root `PROPFIND Depth: 0` probes get per-origin statuses. */
 function stubFetchWithProbes(probeStatusByOrigin: Record<string, number>, forwardStatus = 207) {
   const calls: CapturedFetch[] = [];
-  vi.stubGlobal(
-    'fetch',
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
-      calls.push({ url, init: init ?? {} });
-      const headers = new Headers((init?.headers ?? {}) as HeadersInit);
-      const isProbe =
-        (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0' && !url.includes('/folder');
-      if (isProbe) {
-        const origin = new URL(url).origin;
-        const status = probeStatusByOrigin[origin] ?? 404;
-        return new Response(status === 207 ? '<ok/>' : 'probe', { status });
-      }
-      const status = forwardStatus;
-      const noBody = status === 204 || status === 205 || status === 304;
-      return new Response(noBody ? null : status === 401 ? 'unauthorized' : '<ok/>', {
-        status,
-        headers:
-          status === 207
-            ? { 'Content-Type': 'application/xml', DAV: '1, 2', 'MS-Author-Via': 'DAV' }
-            : { 'Content-Type': 'text/plain', 'WWW-Authenticate': 'Basic realm="backend"' },
-      });
-    },
-  );
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+    calls.push({ url, init: init ?? {} });
+    const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+    const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0' && !url.includes('/folder');
+    if (isProbe) {
+      const origin = new URL(url).origin;
+      const status = probeStatusByOrigin[origin] ?? 404;
+      return new Response(status === 207 ? '<ok/>' : 'probe', { status });
+    }
+    const status = forwardStatus;
+    const noBody = status === 204 || status === 205 || status === 304;
+    return new Response(noBody ? null : status === 401 ? 'unauthorized' : '<ok/>', {
+      status,
+      headers:
+        status === 207
+          ? { 'Content-Type': 'application/xml', DAV: '1, 2', 'MS-Author-Via': 'DAV' }
+          : { 'Content-Type': 'text/plain', 'WWW-Authenticate': 'Basic realm="backend"' },
+    });
+  });
   return calls;
 }
 
@@ -176,7 +172,15 @@ describe('RouterDavProxyRoutes owner routing', () => {
   it('proxies single-backend owner requests without Access identity', async () => {
     const calls = stubFetchWithProbes({});
     const db = fakeDb({
-      backends: [{ id: '1', owner_email: 'starfish@example.com', slug: 'solo', base_url: 'https://backend.example.com', backend_username: 'Starfish' }],
+      backends: [
+        {
+          id: '1',
+          owner_email: 'starfish@example.com',
+          slug: 'solo',
+          base_url: 'https://backend.example.com',
+          backend_username: 'Starfish',
+        },
+      ],
     });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
@@ -204,30 +208,37 @@ describe('RouterDavProxyRoutes owner routing', () => {
   it('strips ?backend= and preserves trailing slash on collections', async () => {
     stubFetchWithProbes({});
     const db = fakeDb({
-      backends: [{ id: '1', owner_email: 'starfish@example.com', slug: 'solo', base_url: 'https://backend.example.com', backend_username: 'starfish' }],
+      backends: [
+        {
+          id: '1',
+          owner_email: 'starfish@example.com',
+          slug: 'solo',
+          base_url: 'https://backend.example.com',
+          backend_username: 'starfish',
+        },
+      ],
     });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
     const handler = routes.get('ON /:owner/:volume/*');
     const rawPath = '/starfish/vol/folder%20a/';
     const fullUrl = `https://router.example.com${rawPath}?backend=solo&foo=1`;
-    const res = await handler!(
-      {
-        ...fakeContext({
-          url: fullUrl,
-          env: { DB: db },
-          params: { owner: 'starfish', volume: 'vol' },
-          headers: { Authorization: 'Basic eA==' },
-        }),
-        req: {
-          raw: new Request(fullUrl, { method: 'PROPFIND', headers: { Authorization: 'Basic eA==' } }),
-          url: fullUrl,
-          param: (n: string) => ({ owner: 'starfish', volume: 'vol' })[n],
-          query: (k: string) => new URL(fullUrl).searchParams.get(k) ?? undefined,
-          header: (k: string) => new Request(fullUrl, { method: 'PROPFIND', headers: { Authorization: 'Basic eA==' } }).headers.get(k) ?? undefined,
-        },
-      } as never,
-    );
+    const res = await handler!({
+      ...fakeContext({
+        url: fullUrl,
+        env: { DB: db },
+        params: { owner: 'starfish', volume: 'vol' },
+        headers: { Authorization: 'Basic eA==' },
+      }),
+      req: {
+        raw: new Request(fullUrl, { method: 'PROPFIND', headers: { Authorization: 'Basic eA==' } }),
+        url: fullUrl,
+        param: (n: string) => ({ owner: 'starfish', volume: 'vol' })[n],
+        query: (k: string) => new URL(fullUrl).searchParams.get(k) ?? undefined,
+        header: (k: string) =>
+          new Request(fullUrl, { method: 'PROPFIND', headers: { Authorization: 'Basic eA==' } }).headers.get(k) ?? undefined,
+      },
+    } as never);
     expect(res.status).toBe(207);
   });
 
@@ -468,25 +479,22 @@ describe('RouterDavProxyRoutes KV route cache', () => {
 
   it('stale hits self-heal: forward 404 evicts and re-resolves', async () => {
     const calls: CapturedFetch[] = [];
-    vi.stubGlobal(
-      'fetch',
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
-        const origin = new URL(url).origin;
-        calls.push({ url, init: init ?? {} });
-        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
-        const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0';
-        if (isProbe) {
-          // Volume moved from b to a between requests.
-          return new Response('probe', { status: origin === 'https://a.example.com' ? 207 : 404 });
-        }
-        // Forward to the stale backend 404s; the new owner serves.
-        const stale = origin === 'https://b.example.com';
-        return new Response(stale ? 'gone' : '<ok/>', {
-          status: stale ? 404 : 207,
-        });
-      },
-    );
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const origin = new URL(url).origin;
+      calls.push({ url, init: init ?? {} });
+      const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+      const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0';
+      if (isProbe) {
+        // Volume moved from b to a between requests.
+        return new Response('probe', { status: origin === 'https://a.example.com' ? 207 : 404 });
+      }
+      // Forward to the stale backend 404s; the new owner serves.
+      const stale = origin === 'https://b.example.com';
+      return new Response(stale ? 'gone' : '<ok/>', {
+        status: stale ? 404 : 207,
+      });
+    });
     const kv = makeFakeKv();
     // Seed the stale entry directly (as if an earlier probe resolved to b).
     const seeder = new KvCache(kv as never);
@@ -503,7 +511,8 @@ describe('RouterDavProxyRoutes KV route cache', () => {
       }) as never,
     );
     expect(res.status).toBe(207);
-    expect(calls.at(-1)?.url).toBe('https://a.example.com/owner/movedvol');  });
+    expect(calls.at(-1)?.url).toBe('https://a.example.com/owner/movedvol');
+  });
 
   it('volume-root DELETE evicts; inner-file PUT does not', async () => {
     const calls = stubFetchWithProbes({ 'https://a.example.com': 404, 'https://b.example.com': 207 }, 204);
@@ -632,19 +641,16 @@ describe('RouterDavProxyRoutes KV route cache', () => {
 
   it('drops 502/504 from the staleness set so a backend blip is not mistaken for a moved volume', async () => {
     const calls: CapturedFetch[] = [];
-    vi.stubGlobal(
-      'fetch',
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
-        calls.push({ url, init: init ?? {} });
-        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
-        if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
-          return new Response('<ok/>', { status: 207 });
-        }
-        // A valid backend that is briefly overloaded.
-        return new Response('upstream error', { status: 502 });
-      },
-    );
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      calls.push({ url, init: init ?? {} });
+      const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+      if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
+        return new Response('<ok/>', { status: 207 });
+      }
+      // A valid backend that is briefly overloaded.
+      return new Response('upstream error', { status: 502 });
+    });
     const kv = makeFakeKv();
     const seeder = new KvCache(kv as never);
     await seeder.putJson('davRoute', ['owner', 'blipvol'], { backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' });
@@ -669,22 +675,19 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     // a mutation that succeeded before its response was lost would be applied
     // twice — once to each of two backends.
     const forwards: string[] = [];
-    vi.stubGlobal(
-      'fetch',
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
-        const origin = new URL(url).origin;
-        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
-        if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
-          const moved = origin === 'https://a.example.com';
-          return new Response(moved ? '<ok/>' : 'probe', {
-            status: moved ? 207 : 404,
-          });
-        }
-        forwards.push(`${init?.method} ${url}`);
-        return new Response('gone', { status: 404 });
-      },
-    );
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const origin = new URL(url).origin;
+      const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+      if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
+        const moved = origin === 'https://a.example.com';
+        return new Response(moved ? '<ok/>' : 'probe', {
+          status: moved ? 207 : 404,
+        });
+      }
+      forwards.push(`${init?.method} ${url}`);
+      return new Response('gone', { status: 404 });
+    });
     const kv = makeFakeKv();
     const seeder = new KvCache(kv as never);
     await seeder.putJson('davRoute', ['owner', 'mvvol'], { backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' });
