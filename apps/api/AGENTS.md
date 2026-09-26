@@ -10,7 +10,7 @@ Scope: `apps/api/**`. Parent index: `../../AGENTS.md`.
 ## Auth
 
 - `/user/*` — Cloudflare Access (`DEMO_MODE` → `DEV_AUTH_EMAIL` → JWT → `ctx.access` fallback); fan-out to backends forwards `Cf-Access-Jwt-Assertion`/`Authorization`/`Cookie` verbatim (pure passthrough, no stored secrets).
-- WebDAV `/:owner/:volume/*` — proxies bucket Basic `Authorization` verbatim; backend enforces per-bucket auth. Anonymous router calls fail closed to 401 (no backend enumeration without identity).
+- WebDAV `/:owner/:volume/*` — owner-routed (no Access identity): `username` → owner email → `listBackends(owner)`; proxies bucket Basic `Authorization` + `Cookie` verbatim, backend enforces per-bucket auth. Unknown owner/no backend → `404`; ambiguous without `?backend=`/`X-Backend` → `409` without slug enumeration.
 
 ## Routes
 

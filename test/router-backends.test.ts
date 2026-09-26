@@ -82,6 +82,15 @@ describe('rewriteDestinationForBackend', () => {
       'https://other.example.com/a',
     );
   });
+  it('strips the ?backend= selector when rewriting', () => {
+    expect(
+      rewriteDestinationForBackend(
+        'https://router.example.com/a/b?backend=office&foo=1',
+        'https://router.example.com',
+        'https://b.example.com',
+      ),
+    ).toBe('https://b.example.com/a/b?foo=1');
+  });
 });
 
 describe('resolveBackend', () => {

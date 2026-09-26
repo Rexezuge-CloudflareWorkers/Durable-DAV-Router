@@ -21,6 +21,10 @@ const PASSTHROUGH_REQUEST_HEADERS = new Set([
   'if-none-match',
   'if-unmodified-since',
   'cf-access-jwt-assertion',
+  'cookie',
+  'user-agent',
+  'translate',
+  'brief',
 ]);
 
 const PASSTHROUGH_RESPONSE_HEADERS = new Set([
@@ -39,6 +43,7 @@ const PASSTHROUGH_RESPONSE_HEADERS = new Set([
   'www-authenticate',
   'cache-control',
   'expires',
+  'ms-author-via',
 ]);
 
 function stripTrailingSlashes(value: string): string {
@@ -65,7 +70,8 @@ function rewriteDestinationForBackend(destination: string | null, routerOrigin: 
   try {
     const destUrl = new URL(destination, routerOrigin);
     // Only rewrite same-router absolute URLs; cross-origin destinations pass through.
-    return destUrl.origin === routerOrigin ? joinBackendUrl(backendBaseUrl, `${destUrl.pathname}${destUrl.search}`) : destination;
+    // Strip the router `?backend=` selector so it never leaks to the backend.
+    return destUrl.origin === routerOrigin ? joinBackendUrlWithoutSelector(backendBaseUrl, destUrl.pathname, destUrl.search) : destination;
   } catch {
     return destination;
   }
