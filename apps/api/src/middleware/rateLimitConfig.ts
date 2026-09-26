@@ -11,10 +11,17 @@ interface RateLimitDef {
 /**
  * Table-driven rate-limit registry.
  *
- * All buckets stay per-isolate token buckets; cron/DOs remain the
- * cross-isolate backstop. Edit this table — not the worker — to tune limits.
+ * All buckets are per-isolate token buckets. The router is stateless — no cron
+ * triggers and no Durable Objects — so there is no cross-isolate backstop;
+ * these limits bound per-isolate abuse and are a speed bump, not a control.
+ * Edit this table — not the worker — to tune limits.
  */
 const RATE_LIMIT_DEFS: readonly RateLimitDef[] = [
+  // Backend registration is the only endpoint that creates a new outbound
+  // network destination, so it needs the tightest mutating-endpoint budget:
+  // each accepted request also triggers a live health probe from Worker egress.
+  { path: '/user/backends', windowMs: 60_000, max: 10, keyPrefix: 'backends-create' },
+  { path: '/user/backends/*', windowMs: 60_000, max: 30, keyPrefix: 'backends-write' },
   { path: '/user/volumes*', windowMs: 60_000, max: 60, keyPrefix: 'volumes' },
   { path: '/user/me', windowMs: 60_000, max: 120, keyPrefix: 'user-me' },
   { path: '/:owner/:volume*', windowMs: 60_000, max: 600, keyPrefix: 'webdav' },

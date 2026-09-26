@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearRouteCacheL1 } from '@durable-dav-router/backend-services/router';
+import { clearRouteCacheL1, MAX_PROBE_CANDIDATES, PROBE_AUTHORIZATION } from '@durable-dav-router/backend-services/router';
 import { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { registerRouterDavProxyRoutes } from '../apps/api/src/workers/routes/RouterDavProxyRoutes';
 
@@ -16,6 +16,23 @@ interface BackendSeed {
   backend_username?: string | null;
 }
 
+function toRow(b: BackendSeed): Record<string, unknown> {
+  return {
+    id: b.id,
+    owner_email: b.owner_email,
+    slug: b.slug,
+    slug_ci: b.slug.toLowerCase(),
+    base_url: b.base_url,
+    display_name: null,
+    created_at: 1,
+    updated_at: 1,
+    last_seen_at: null,
+    last_status: null,
+    backend_username: b.backend_username ?? null,
+    backend_username_ci: b.backend_username ? b.backend_username.toLowerCase() : null,
+  };
+}
+
 function fakeDb(opts: { backends: BackendSeed[] }) {
   return {
     prepare(query: string) {
@@ -26,27 +43,19 @@ function fakeDb(opts: { backends: BackendSeed[] }) {
           return stmt;
         },
         async first<T>(): Promise<T | null> {
+          // Primary-key lookup, used to revalidate a cached owner→backend route
+          // against the authoritative row before forwarding.
+          if (state.sql.includes('FROM router_backends WHERE id = ?')) {
+            const id = String(state.values[0]);
+            const hit = opts.backends.find((b) => b.id === id);
+            return (hit ? (toRow(hit) as T) : null);
+          }
           return null as T | null;
         },
         async all<T>(): Promise<{ results: T[] }> {
           if (state.sql.includes('FROM router_backends WHERE backend_username_ci')) {
             const ci = String(state.values[0]).toLowerCase();
-            const results = opts.backends
-              .filter((b) => (b.backend_username ?? '').toLowerCase() === ci)
-              .map((b) => ({
-                id: b.id,
-                owner_email: b.owner_email,
-                slug: b.slug,
-                slug_ci: b.slug.toLowerCase(),
-                base_url: b.base_url,
-                display_name: null,
-                created_at: 1,
-                updated_at: 1,
-                last_seen_at: null,
-                last_status: null,
-                backend_username: b.backend_username ?? null,
-                backend_username_ci: b.backend_username ? b.backend_username.toLowerCase() : null,
-              }));
+            const results = opts.backends.filter((b) => (b.backend_username ?? '').toLowerCase() === ci).map(toRow);
             return { results: results as T[] };
           }
           return { results: [] as T[] };
@@ -65,6 +74,9 @@ function stubApp() {
   const app = {
     on: (_methods: unknown, path: string, handler: (c: never) => Promise<Response>) => {
       routes.set(`ON ${path}`, handler);
+    },
+    all: (path: string, handler: (c: never) => Promise<Response>) => {
+      routes.set(`ALL ${path}`, handler);
     },
   };
   return { app, routes };
@@ -489,8 +501,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
       }) as never,
     );
     expect(res.status).toBe(207);
-    expect(calls.at(-1)?.url).toBe('https://a.example.com/owner/movedvol');
-  });
+    expect(calls.at(-1)?.url).toBe('https://a.example.com/owner/movedvol');  });
 
   it('volume-root DELETE evicts; inner-file PUT does not', async () => {
     const calls = stubFetchWithProbes({ 'https://a.example.com': 404, 'https://b.example.com': 207 }, 204);
@@ -529,5 +540,164 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     expect(delRes.status).toBe(204);
     await rootHandler(rootCtx('PROPFIND'));
     expect(probeCount(calls)).toBe(4);
+  });
+
+  it('answers a non-DAV method with 405 and Allow, not 404', async () => {
+    // The DAV handlers are registered per-method, so `POST /owner/vol` used to
+    // match no route at all and fell through to Hono's default 404. Clients
+    // use the 404-vs-405 distinction to tell "wrong verb" from "no such
+    // bucket".
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    for (const key of ['ALL /:owner/:volume', 'ALL /:owner/:volume/*']) {
+      const handler = routes.get(key);
+      expect(handler, `expected ${key} to be registered`).toBeTruthy();
+      const res = await handler!(
+        fakeContext({
+          method: 'POST',
+          url: 'https://router.example.com/owner/somevol',
+          env: { DB: db },
+          params: { owner: 'owner', volume: 'somevol' },
+          body: 'x',
+        }) as never,
+      );
+      expect(res.status).toBe(405);
+      expect(res.headers.get('Allow')).toContain('PROPFIND');
+    }
+  });
+
+  it('never forwards the caller credentials to a probe target', async () => {
+    // The candidate set is not scoped by requester: `backend_username` is
+    // cached from whatever a backend's /user/me reports, so any account can
+    // register a backend claiming a victim handle and land in the victim's
+    // candidate set. Sending the victim's bucket password to every candidate
+    // would disclose it to those third-party origins.
+    const calls = stubFetchWithProbes({ 'https://a.example.com': 207, 'https://b.example.com': 404 }, 207);
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    await routes.get('ON /:owner/:volume')!(
+      fakeContext({
+        url: 'https://router.example.com/owner/creds',
+        env: { DB: db },
+        params: { owner: 'owner', volume: 'creds' },
+        headers: { Authorization: 'Basic dmljdGltOnNlY3cmV0', Cookie: 'session=abc', 'Cf-Access-Jwt-Assertion': 'jwt.token.here' },
+      }) as never,
+    );
+    // `stubFetchWithProbes` also treats the real forward as a probe when it
+    // carries Depth: 0, so identify probes by their synthetic credential —
+    // which is precisely the property under test.
+    const probes = calls.filter((c) => new Headers(c.init.headers).get('Authorization') === PROBE_AUTHORIZATION);
+    expect(probes.length).toBeGreaterThan(0);
+    for (const probe of probes) {
+      const headers = new Headers(probe.init.headers);
+      // The probe must not be usable as a credential by any backend.
+      expect(Buffer.from(PROBE_AUTHORIZATION.replace('Basic ', ''), 'base64').toString('utf8')).toBe('router-probe:');
+      expect(headers.get('Cookie')).toBeNull();
+      expect(headers.get('Cf-Access-Jwt-Assertion')).toBeNull();
+      expect(headers.get('Authorization')).not.toBe('Basic dmljdGltOnNlY3cmV0');
+    }
+    // The real forward still carries the caller's credentials verbatim.
+    const forward = calls.find((c) => new Headers(c.init.headers).get('Authorization') === 'Basic dmljdGltOnNlY3cmV0');
+    expect(forward, 'the chosen backend must receive the caller credentials').toBeTruthy();
+  });
+
+  it('refuses to fan out probes past the candidate cap', async () => {
+    // Each candidate is an outbound subrequest triggered by one unauthenticated
+    // request, so an unbounded fan-out is a free amplification vector.
+    const many = Array.from({ length: MAX_PROBE_CANDIDATES + 5 }, (_, i) => ({
+      id: String(i),
+      owner_email: `o${i}@example.com`,
+      slug: `s${i}`,
+      base_url: `https://b${i}.example.com`,
+      backend_username: 'collider',
+    }));
+    const calls = stubFetchWithProbes({}, 207);
+    const db = fakeDb({ backends: many });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const res = await routes.get('ON /:owner/:volume')!(
+      fakeContext({
+        url: 'https://router.example.com/owner/floodvol',
+        env: { DB: db },
+        params: { owner: 'collider', volume: 'floodvol' },
+      }) as never,
+    );
+    expect(res.status).toBe(409);
+    expect(probeCount(calls)).toBe(0);
+  });
+
+  it('drops 502/504 from the staleness set so a backend blip is not mistaken for a moved volume', async () => {
+    const calls: CapturedFetch[] = [];
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+        calls.push({ url, init: init ?? {} });
+        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+        if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
+          return new Response('<ok/>', { status: 207 });
+        }
+        // A valid backend that is briefly overloaded.
+        return new Response('upstream error', { status: 502 });
+      },
+    );
+    const kv = makeFakeKv();
+    const seeder = new KvCache(kv as never);
+    await seeder.putJson('davRoute', ['owner', 'blipvol'], { backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' });
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const res = await routes.get('ON /:owner/:volume')!(
+      fakeContext({
+        url: 'https://router.example.com/owner/blipvol',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'blipvol' },
+      }) as never,
+    );
+    // Served as-is, with no re-probe: the route was never stale.
+    expect(res.status).toBe(502);
+    expect(probeCount(calls)).toBe(0);
+  });
+
+  it('does not replay a mutating request against a second backend on a stale route', async () => {
+    // Self-healing by re-forwarding re-sent a body that had already been
+    // consumed, so a PUT could silently write a truncated (or empty) file, and
+    // a mutation that succeeded before its response was lost would be applied
+    // twice — once to each of two backends.
+    const forwards: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+        if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
+          return new Response(url.startsWith('https://a.example.com') ? '<ok/>' : 'probe', {
+            status: url.startsWith('https://a.example.com') ? 207 : 404,
+          });
+        }
+        forwards.push(`${init?.method} ${url}`);
+        return new Response('gone', { status: 404 });
+      },
+    );
+    const kv = makeFakeKv();
+    const seeder = new KvCache(kv as never);
+    await seeder.putJson('davRoute', ['owner', 'mvvol'], { backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' });
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const res = await routes.get('ON /:owner/:volume')!(
+      fakeContext({
+        method: 'PUT',
+        url: 'https://router.example.com/owner/mvvol',
+        env: { DB: db, CACHE: kv },
+        params: { owner: 'owner', volume: 'mvvol' },
+        body: 'payload',
+      }) as never,
+    );
+    expect(res.status).toBe(404);
+    // Exactly one forward, to the cached origin — never a second backend.
+    expect(forwards).toEqual(['PUT https://b.example.com/owner/mvvol']);
   });
 });

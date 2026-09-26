@@ -1,4 +1,4 @@
-export { BackendService, normalizeSlug, normalizeBaseUrl } from './BackendService';
+export { BackendService, normalizeSlug, normalizeBaseUrl, normalizeDisplayName, isPrivateBackendHostAllowed } from './BackendService';
 export type { BackendServiceEnv, BackendServiceDeps } from './BackendService';
 export {
   joinBackendUrl,
@@ -8,6 +8,7 @@ export {
   truncateSnippet,
   rewriteDestinationForBackend,
   buildProxiedHeaders,
+  buildProbeHeaders,
   filterProxiedResponseHeaders,
   resolveBackend,
   fetchWithTimeout,
@@ -15,8 +16,12 @@ export {
   stripTrailingSlashes,
   stripSlashes,
   VOLUME_PROBE_BODY,
+  PROBE_AUTHORIZATION,
+  MAX_PROBE_CANDIDATES,
   classifyProbeStatus,
   probeCandidateBackends,
+  PASSTHROUGH_REQUEST_HEADERS,
+  PASSTHROUGH_RESPONSE_HEADERS,
 } from './BackendProxyService';
 export type { BackendResolution, AutoResolution, ProbeSignal } from './BackendProxyService';
 export {

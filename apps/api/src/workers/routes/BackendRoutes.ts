@@ -11,6 +11,7 @@ import {
 } from '@durable-dav-router/backend-services/router';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
+import type { HonoContext } from '@/endpoints/IBaseRoute';
 
 type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
 
@@ -53,6 +54,11 @@ async function probeBackendHealth(baseUrl: string, timeoutMs: number, auth?: Hea
       { method: 'GET', headers, redirect: 'manual' },
       timeoutMs,
     );
+    // Release the subrequest. Only the status matters here, and an unread body
+    // keeps the connection (and the isolate's memory) held until it is
+    // garbage-collected. Buffering instead would be an unbounded read of a body
+    // this path discards, since the timeout only covers the response headers.
+    await res.body?.cancel().catch(() => undefined);
     return res.status;
   } catch {
     return null;
@@ -70,6 +76,40 @@ function incomingAuthHeaders(request: Request): Headers {
   return out;
 }
 
+/**
+Shape of `POST /user/backends`, after validation.
+*/
+interface CreateBackendBody {
+  slug?: unknown;
+  baseUrl?: unknown;
+  displayName?: unknown;
+}
+
+/**
+ * Read and validate a `POST /user/backends` body.
+ *
+ * Without this, a non-string `slug` reached `normalizeSlug` and threw
+ * `TypeError: raw.trim is not a function`, which surfaced as a 500 rather than
+ * the 400 it is. `readJson` also enforces the 1 MiB cap that the raw
+ * `c.req.json()` cast bypassed entirely.
+ */
+async function readCreateBody(c: HonoContext): Promise<{ body: CreateBackendBody } | { error: Response }> {
+  const parsed = await BaseRoute.readJson<CreateBackendBody>(c);
+  if (parsed.oversized) return { error: BaseRoute.jsonError(c, 'Request body too large', 413) };
+  if (parsed.malformed) return { error: BaseRoute.jsonError(c, 'Malformed JSON body', 400) };
+  const body = parsed.body ?? {};
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    return { error: BaseRoute.jsonError(c, 'Body must be a JSON object', 400) };
+  }
+  if (typeof body.slug !== 'string' || body.slug.trim().length === 0) {
+    return { error: BaseRoute.jsonError(c, 'slug is required', 400) };
+  }
+  if (typeof body.baseUrl !== 'string' || body.baseUrl.trim().length === 0) {
+    return { error: BaseRoute.jsonError(c, 'baseUrl is required', 400) };
+  }
+  return body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== 'string' ? { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) } : { body };
+}
+
 function registerBackendRoutes(app: App): void {
   app.get('/user/backends', async (c) => {
     const scope = BaseRoute.getScope(c);
@@ -85,16 +125,14 @@ function registerBackendRoutes(app: App): void {
   app.post('/user/backends', async (c) => {
     const scope = BaseRoute.getScope(c);
     const email = c.get('AuthenticatedUserEmailAddress');
-    const body = (await c.req.json().catch(() => ({}))) as { slug?: string; baseUrl?: string; displayName?: string | null };
-    if (!body.slug || !body.baseUrl) {
-      return c.json({ Exception: { Type: 'BadRequest', Message: 'slug and baseUrl are required' } }, 400);
-    }
+    const parsed = await readCreateBody(c);
+    if ('error' in parsed) return parsed.error;
     try {
       const created = await scope.get(Tokens.BackendService).createBackend({
         ownerEmail: email,
-        slug: body.slug,
-        baseUrl: body.baseUrl,
-        displayName: body.displayName ?? null,
+        slug: parsed.body.slug as string,
+        baseUrl: parsed.body.baseUrl as string,
+        displayName: (parsed.body.displayName as string | null | undefined) ?? null,
       });
       // Best-effort liveness probe; never blocks creation.
       const timeoutMs = getProxyTimeoutMs(c.env);
@@ -121,9 +159,21 @@ function registerBackendRoutes(app: App): void {
   app.patch('/user/backends/:slug', async (c) => {
     const scope = BaseRoute.getScope(c);
     const email = c.get('AuthenticatedUserEmailAddress');
-    const body = (await c.req.json().catch(() => ({}))) as { baseUrl?: string; displayName?: string | null };
+    const parsed = await BaseRoute.readJson<{ baseUrl?: unknown; displayName?: unknown }>(c);
+    if (parsed.oversized) return BaseRoute.jsonError(c, 'Request body too large', 413);
+    if (parsed.malformed) return BaseRoute.jsonError(c, 'Malformed JSON body', 400);
+    const body = parsed.body ?? {};
+    if (body.baseUrl !== undefined && typeof body.baseUrl !== 'string') {
+      return BaseRoute.jsonError(c, 'baseUrl must be a string', 400);
+    }
+    if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== 'string') {
+      return BaseRoute.jsonError(c, 'displayName must be a string or null', 400);
+    }
     try {
-      const updated = await scope.get(Tokens.BackendService).updateBackend(email, c.req.param('slug') ?? '', body);
+      const updated = await scope.get(Tokens.BackendService).updateBackend(email, c.req.param('slug') ?? '', {
+        ...((body.baseUrl !== undefined) && { baseUrl: body.baseUrl }),
+        ...((body.displayName !== undefined) && { displayName: body.displayName }),
+      });
       // base_url snapshots cached in `davRoute` go stale on edit → purge.
       await purgeCachedRoutes(kvOf(scope as never)).catch(() => 0);
       const timeoutMs = getProxyTimeoutMs(c.env);
