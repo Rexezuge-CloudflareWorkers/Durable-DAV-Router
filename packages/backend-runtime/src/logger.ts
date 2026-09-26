@@ -30,6 +30,12 @@ export function createLogger(namespace?: string, fullRepoName?: string, env?: un
     .map((s) => `[${s}]`)
     .join(' ');
 
+  // The message and any context object are passed as their own console
+  // arguments rather than interpolated into the prefix. Cloudflare's log
+  // pipeline only indexes JSON fields for non-string arguments, so folding a
+  // message into the prefix would flatten it into one opaque blob; a separate
+  // object argument keeps its fields queryable. The prefix stays first for
+  // human readability.
   return {
     debug: (...args: unknown[]) => {
       if (LOG_LEVELS.debug >= minLevel) {

@@ -2,12 +2,13 @@ import type { Hono } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import {
   describeBackendFailure,
+  explicitBackendSlug,
   fetchWithTimeout,
   getProxyTimeoutMs,
   invalidateCachedRoute,
   joinBackendUrl,
   joinBackendUrlWithoutSelector,
-  resolveBackend,
+  selectBackend,
   truncateSnippet,
 } from '@durable-dav-router/backend-services/router';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
@@ -22,6 +23,15 @@ function kvOf(scope: { get: (token: never) => KvCache }): KvCache | null {
     return null;
   }
 }
+
+/**
+ * Headers for a management-plane proxy to a backend.
+ *
+ * The caller's Cloudflare Access credentials are forwarded verbatim: the
+ * backend enforces its own access, and the router stores no credentials of its
+ * own. `Accept`/`User-Agent` identify the router so a backend can tell a proxied
+ * request from a direct one.
+ */
 function authForwardHeaders(request: Request): Headers {
   const out = new Headers();
   const jwt = request.headers.get('Cf-Access-Jwt-Assertion') ?? request.headers.get('cf-access-jwt-assertion');
@@ -35,11 +45,47 @@ function authForwardHeaders(request: Request): Headers {
   return out;
 }
 
-function explicitBackendSlug(c: { req: { query: (k: string) => string | undefined; header: (k: string) => string | undefined } }): string | null {
-  const q = c.req.query('backend');
-  if (q?.trim()) return q.trim();
-  const h = c.req.header('X-Backend');
-  return h?.trim() ? h.trim() : null;
+/**
+Methods that never carry a request body.
+*/
+const BODYLESS_METHODS = new Set(['GET', 'HEAD']);
+
+/**
+ * Forward a management request to a backend and pass the response through.
+ *
+ * The router adds no interpretation here: the backend owns volume semantics, so
+ * its status, body, and content type are returned verbatim. A transport failure
+ * becomes a 502 rather than an exception, because "the backend is unreachable"
+ * is a real answer for a proxy.
+ */
+async function forwardToBackend(request: Request, target: string, env: Env, body: ReadableStream | string | null): Promise<Response> {
+  const headers = authForwardHeaders(request);
+  const contentType = request.headers.get('Content-Type');
+  if (contentType) headers.set('Content-Type', contentType);
+  const method = request.method;
+  const hasBody = !BODYLESS_METHODS.has(method);
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      new Request(target),
+      {
+        method,
+        headers,
+        redirect: 'manual',
+        body: hasBody ? body : undefined,
+        // A stream body needs an explicit half-duplex signal; a string body
+        // does not, and passing it would be rejected.
+        ...(!(hasBody && typeof body === 'string') && { duplex: 'half' }),
+      },
+      getProxyTimeoutMs(env),
+    );
+  } catch (error) {
+    const isTimeout = error instanceof Error && (error.name === 'AbortError' || /aborted|timeout/i.test(error.message));
+    console.warn(`backend ${new URL(target).origin} ${isTimeout ? 'timed out' : 'unreachable'} for ${method}: ${error instanceof Error ? error.message : String(error)}`);
+    return new Response(isTimeout ? 'Backend timed out' : 'Backend unreachable', { status: isTimeout ? 504 : 502 });
+  }
+  const text = await res.text().catch(() => '');
+  return new Response(text, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' } });
 }
 
 interface ProxyOneContext {
@@ -59,38 +105,18 @@ async function proxyOne(c: ProxyOneContext): Promise<Response> {
   const volume = c.req.param('volume') ?? '';
   try {
     const backends = await scope.get(Tokens.BackendService).listBackends(email);
-    const resolved = resolveBackend(backends, explicitBackendSlug(c));
-    if (resolved.kind === 'not-found') return c.json({ Exception: { Type: 'NotFound', Message: 'No backend matches this request' } }, 404);
-    if (resolved.kind === 'ambiguous') {
-      return c.json(
-        { Exception: { Type: 'Conflict', Message: 'Multiple backends match; retry with ?backend=<slug>' }, backends: resolved.backends.map((b) => b.slug) },
-        409,
-      );
-    }
-    const backend = resolved.backend;
-    const incomingUrl = new URL(c.req.raw.url);
+    const backend = selectBackend(backends, explicitBackendSlug(c));
     const target = joinBackendUrlWithoutSelector(
       backend.base_url,
       `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`,
-      incomingUrl.search,
+      new URL(c.req.raw.url).search,
     );
-    const method = c.req.raw.method;
-    const hasBody = !['GET', 'HEAD'].includes(method);
-    const headers = authForwardHeaders(c.req.raw);
-    const contentType = c.req.raw.headers.get('Content-Type');
-    if (contentType) headers.set('Content-Type', contentType);
-    const timeoutMs = getProxyTimeoutMs(c.env);
-    const res = await fetchWithTimeout(
-      new Request(target),
-      { method, headers, redirect: 'manual', body: hasBody ? c.req.raw.body : undefined, ...(hasBody && { duplex: 'half' }) },
-      timeoutMs,
-    );
-    const text = await res.text().catch(() => '');
+    const res = await forwardToBackend(c.req.raw, target, c.env, c.req.raw.body);
     // Volume deletion changes future probe outcomes → evict the cached owner.
-    if (method === 'DELETE' && res.status >= 200 && res.status < 300) {
+    if (c.req.raw.method === 'DELETE' && res.status >= 200 && res.status < 300) {
       await invalidateCachedRoute(kvOf(scope as never), owner, volume).catch(() => undefined);
     }
-    return new Response(text, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' } });
+    return res;
   } catch (error) {
     return BaseRoute.toErrorResponse(c as never, error);
   }
@@ -111,36 +137,19 @@ async function proxySubpath(c: ProxySubpathContext): Promise<Response> {
   try {
     const backends = await scope.get(Tokens.BackendService).listBackends(email);
     const raw = c.req.raw;
-    let explicit: string | null = null;
-    try {
-      explicit = new URL(raw.url).searchParams.get('backend');
-    } catch {
-      explicit = null;
-    }
-    const headerFallback = raw.headers.get('X-Backend');
-    const resolved = resolveBackend(backends, explicit?.trim() ? explicit.trim() : (headerFallback?.trim() ? headerFallback.trim() : null));
-    if (resolved.kind === 'not-found') return c.json({ Exception: { Type: 'NotFound', Message: 'No backend matches this request' } }, 404);
-    if (resolved.kind === 'ambiguous') {
-      return c.json(
-        { Exception: { Type: 'Conflict', Message: 'Multiple backends match; retry with ?backend=<slug>' }, backends: resolved.backends.map((b) => b.slug) },
-        409,
-      );
-    }
+    // Read the selector from the raw request rather than the Hono helpers, then
+    // reuse the shared reader so both planes agree on precedence and trimming.
+    const selector = explicitBackendSlug({
+      req: {
+        query: (k: string) => new URL(raw.url).searchParams.get(k) ?? undefined,
+        header: (k: string) => raw.headers.get(k) ?? undefined,
+      },
+    });
+    const backend = selectBackend(backends, selector);
     const incomingUrl = new URL(raw.url);
-    const target = joinBackendUrlWithoutSelector(resolved.backend.base_url, incomingUrl.pathname, incomingUrl.search);
-    const method = raw.method;
-    const hasBody = !['GET', 'HEAD'].includes(method);
-    const headers = authForwardHeaders(raw);
-    const contentType = raw.headers.get('Content-Type');
-    if (contentType) headers.set('Content-Type', contentType);
-    const timeoutMs = getProxyTimeoutMs(c.env);
-    const res = await fetchWithTimeout(
-      new Request(target),
-      { method, headers, redirect: 'manual', body: hasBody ? raw.body : undefined, ...(hasBody && { duplex: 'half' }) },
-      timeoutMs,
-    );
-    const text = await res.text().catch(() => '');
-    return new Response(text, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' } });
+    // The full path is preserved so the backend sees the same resource shape the
+    // caller asked for; only the router's own selector is stripped.
+    return forwardToBackend(raw, joinBackendUrlWithoutSelector(backend.base_url, incomingUrl.pathname, incomingUrl.search), c.env, raw.body);
   } catch (error) {
     return BaseRoute.toErrorResponse(c as never, error);
   }
@@ -154,34 +163,25 @@ function registerAggregatedVolumeRoutes(app: App): void {
     const email = c.get('AuthenticatedUserEmailAddress');
     try {
       const backends = await scope.get(Tokens.BackendService).listBackends(email);
-      const resolved = resolveBackend(backends, explicitBackendSlug(c));
-      if (resolved.kind === 'not-found') return c.json({ Exception: { Type: 'NotFound', Message: 'No backend matches this request' } }, 404);
-      if (resolved.kind === 'ambiguous') {
-        return c.json(
-          { Exception: { Type: 'Conflict', Message: 'Multiple backends match; retry with ?backend=<slug>' }, backends: resolved.backends.map((b) => b.slug) },
-          409,
-        );
-      }
+      const backend = selectBackend(backends, explicitBackendSlug(c));
       const body = await c.req.json().catch(() => ({}));
-      const timeoutMs = getProxyTimeoutMs(c.env);
-      const res = await fetchWithTimeout(
-        new Request(joinBackendUrl(resolved.backend.base_url, '/user/volumes')),
-        {
-          method: 'POST',
-          headers: new Headers({ ...Object.fromEntries(authForwardHeaders(c.req.raw)), 'Content-Type': 'application/json' }),
-          redirect: 'manual',
-          body: JSON.stringify(body),
-        },
-        timeoutMs,
-      );
+      // Re-serialize the parsed body rather than streaming `c.req.raw.body`, so
+      // the request is replayable and `Content-Length` is unambiguous. Volume
+      // creation payloads are small.
+      const headers = authForwardHeaders(c.req.raw);
+      headers.set('Content-Type', 'application/json');
+      const res = await forwardToBackend(c.req.raw, joinBackendUrl(backend.base_url, '/user/volumes'), c.env, JSON.stringify(body));
       const text = await res.text().catch(() => '');
       if (res.status >= 200 && res.status < 300) {
+        // The created volume's owner is the WebDAV routing key, so cache it. A
+        // parse or write failure must not fail a creation that already
+        // succeeded at the backend.
         try {
           const created = JSON.parse(text) as { owner?: unknown };
           if (typeof created.owner === 'string' && created.owner.trim()) {
             await scope
               .get(Tokens.BackendService)
-              .recordBackendUsername(email, resolved.backend.slug, created.owner.trim())
+              .recordBackendUsername(email, backend.slug, created.owner.trim())
               .catch(() => undefined);
           }
         } catch {

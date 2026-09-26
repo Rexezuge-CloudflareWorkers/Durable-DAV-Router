@@ -43,8 +43,17 @@ class EnvParser {
     return (this.readString(env, key) ?? defaultValue) === 'true';
   }
 
+  /**
+   * Read one variable.
+   *
+   * Defensive about the env shape: this is reached from fail-soft paths
+   * (`getProxyTimeoutMs`) where `env` may be null or a partial object, and a
+   * TypeError there would replace a default with a 500.
+   */
   private static readString(env: unknown, key: string): string | undefined {
-    return (env as Record<string, string | undefined>)[key];
+    if (env === null || typeof env !== 'object') return undefined;
+    const value = (env as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value : undefined;
   }
 }
 

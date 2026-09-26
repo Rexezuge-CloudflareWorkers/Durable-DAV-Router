@@ -102,10 +102,6 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
     return this.app.fetch(request, env, ctx);
   }
 
-  protected onScheduled(_event: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Stateless router: no cron tasks. Present only to satisfy the base class.
-    return Promise.resolve();
-  }
 }
 
 export { DurableDavRouterWorker };

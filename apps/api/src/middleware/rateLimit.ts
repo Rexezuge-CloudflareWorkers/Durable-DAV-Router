@@ -37,15 +37,27 @@ function evictOldestBucket(): void {
   }
 }
 
+/**
+ * Upper bound on tracked buckets.
+ *
+ * Every distinct key costs memory for the isolate's lifetime, so an attacker
+ * rotating keys (a spoofable `X-Forwarded-For` would allow exactly that) would
+ * otherwise grow the map without limit.
+ */
+const MAX_BUCKETS = 5000;
+
 function cleanup(now: number): void {
   if (buckets.size < 1000) return;
   for (const [key, bucket] of buckets) {
     if (bucket.resetAt <= now) buckets.delete(key);
   }
-  // Hard cap so a single isolate cannot grow without bound. Evict oldest
-  // resetAt first (LRU-ish) instead of clearing everything, so an attacker
-  // flooding new keys cannot wipe out everyone else's buckets.
-  let overflow = buckets.size - 5000;
+  // Evict the oldest-resetting bucket rather than clearing the map, so an
+  // attacker flooding new keys cannot wipe out everyone else's buckets.
+  //
+  // Evict down to `MAX_BUCKETS - 1` because the caller adds its own bucket
+  // immediately afterwards; evicting to exactly `MAX_BUCKETS` let the map reach
+  // `MAX_BUCKETS + 1` before the next cleanup.
+  let overflow = buckets.size - (MAX_BUCKETS - 1);
   while (overflow > 0) {
     evictOldestBucket();
     overflow -= 1;

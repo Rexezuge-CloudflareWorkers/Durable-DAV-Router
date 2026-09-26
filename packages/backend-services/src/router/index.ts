@@ -1,4 +1,5 @@
 export { BackendService, normalizeSlug, normalizeBaseUrl, normalizeDisplayName, isPrivateBackendHostAllowed } from './BackendService';
+export { selectBackend, explicitBackendSlug } from './BackendSelection';
 export type { BackendServiceEnv, BackendServiceDeps } from './BackendService';
 export {
   joinBackendUrl,

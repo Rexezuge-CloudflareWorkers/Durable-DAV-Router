@@ -25,15 +25,21 @@ class UserService {
   }
 
   public async upsertUser(email: string): Promise<void> {
-    const normalized = email.toLowerCase();
+    // Same normalization as `getProfileByEmail`; the two must agree or a user
+    // can be written under one key and looked up under another.
+    const normalized = email.trim().toLowerCase();
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     const dao = await this.deps.userDAO();
     await dao.upsertUser(normalized, now);
   }
 
   public async getProfileByEmail(email: string): Promise<{ email: string }> {
+    // Trim as well as lowercase. Every identity source (Access JWT, `ctx.access`,
+    // a bypass var) can carry incidental whitespace, and an untrimmed value
+    // misses the `users` row and the owner-scoped backend lookup alike.
+    const normalized = email.trim().toLowerCase();
     const dao = await this.deps.userDAO();
-    const row = await dao.getByEmail(email.toLowerCase());
+    const row = await dao.getByEmail(normalized);
     if (!row) throw new NotFoundError('User not found');
     return { email: row.email };
   }
