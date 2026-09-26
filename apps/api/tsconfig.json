@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "checkJs": false,
+    "noEmit": true,
+    "isolatedModules": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@durable-dav-router/background": ["../../apps/background/src"],
+      "@durable-dav-router/background/*": ["../../apps/background/src/*"],
+      "@durable-dav-router/backend-data": ["../../packages/backend-data/src"],
+      "@durable-dav-router/backend-data/*": ["../../packages/backend-data/src/*"],
+      "@durable-dav-router/backend-errors": ["../../packages/backend-errors/src"],
+      "@durable-dav-router/backend-errors/*": ["../../packages/backend-errors/src/*"],
+      "@durable-dav-router/backend-runtime": ["../../packages/backend-runtime/src"],
+      "@durable-dav-router/backend-runtime/*": ["../../packages/backend-runtime/src/*"],
+      "@durable-dav-router/backend-services": ["../../packages/backend-services/src"],
+      "@durable-dav-router/backend-services/*": ["../../packages/backend-services/src/*"],
+      "@durable-dav-router/webdav": ["../../packages/webdav/src"],
+      "@durable-dav-router/webdav/*": ["../../packages/webdav/src/*"],
+      "@durable-dav-router/dav-store": ["../../packages/dav-store/src"],
+      "@durable-dav-router/dav-store/*": ["../../packages/dav-store/src/*"],
+      "@durable-dav-router/shared": ["../../packages/shared/src"],
+      "@durable-dav-router/shared/*": ["../../packages/shared/src/*"]
+    }
+  },
+  "include": ["../../worker-configuration.d.ts", "../../packages/backend-runtime/src/env.d.ts", "src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

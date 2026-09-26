@@ -1,0 +1,16 @@
+// Shared DAO thunk bundle for service bindings.
+import type { NamespaceDAO, RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
+import type { RequestScopeEnv } from '../serviceFactory';
+
+interface DaoThunks {
+  userDAO: () => Promise<UserDAO>;
+  namespaceDAO: () => Promise<NamespaceDAO>;
+  routerBackendDAO: () => Promise<RouterBackendDAO>;
+}
+
+interface ServiceGroupContext {
+  env: RequestScopeEnv;
+  daos: DaoThunks;
+}
+
+export type { DaoThunks, ServiceGroupContext };
