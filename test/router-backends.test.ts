@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BackendService, normalizeBaseUrl, normalizeSlug } from '@durable-dav-router/backend-services/router';
 import {
+  classifyProbeStatus,
   describeBackendFailure,
   joinBackendUrl,
   joinBackendUrlWithoutSelector,
@@ -107,6 +108,20 @@ describe('resolveBackend', () => {
   it('uses the lone backend implicitly', () => {
     const out = resolveBackend([row('solo')]);
     expect(out.kind).toBe('single');
+  });
+});
+
+describe('classifyProbeStatus', () => {
+  it('treats success and redirects as hits', () => {
+    for (const s of [200, 207, 301, 302, 307, 308]) expect(classifyProbeStatus(s)).toBe('hit');
+  });
+  it('treats auth challenges as auth signals', () => {
+    for (const s of [401, 403, 423]) expect(classifyProbeStatus(s)).toBe('auth');
+  });
+  it('treats missing as misses and the rest as unknown', () => {
+    expect(classifyProbeStatus(404)).toBe('miss');
+    expect(classifyProbeStatus(410)).toBe('miss');
+    for (const s of [400, 405, 409, 500, 502]) expect(classifyProbeStatus(s)).toBe('unknown');
   });
 });
 

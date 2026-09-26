@@ -6,6 +6,7 @@ import {
   filterProxiedResponseHeaders,
   getProxyTimeoutMs,
   joinBackendUrlWithoutSelector,
+  probeCandidateBackends,
   resolveBackend,
   stripSlashes,
 } from '@durable-dav-router/backend-services/router';
@@ -61,8 +62,32 @@ async function handleProxy(
     return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
   }
   if (resolved.kind === 'ambiguous') {
-    // Unauthenticated WebDAV callers get no slug enumeration — they already
-    // know their slugs from the authenticated dashboard (`/user/volumes`).
+    // Bare client URLs carry no `?backend=` hint. When the owner maps to
+    // several backends, probe each candidate's volume root and route to the
+    // unique owner instead of failing dumb clients with 409. Creation of a
+    // brand-new top-level volume (no backend has it) still needs an explicit
+    // selector and stays 409.
+    const incomingUrl = new URL(c.req.raw.url);
+    const timeoutMs = getProxyTimeoutMs(c.env);
+    const probed = await probeCandidateBackends({
+      candidates: resolved.backends,
+      volumePath: `/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`,
+      incoming: c.req.raw,
+      routerOrigin: incomingUrl.origin,
+      timeoutMs,
+    }).catch(() => ({ kind: 'unavailable' }) as const);
+    if (probed.kind === 'single') {
+      return proxyToBackend(c, probed.backend, owner, volume, inner, trailingSlash, timeoutMs);
+    }
+    if (probed.kind === 'not-found') {
+      return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
+    }
+    if (probed.kind === 'unavailable') {
+      return applyCors(new Response('Backend unreachable', { status: 502 }), c.req.raw);
+    }
+    // Genuine collision (same volume on several backends). Unauthenticated
+    // WebDAV callers get no slug enumeration — they already know their slugs
+    // from the authenticated dashboard (`/user/volumes`).
     return applyCors(
       Response.json(
         {
@@ -74,6 +99,19 @@ async function handleProxy(
     );
   }
   const backend = resolved.backend;
+  return proxyToBackend(c, backend, owner, volume, inner, trailingSlash, getProxyTimeoutMs(c.env));
+}
+
+async function proxyToBackend(
+  c: { req: { raw: Request }; env: Env },
+  backend: { base_url: string },
+  owner: string,
+  volume: string,
+  inner: string,
+  trailingSlash: boolean,
+  timeoutMs: number,
+): Promise<Response> {
+  const method = c.req.raw.method;
   const incomingUrl = new URL(c.req.raw.url);
   const encodedBase = `/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`;
   let suffix = inner ? `/${inner}` : '';
@@ -83,7 +121,6 @@ async function handleProxy(
   const routerOrigin = incomingUrl.origin;
   const headers = buildProxiedHeaders(c.req.raw, routerOrigin, backend.base_url);
   const hasBody = !['GET', 'HEAD', 'OPTIONS'].includes(method);
-  const timeoutMs = getProxyTimeoutMs(c.env);
   let upstream: Response;
   try {
     upstream = await fetchWithTimeout(

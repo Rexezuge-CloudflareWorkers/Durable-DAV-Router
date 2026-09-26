@@ -14,5 +14,8 @@ export {
   getProxyTimeoutMs,
   stripTrailingSlashes,
   stripSlashes,
+  VOLUME_PROBE_BODY,
+  classifyProbeStatus,
+  probeCandidateBackends,
 } from './BackendProxyService';
-export type { BackendResolution } from './BackendProxyService';
+export type { BackendResolution, AutoResolution, ProbeSignal } from './BackendProxyService';
