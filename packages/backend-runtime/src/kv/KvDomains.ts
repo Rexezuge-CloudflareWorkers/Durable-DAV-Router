@@ -27,7 +27,8 @@ type KvDomainName =
   | 'ratelimit'
   | 'davProp'
   | 'davFile'
-  | 'davMeta';
+  | 'davMeta'
+  | 'davRoute';
 
 interface KvDomainDef {
   ttlSeconds?: number;
@@ -84,6 +85,11 @@ const KV_DOMAINS: Record<KvDomainName, KvDomainDef> = {
     ttlSeconds: 60,
     maxValueBytes: 65_536,
     description: 'Volume list/detail snapshots per owner email; invalidated on volume mutation. Short-lived (60s).',
+  },
+  davRoute: {
+    ttlSeconds: 86_400,
+    maxValueBytes: 4096,
+    description: 'Owner/volume to owning backend resolution; buckets rarely change so long-lived (24h), invalidated on volume/backend mutation plus self-heal on forward 404/502.',
   },
 };
 

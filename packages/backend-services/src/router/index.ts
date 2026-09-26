@@ -19,3 +19,15 @@ export {
   probeCandidateBackends,
 } from './BackendProxyService';
 export type { BackendResolution, AutoResolution, ProbeSignal } from './BackendProxyService';
+export {
+  getCachedRoute,
+  putCachedRoute,
+  invalidateCachedRoute,
+  purgeCachedRoutes,
+  parseDestinationVolume,
+  routeCacheParts,
+  getRouteCacheTtlSeconds,
+  isCachedRoute,
+  clearRouteCacheL1,
+} from './RouteCacheService';
+export type { CachedRoute } from './RouteCacheService';
