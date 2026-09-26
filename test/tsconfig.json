@@ -3,12 +3,13 @@
   "compilerOptions": {
     // `types` replaces the automatic `@types/*` inclusion rather than adding to
     // it, so every ambient global this suite relies on has to be listed:
-    // `vitest/globals` for the `describe`/`it`/`expect` globals, the Cloudflare
-    // workers types for `D1Database`/`ExecutionContext`, and `vite/client` for
-    // `import.meta.glob` in `apps/web/src/i18n.ts`. Omitting any of them made
-    // the whole directory fail to type-check the moment it entered the
-    // workspace — which is why it was never in the workspace to begin with.
-    "types": ["vitest/globals", "@cloudflare/workers-types", "vite/client"],
+    // `vitest/globals` for the `describe`/`it`/`expect` globals, `node` for
+    // `Buffer` in the proxy fixtures, and `vite/client` for `import.meta.glob`
+    // in `apps/web/src/i18n.ts`. The Cloudflare runtime globals come from
+    // `worker-configuration.d.ts` below, the same mechanism `apps/api` uses —
+    // not from `@cloudflare/workers-types`, which is deliberately not a
+    // dependency of this project.
+    "types": ["vitest/globals", "node", "vite/client"],
     // `web-danger-confirm.test.tsx` renders JSX.
     "jsx": "react-jsx",
     "paths": {
