@@ -16,11 +16,15 @@ const migrationsDir = resolve(fileURLToPath(new URL('../../migrations', import.m
 const migrationFiles = readdirSync(migrationsDir)
   .filter((f) => f.endsWith('.sql'))
   .sort();
-const migrationSql = migrationFiles.map((f) => readFileSync(resolve(migrationsDir, f), 'utf-8')).join('\n\n');
+// Per-file map, not one concatenated blob: a test that seeds data *between*
+// migrations (the cascade-wipe regression) needs to stop at a boundary.
+const migrationMap: Record<string, string> = Object.fromEntries(
+  migrationFiles.map((f) => [f, readFileSync(resolve(migrationsDir, f), 'utf-8')]),
+);
 
 export default defineConfig({
   define: {
-    __INTEGRATION_MIGRATION_SQL__: JSON.stringify(migrationSql),
+    __INTEGRATION_MIGRATIONS__: JSON.stringify(migrationMap),
   },
   plugins: [
     cloudflareTest({
