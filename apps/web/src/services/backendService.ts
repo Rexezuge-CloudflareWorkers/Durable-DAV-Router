@@ -31,3 +31,7 @@ export interface BackendProbe {
 export async function probeBackend(slug: string): Promise<BackendProbe> {
   return apiGet<BackendProbe>(`/user/backends/${encodeURIComponent(slug)}/probe`);
 }
+
+export async function getBackendIdentity(slug: string): Promise<{ slug: string; username: string | null }> {
+  return apiGet<{ slug: string; username: string | null }>(`/user/backends/${encodeURIComponent(slug)}/me`);
+}

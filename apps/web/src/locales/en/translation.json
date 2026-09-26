@@ -44,7 +44,17 @@
   },
   "volumes": {
     "newVolume": "New Bucket",
+    "backend": "Backend",
+    "chooseBackend": "Choose A Backend",
+    "selectBackend": "Select A Backend First.",
     "owner": "Owner",
+    "ownerAutoPlaceholder": "Select A Backend First.",
+    "loadingOwner": "Loading Owner…",
+    "ownerNotReady": "Backend Owner Is Not Ready Yet.",
+    "noUsernameOnBackend": "No Username On This Backend Yet.",
+    "noUsernameOnBackendHint": "This Backend Has No Username For You Yet. Open The Backend And Set Your Username Before Creating Buckets.",
+    "ownerLoadFailed": "Failed To Load Owner.",
+    "ownerLoadFailedHint": "Could Not Reach The Backend Identity. Check The Backend Status And Retry.",
     "volumeName": "Bucket Name",
     "volumeNamePlaceholder": "my-files",
     "privateVolume": "Private Bucket",
@@ -117,14 +127,7 @@
     "language": "Language",
     "languageDescription": "Choose Your Preferred Display Language.",
     "selectLanguage": "Select Language",
-    "email": "Email",
-    "username": "Username"
-  },
-  "profile": {
-    "user": "User",
-    "loadingProfile": "Loading Profile…",
-    "notFound": "Profile Not Found",
-    "notFoundDescription": "This User Does Not Exist."
+    "email": "Email"
   },
   "unauthorized": {
     "title": "Access Required",
@@ -149,7 +152,7 @@
     "failedToDelete": "Failed To Delete.",
     "failedToRename": "Failed To Rename.",
     "failedToDuplicate": "Failed To Duplicate.",
-    "failedToLoadProfile": "Failed To Load Profile.",
+    "failedToLoadBackendIdentity": "Failed To Load Backend Owner.",
     "languageLoadFailed": "Unable To Load Language.",
     "languageSaveFailed": "Unable To Save Language.",
     "backend": {

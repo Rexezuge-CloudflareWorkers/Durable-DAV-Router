@@ -4,21 +4,21 @@ Scope: `apps/api/**`. Parent index: `../../AGENTS.md`.
 
 - `src/index.ts` — `fetch` only via `DurableDavRouterWorker` (stateless, no `scheduled`, no DO re-exports).
 - `src/workers/DurableDavRouterWorker.ts` — Hono routes (no file-routing). `src/types.d.ts` — global `Env`.
-- `src/workers/routes/` — `BackendRoutes` (`GET|POST /user/backends`, `GET|PATCH|DELETE /user/backends/:slug`, quota `MAX_BACKENDS_PER_USER`, origin-only `base_url`, best-effort `/health` probe) + `AggregatedVolumeRoutes` (`GET /user/volumes` fan-out with `Promise.allSettled` fail-soft per backend, `POST /user/volumes?backend=` create proxy, `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` + `/user/volumes/:owner/:volume/*` subpath proxy for `/files/*` + `/credentials/*`) + `RouterDavProxyRoutes` (`/:owner/:volume` + `/:owner/:volume/*` for all `SUPPORT_METHODS`, `?backend=`/`X-Backend` resolution, `409 AmbiguousBackend` on collision, `Destination` rewrite, header allowlists, `AbortSignal` timeout via `BACKEND_FETCH_TIMEOUT_MS`) + `UserRoutes` (`GET /user/me`, `GET /users/:username`).
-- `src/middleware/` — `MiddlewareHandlers.userAuthentication()` (`/user/*` via `AccessAuthService` + `UserService.upsertUser`).
+- `src/workers/routes/` — `BackendRoutes` (`GET|POST /user/backends`, `GET|PATCH|DELETE /user/backends/:slug`, `GET /user/backends/:slug/me` per-backend identity proxy with `backend_username` cache write, quota `MAX_BACKENDS_PER_USER`, origin-only `base_url`, best-effort `/health` probe) + `AggregatedVolumeRoutes` (`GET /user/volumes` fan-out with `Promise.allSettled` fail-soft per backend, `POST /user/volumes?backend=` create proxy with `backend_username` cache update, `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` + `/user/volumes/:owner/:volume/*` subpath proxy for `/files/*` + `/credentials/*`) + `RouterDavProxyRoutes` (`/:owner/:volume` + `/:owner/:volume/*` for all `SUPPORT_METHODS`, `?backend=`/`X-Backend` resolution, `409 AmbiguousBackend` on collision, `Destination` rewrite, header allowlists, `AbortSignal` timeout via `BACKEND_FETCH_TIMEOUT_MS`) + `UserRoutes` (`GET /user/me` email-only).
+- `src/middleware/` — `MiddlewareHandlers.userAuthentication()` (`/user/*` via `AccessAuthService` + `UserService.upsertUser` email-only).
 
 ## Auth
 
 - `/user/*` — Cloudflare Access (`DEMO_MODE` → `DEV_AUTH_EMAIL` → JWT → `ctx.access` fallback); fan-out to backends forwards `Cf-Access-Jwt-Assertion`/`Authorization`/`Cookie` verbatim (pure passthrough, no stored secrets).
-- WebDAV `/:owner/:volume/*` — owner-routed (no Access identity): `username` → owner email → `listBackends(owner)`; proxies bucket Basic `Authorization` + `Cookie` verbatim, backend enforces per-bucket auth. Unknown owner/no backend → `404`; ambiguous without `?backend=`/`X-Backend` → `409` without slug enumeration.
+- WebDAV `/:owner/:volume/*` — owner-routed (no Access identity): per-backend `backend_username` cache → `listByBackendUsername(owner)`; proxies bucket Basic `Authorization` + `Cookie` verbatim, backend enforces per-bucket auth. Unknown owner/no backend → `404`; ambiguous without `?backend=`/`X-Backend` → `409` without slug enumeration.
 
 ## Routes
 
-- Backends: `GET|POST /user/backends` · `GET|PATCH|DELETE /user/backends/:slug`.
+- Backends: `GET|POST /user/backends` · `GET|PATCH|DELETE /user/backends/:slug` · `GET /user/backends/:slug/me` → `{slug, username}`.
 - Volumes (aggregated): `GET /user/volumes(?backend=)` → `{volumes: [{...backend}], backends: [{slug, ok}]}` · `POST /user/volumes?backend=` · `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` · `ALL /user/volumes/:owner/:volume/*`.
 - WebDAV proxy: `OPTIONS`/`PROPFIND`/`PROPPATCH`/`MKCOL`/`GET`/`HEAD`/`PUT`/`DELETE`/`COPY`/`MOVE`/`LOCK`/`UNLOCK` on `/:owner/:volume` + `/:owner/:volume/*`.
-- Users: `GET /user/me` · `GET /users/:username`.
-- Public: `GET /health` (`{ok, service: 'durable-dav-router'}`) · `/docs` · SPA shell `GET /, /new, /backends/new, /settings, /:username`.
+- Users: `GET /user/me` → `{email}`.
+- Public: `GET /health` (`{ok, service: 'durable-dav-router'}`) · `/docs` · SPA shell `GET /, /new, /backends/new, /settings`.
 
 ## Composition
 

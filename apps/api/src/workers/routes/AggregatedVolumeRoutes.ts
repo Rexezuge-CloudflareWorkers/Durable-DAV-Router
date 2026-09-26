@@ -162,6 +162,19 @@ function registerAggregatedVolumeRoutes(app: App): void {
         timeoutMs,
       );
       const text = await res.text().catch(() => '');
+      if (res.status >= 200 && res.status < 300) {
+        try {
+          const created = JSON.parse(text) as { owner?: unknown };
+          if (typeof created.owner === 'string' && created.owner.trim()) {
+            await scope
+              .get(Tokens.BackendService)
+              .recordBackendUsername(email, resolved.backend.slug, created.owner.trim())
+              .catch(() => undefined);
+          }
+        } catch {
+          // ignore cache failures — creation already succeeded
+        }
+      }
       return new Response(text, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' } });
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);

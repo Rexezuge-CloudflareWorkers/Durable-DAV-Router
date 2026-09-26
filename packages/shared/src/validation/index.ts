@@ -1,5 +1,4 @@
 export {
-  usernameSchema,
   parsePositiveInt,
   tokenIdSchema,
   credentialIdSchema,

@@ -9,7 +9,6 @@ import { DashboardView } from '../../views/DashboardView';
 import { NewVolumeView } from '../../views/NewVolumeView';
 import { NewBackendView } from '../../views/NewBackendView';
 import { VolumeView } from '../../views/VolumeView';
-import { ProfileView } from '../../views/ProfileView';
 import { SettingsView } from '../../views/SettingsView';
 
 interface SpaViewRouterProps {
@@ -17,7 +16,6 @@ interface SpaViewRouterProps {
   setUser: (user: CurrentUser) => void;
   authorized: boolean | null;
   showNotice: (type: 'success' | 'error', text: string) => void;
-  defaultOwner: string;
   language: string;
   onLanguageChange: (lng: string) => void;
   languageDisabled?: boolean;
@@ -32,7 +30,6 @@ function SpaViewRouter({
   setUser,
   authorized,
   showNotice,
-  defaultOwner,
   language,
   onLanguageChange,
   languageDisabled,
@@ -45,7 +42,6 @@ function SpaViewRouter({
     return (
       <Routes>
         <Route path="/:owner/:volume" element={<VolumeView authorized={authorized} showNotice={showNotice} />} />
-        <Route path="/:username" element={<ProfileView showNotice={showNotice} />} />
         <Route
           path="*"
           element={
@@ -64,7 +60,7 @@ function SpaViewRouter({
         path="/new"
         element={
           user ? (
-            <NewVolumeView defaultOwner={defaultOwner} showNotice={showNotice} />
+            <NewVolumeView showNotice={showNotice} />
           ) : (
             <AppPage>
               <Unauthorized message={t('errors.signInToCreate', 'Sign In To Create Volumes.')} />
@@ -85,7 +81,6 @@ function SpaViewRouter({
         }
       />
       <Route path="/:owner/:volume" element={<VolumeView authorized={authorized} showNotice={showNotice} />} />
-      <Route path="/:username" element={<ProfileView showNotice={showNotice} />} />
       <Route
         path="/settings"
         element={

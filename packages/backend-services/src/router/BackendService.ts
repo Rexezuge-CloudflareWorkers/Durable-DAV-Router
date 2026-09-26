@@ -141,6 +141,26 @@ class BackendService {
       })
       .catch(() => undefined);
   }
+
+  public async recordBackendUsername(ownerEmail: string, slug: string, username: string | null): Promise<void> {
+    const dao = await this.deps.backendDAO();
+    const row = await dao.getByOwnerSlug(ownerEmail.toLowerCase(), slug).catch(() => null);
+    if (!row) return;
+    const normalized = username?.trim() ? username.trim() : null;
+    if ((row.backend_username ?? null) === normalized) return;
+    await dao
+      .update(row.id, {
+        now: TimestampUtil.getCurrentUnixTimestampInSeconds(),
+        backendUsername: normalized,
+      })
+      .catch(() => undefined);
+  }
+
+  public async listByBackendUsername(usernameCi: string): Promise<RouterBackendRow[]> {
+    const dao = await this.deps.backendDAO();
+    const trimmed = usernameCi.trim().toLowerCase();
+    return trimmed ? dao.listByBackendUsernameCi(trimmed, 100).catch(() => []) : [];
+  }
 }
 
 export { BackendService, normalizeSlug, normalizeBaseUrl };

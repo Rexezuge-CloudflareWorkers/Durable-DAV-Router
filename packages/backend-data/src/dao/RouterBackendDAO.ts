@@ -12,6 +12,8 @@ export interface RouterBackendRow {
   updated_at: number;
   last_seen_at: number | null;
   last_status: number | null;
+  backend_username: string | null;
+  backend_username_ci: string | null;
 }
 
 class RouterBackendDAO extends BaseDAO {
@@ -70,7 +72,14 @@ class RouterBackendDAO extends BaseDAO {
 
   public async update(
     id: string,
-    patch: { baseUrl?: string; displayName?: string | null; now: number; lastSeenAt?: number | null; lastStatus?: number | null },
+    patch: {
+      baseUrl?: string;
+      displayName?: string | null;
+      now: number;
+      lastSeenAt?: number | null;
+      lastStatus?: number | null;
+      backendUsername?: string | null;
+    },
   ): Promise<void> {
     const sets: string[] = ['updated_at = ?'];
     const bindings: unknown[] = [patch.now];
@@ -90,11 +99,25 @@ class RouterBackendDAO extends BaseDAO {
       sets.push('last_status = ?');
       bindings.push(patch.lastStatus);
     }
+    if (patch.backendUsername !== undefined) {
+      sets.push('backend_username = ?');
+      bindings.push(patch.backendUsername);
+      sets.push('backend_username_ci = ?');
+      bindings.push(patch.backendUsername ? patch.backendUsername.toLowerCase() : null);
+    }
     bindings.push(id);
     await this.withRetry(
       () => this.database.prepare(`UPDATE router_backends SET ${sets.join(', ')} WHERE id = ?`).bind(...bindings).run(),
       'update router backend',
     );
+  }
+
+  public async listByBackendUsernameCi(usernameCi: string, limit = 100): Promise<RouterBackendRow[]> {
+    const result = await this.database
+      .prepare('SELECT * FROM router_backends WHERE backend_username_ci = ? ORDER BY created_at ASC LIMIT ?')
+      .bind(usernameCi.toLowerCase(), limit)
+      .all<RouterBackendRow>();
+    return result.results ?? [];
   }
 
   public async deleteById(id: string): Promise<void> {

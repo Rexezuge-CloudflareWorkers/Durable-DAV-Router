@@ -40,6 +40,12 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
         },
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
+          if (state.sql.includes('backend_username_ci = ?')) {
+            const results = [...store.values()].filter(
+              (r) => (r.backend_username_ci ?? '').toLowerCase() === String(v0).toLowerCase(),
+            );
+            return { results: results as T[] };
+          }
           const results = [...store.values()].filter((r) => r.owner_email.toLowerCase() === String(v0).toLowerCase());
           return { results: results as T[] };
         },
@@ -51,6 +57,7 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
             store.set(id, {
               id, owner_email: ownerEmail, slug, slug_ci: slugCi, base_url: baseUrl, display_name: displayName,
               created_at: createdAt, updated_at: updatedAt, last_seen_at: null, last_status: null,
+              backend_username: null, backend_username_ci: null,
             });
             return { success: true, meta: { changes: 1 } };
           }

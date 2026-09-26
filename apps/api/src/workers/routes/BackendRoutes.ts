@@ -20,6 +20,7 @@ function toBackendJson(r: {
   updated_at: number;
   last_seen_at: number | null;
   last_status: number | null;
+  backend_username?: string | null;
 }) {
   return {
     slug: r.slug,
@@ -29,6 +30,7 @@ function toBackendJson(r: {
     updatedAt: r.updated_at,
     lastSeenAt: r.last_seen_at,
     lastStatus: r.last_status,
+    backendUsername: r.backend_username ?? null,
   };
 }
 
@@ -129,6 +131,45 @@ function registerBackendRoutes(app: App): void {
     try {
       await scope.get(Tokens.BackendService).deleteBackend(email, c.req.param('slug') ?? '');
       return c.json({ ok: true });
+    } catch (error) {
+      return BaseRoute.toErrorResponse(c as never, error);
+    }
+  });
+
+  // Per-backend identity: the username the authenticated email owns on this
+  // backend (usernames are per-backend, never global). Proxies verbatim to
+  // backend `GET /user/me` with passthrough auth and caches the result in
+  // `router_backends.backend_username` for WebDAV owner routing.
+  app.get('/user/backends/:slug/me', async (c) => {
+    const scope = BaseRoute.getScope(c);
+    const email = c.get('AuthenticatedUserEmailAddress');
+    try {
+      const row = await scope.get(Tokens.BackendService).getBackend(email, c.req.param('slug') ?? '');
+      const timeoutMs = getProxyTimeoutMs(c.env);
+      const auth = incomingAuthHeaders(c.req.raw);
+      auth.set('Accept', 'application/json');
+      auth.set('User-Agent', 'durable-dav-router');
+      const res = await fetchWithTimeout(
+        new Request(joinBackendUrl(row.base_url, '/user/me')),
+        { method: 'GET', headers: auth, redirect: 'manual' },
+        timeoutMs,
+      );
+      const text = await res.text().catch(() => '');
+      let username: string | null = null;
+      try {
+        const data = JSON.parse(text) as { username?: unknown };
+        username = typeof data.username === 'string' && data.username.trim() ? data.username.trim() : null;
+      } catch {
+        username = null;
+      }
+      if (!res.ok) {
+        return new Response(text || JSON.stringify({ Exception: { Type: 'BadGateway', Message: 'Backend identity lookup failed' } }), {
+          status: res.status,
+          headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' },
+        });
+      }
+      await scope.get(Tokens.BackendService).recordBackendUsername(email, row.slug, username).catch(() => undefined);
+      return c.json({ slug: row.slug, username });
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
     }

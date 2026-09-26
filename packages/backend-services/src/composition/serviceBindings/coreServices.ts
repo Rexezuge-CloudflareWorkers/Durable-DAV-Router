@@ -14,7 +14,6 @@ function bindCoreServices(scope: Container, { env, daos }: ServiceGroupContext):
   scope.bind(Tokens.UserService, () =>
     createService(UserService, env, {
       userDAO: daos.userDAO,
-      namespaceDAO: daos.namespaceDAO,
     }),
   );
   scope.bind(Tokens.BackendService, () =>

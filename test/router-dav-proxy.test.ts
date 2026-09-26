@@ -7,9 +7,7 @@ interface CapturedFetch {
 }
 
 function fakeDb(opts: {
-  users: Array<{ email: string; username: string | null }>;
-  namespaces: Array<{ username_ci: string; user_email: string | null }>;
-  backends: Array<{ id: string; owner_email: string; slug: string; base_url: string }>;
+  backends: Array<{ id: string; owner_email: string; slug: string; base_url: string; backend_username?: string | null }>;
 }) {
   return {
     prepare(query: string) {
@@ -20,19 +18,29 @@ function fakeDb(opts: {
           return stmt;
         },
         async first<T>(): Promise<T | null> {
-          if (state.sql.includes('FROM users WHERE lower(username)')) {
-            const ci = String(state.values[0]).toLowerCase();
-            const found = opts.users.find((u) => (u.username ?? '').toLowerCase() === ci);
-            return (found ? { email: found.email, username: found.username, created_at: 1, updated_at: 1 } : null) as T | null;
-          }
-          if (state.sql.includes('FROM namespaces WHERE username_ci')) {
-            const ci = String(state.values[0]).toLowerCase();
-            const found = opts.namespaces.find((n) => n.username_ci === ci);
-            return (found ?? null) as T | null;
-          }
-          return null;
+          return null as T | null;
         },
         async all<T>(): Promise<{ results: T[] }> {
+          if (state.sql.includes('FROM router_backends WHERE backend_username_ci')) {
+            const ci = String(state.values[0]).toLowerCase();
+            const results = opts.backends
+              .filter((b) => (b.backend_username ?? '').toLowerCase() === ci)
+              .map((b) => ({
+                id: b.id,
+                owner_email: b.owner_email,
+                slug: b.slug,
+                slug_ci: b.slug.toLowerCase(),
+                base_url: b.base_url,
+                display_name: null,
+                created_at: 1,
+                updated_at: 1,
+                last_seen_at: null,
+                last_status: null,
+                backend_username: b.backend_username ?? null,
+                backend_username_ci: b.backend_username ? b.backend_username.toLowerCase() : null,
+              }));
+            return { results: results as T[] };
+          }
           if (state.sql.includes('FROM router_backends')) {
             const email = String(state.values[0]).toLowerCase();
             const results = opts.backends
@@ -48,6 +56,8 @@ function fakeDb(opts: {
                 updated_at: 1,
                 last_seen_at: null,
                 last_status: null,
+                backend_username: b.backend_username ?? null,
+                backend_username_ci: b.backend_username ? b.backend_username.toLowerCase() : null,
               }));
             return { results: results as T[] };
           }
@@ -123,7 +133,7 @@ describe('RouterDavProxyRoutes owner routing', () => {
   });
 
   it('returns 404 (not 401) for unknown owners without Access identity', async () => {
-    const db = fakeDb({ users: [], namespaces: [], backends: [] });
+    const db = fakeDb({ backends: [] });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
     const handler = routes.get('ON /:owner/:volume');
@@ -141,9 +151,7 @@ describe('RouterDavProxyRoutes owner routing', () => {
 
   it('proxies single-backend owner requests without Access identity', async () => {
     const db = fakeDb({
-      users: [{ email: 'starfish@example.com', username: 'Starfish' }],
-      namespaces: [{ username_ci: 'starfish', user_email: 'starfish@example.com' }],
-      backends: [{ id: '1', owner_email: 'starfish@example.com', slug: 'solo', base_url: 'https://backend.example.com' }],
+      backends: [{ id: '1', owner_email: 'starfish@example.com', slug: 'solo', base_url: 'https://backend.example.com', backend_username: 'Starfish' }],
     });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
@@ -170,9 +178,7 @@ describe('RouterDavProxyRoutes owner routing', () => {
 
   it('strips ?backend= and preserves trailing slash on collections', async () => {
     const db = fakeDb({
-      users: [{ email: 'starfish@example.com', username: 'starfish' }],
-      namespaces: [],
-      backends: [{ id: '1', owner_email: 'starfish@example.com', slug: 'solo', base_url: 'https://backend.example.com' }],
+      backends: [{ id: '1', owner_email: 'starfish@example.com', slug: 'solo', base_url: 'https://backend.example.com', backend_username: 'starfish' }],
     });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
@@ -210,11 +216,9 @@ describe('RouterDavProxyRoutes owner routing', () => {
 
   it('returns 409 without slug enumeration when multiples match', async () => {
     const db = fakeDb({
-      users: [{ email: 'o@example.com', username: 'owner' }],
-      namespaces: [],
       backends: [
-        { id: '1', owner_email: 'o@example.com', slug: 'a', base_url: 'https://a.example.com' },
-        { id: '2', owner_email: 'o@example.com', slug: 'b', base_url: 'https://b.example.com' },
+        { id: '1', owner_email: 'o@example.com', slug: 'a', base_url: 'https://a.example.com', backend_username: 'owner' },
+        { id: '2', owner_email: 'other@example.com', slug: 'b', base_url: 'https://b.example.com', backend_username: 'owner' },
       ],
     });
     const { app, routes } = stubApp();

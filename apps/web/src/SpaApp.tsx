@@ -6,11 +6,11 @@ import { useNotice } from './hooks/useNotice';
 import { useCurrentUser } from './hooks/useCurrentUser';
 import { useSpaLanguage } from './hooks/useSpaLanguage';
 
-function TopHeader({ userEmail, username }: { userEmail: string | null; username?: string | null }) {
+function TopHeader({ userEmail }: { userEmail: string | null }) {
   // The marketing/global header is root-only: every other route renders a
   // contextual `ContextBar` instead, so the top anchor never moves pages.
   const isRootPage = useMatch('/') !== null;
-  return isRootPage ? <Header userEmail={userEmail} username={username} /> : null;
+  return isRootPage ? <Header userEmail={userEmail} /> : null;
 }
 
 export default function SpaApp() {
@@ -22,12 +22,9 @@ export default function SpaApp() {
     setUser,
   });
 
-  const ownerFromEmail = user ? user.email.split('@', 1)[0] : '';
-  const defaultOwner = user?.username?.trim() ? user.username : ownerFromEmail;
-
   return (
     <div className="min-h-screen bg-[var(--color-surface-base)] text-[var(--color-text-primary)]">
-      <TopHeader userEmail={user?.email ?? null} username={user?.username ?? null} />
+      <TopHeader userEmail={user?.email ?? null} />
       {notice && <NoticeBar notice={notice} />}
 
       <SpaViewRouter
@@ -35,7 +32,6 @@ export default function SpaApp() {
         setUser={setUser}
         authorized={authorized}
         showNotice={showNotice}
-        defaultOwner={defaultOwner}
         language={languageStatus === 'error' ? 'unknown' : language}
         onLanguageChange={handleLanguageChange}
         languageDisabled={languagePending || languageStatus !== 'ready'}

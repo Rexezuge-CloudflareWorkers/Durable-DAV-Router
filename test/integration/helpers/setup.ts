@@ -12,21 +12,11 @@ export async function ensureAesSecret(_env: TestEnv): Promise<void> {
   // No Secrets Store binding: router stores no secrets (pure passthrough).
 }
 
-export async function ensureUser(db: D1Database, email: string, username?: string): Promise<string> {
+export async function ensureUser(db: D1Database, email: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const normalizedEmail = email.toLowerCase();
-  const handle = (username ?? normalizedEmail.split('@', 1)[0]).trim() || 'user';
-  const handleCi = handle.toLowerCase();
   await db.prepare(`INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)`).bind(normalizedEmail, now).run();
-  await db
-    .prepare(`UPDATE users SET username = COALESCE(username, ?), updated_at = COALESCE(updated_at, ?) WHERE email = ?`)
-    .bind(handle, now, normalizedEmail)
-    .run();
-  await db
-    .prepare(`INSERT OR IGNORE INTO namespaces (username_ci, kind, user_email, created_at) VALUES (?, 'user', ?, ?)`)
-    .bind(handleCi, normalizedEmail, now)
-    .run();
-  return handle;
+  return normalizedEmail;
 }
 
 export async function setupIntegrationTest(env: TestEnv, userEmail?: string): Promise<void> {
@@ -44,6 +34,7 @@ export async function seedBackend(
     slug: string;
     baseUrl: string;
     displayName?: string | null;
+    backendUsername?: string | null;
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
@@ -51,10 +42,21 @@ export async function seedBackend(
   await ensureUser(db, input.ownerEmail);
   await db
     .prepare(
-      `INSERT OR IGNORE INTO router_backends (id, owner_email, slug, slug_ci, base_url, display_name, created_at, updated_at) ` +
-        `VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO router_backends (id, owner_email, slug, slug_ci, base_url, display_name, created_at, updated_at, backend_username, backend_username_ci) ` +
+        `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(id, input.ownerEmail.toLowerCase(), input.slug, input.slug.toLowerCase(), input.baseUrl, input.displayName ?? null, now, now)
+    .bind(
+      id,
+      input.ownerEmail.toLowerCase(),
+      input.slug,
+      input.slug.toLowerCase(),
+      input.baseUrl,
+      input.displayName ?? null,
+      now,
+      now,
+      input.backendUsername ?? null,
+      input.backendUsername ? input.backendUsername.toLowerCase() : null,
+    )
     .run();
   return id;
 }

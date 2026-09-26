@@ -5,7 +5,7 @@ Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS
 - Root `@durable-dav-router/monorepo`, pnpm workspaces (`apps/*`, `packages/*`).
 - `apps/web/vite.config.ts` proxies `/user` → `http://localhost:8787` in dev; `closeBundle` embeds `dist/index.html` into `apps/api/src/generated/spa-shell.ts` (`SPA_HTML`) on build.
 - `apps/api/wrangler.template.jsonc` is the config template — copy to `wrangler.jsonc` per deployer; no committed `wrangler.jsonc`. Local `wrangler.jsonc` uses `DEV_AUTH_EMAIL=test@example.com`.
-- The Worker serves the SPA from `/`, `/new`, `/backends/new`, `/settings`, `/:username` plus `/:owner/:volume` (content-negotiated: `Accept: text/html` → shell, else backend WebDAV proxy) in `DurableDavRouterWorker`.
+- The Worker serves the SPA from `/`, `/new`, `/backends/new`, `/settings` plus `/:owner/:volume` (content-negotiated: `Accept: text/html` → shell, else backend WebDAV proxy) in `DurableDavRouterWorker`.
 - Bindings: D1 `DB` only (stateless router: no DOs, no KV, no cron, no R2/Queues/AI bindings).
 
 ## Required vars (no defaults)

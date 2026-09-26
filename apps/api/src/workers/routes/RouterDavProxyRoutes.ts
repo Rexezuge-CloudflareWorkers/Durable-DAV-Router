@@ -43,34 +43,13 @@ async function handleProxy(
   // WebDAV proxy is owner-routed, not requester-routed. Native clients only
   // send per-bucket Basic `Authorization` — they never carry Cloudflare Access
   // JWT — so requiring an Access identity here breaks every client (401).
-  // Resolve the volume owner's backends via username, then let the backend
-  // enforce public-vs-private itself with the verbatim-proxied credentials.
-  let ownerEmail: string | null = null;
-  try {
-    const user = await scope.get(Tokens.UserService).getByUsername(owner);
-    ownerEmail = user?.email ?? null;
-  } catch {
-    ownerEmail = null;
-  }
-  // Fallback to the global namespace registry (covers legacy rows without a
-  // `users.username` and renamed-away handles, which stay reserved).
-  if (!ownerEmail) {
-    try {
-      const nsDao = await scope.get(Tokens.NamespaceDAO)();
-      const ns = await (nsDao as { get: (k: string) => Promise<{ user_email?: string | null } | null> }).get(
-        owner.toLowerCase(),
-      ).catch(() => null);
-      ownerEmail = ns?.user_email ?? null;
-    } catch {
-      ownerEmail = null;
-    }
-  }
-  if (!ownerEmail) {
-    return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
-  }
+  // Usernames are per-backend (same email may own different handles on
+  // different backends); the router keeps only a `backend_username` cache per
+  // registered backend and routes on it. The backend enforces
+  // public-vs-private itself with the verbatim-proxied credentials.
   let backends: Array<{ slug: string; base_url: string }> = [];
   try {
-    backends = await scope.get(Tokens.BackendService).listBackends(ownerEmail).catch(() => []);
+    backends = await scope.get(Tokens.BackendService).listByBackendUsername(owner).catch(() => []);
   } catch {
     backends = [];
   }
