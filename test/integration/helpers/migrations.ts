@@ -11,7 +11,7 @@
  * terminating semicolon after the final END.
  */
 
-declare const __INTEGRATION_MIGRATION_SQL__: string;
+declare const __INTEGRATION_MIGRATIONS__: Record<string, string>;
 
 function splitSql(sql: string): string[] {
   const statements: string[] = [];
@@ -133,18 +133,78 @@ function splitSql(sql: string): string[] {
   return statements;
 }
 
-export async function applyMigrations(db: D1Database): Promise<void> {
-  const statements = splitSql(__INTEGRATION_MIGRATION_SQL__);
+/** Executable statements for one migration file, comments stripped. */
+function statementsFor(file: string): string[] {
+  return splitSql(__INTEGRATION_MIGRATIONS__[file] ?? '').filter(
+    (stmt) =>
+      stmt
+        .replace(/--[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .trim().length > 0,
+  );
+}
+
+async function runStatements(db: D1Database, statements: string[]): Promise<void> {
   for (const stmt of statements) {
-    if (stmt.length === 0) continue;
-    // Skip pure-comment statements (no executable SQL).
-    const withoutComments = stmt
-      .replace(/--[^\n]*/g, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .trim();
-    if (withoutComments.length === 0) continue;
     await db.prepare(stmt).run();
   }
 }
 
-export { splitSql };
+// The D1 test database is shared across the tests in a file, and migrations
+// are not re-runnable (`ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS`).
+// Track what has been applied so a second call is a no-op instead of an error.
+const applied = new Set<string>();
+
+async function applyFile(db: D1Database, file: string): Promise<void> {
+  if (applied.has(file)) return;
+  await runStatements(db, statementsFor(file));
+  applied.add(file);
+}
+
+/** Migration filenames in lexical (apply) order. */
+export function migrationFiles(): string[] {
+  return Object.keys(__INTEGRATION_MIGRATIONS__).sort();
+}
+
+/** Forget which migrations have run (test-isolation helper). */
+export function resetAppliedMigrations(): void {
+  applied.clear();
+}
+
+/**
+ * Apply every migration.
+ *
+ * D1 wraps a whole migration file in one implicit transaction, so each file is
+ * applied statement-by-statement here to match that granularity closely enough
+ * for assertion purposes. See `applyMigrationsUpTo` for partial application.
+ */
+export async function applyMigrations(db: D1Database): Promise<void> {
+  for (const file of migrationFiles()) {
+    await applyFile(db, file);
+  }
+}
+
+/**
+ * Apply migrations up to and including `lastFile`, so a test can seed rows in
+ * the schema state that a later migration must not destroy.
+ */
+export async function applyMigrationsUpTo(db: D1Database, lastFile: string): Promise<void> {
+  const all = migrationFiles();
+  const cut = all.indexOf(lastFile);
+  if (cut === -1) throw new Error(`Unknown migration file: ${lastFile}`);
+  for (const file of all.slice(0, cut + 1)) {
+    await applyFile(db, file);
+  }
+}
+
+/** Apply the migrations that follow `afterFile`. */
+export async function applyMigrationsAfter(db: D1Database, afterFile: string): Promise<void> {
+  const all = migrationFiles();
+  const cut = all.indexOf(afterFile);
+  if (cut === -1) throw new Error(`Unknown migration file: ${afterFile}`);
+  for (const file of all.slice(cut + 1)) {
+    await applyFile(db, file);
+  }
+}
+
+export { splitSql, statementsFor };
