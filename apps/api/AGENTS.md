@@ -2,26 +2,33 @@
 
 Scope: `apps/api/**`. Parent index: `../../AGENTS.md`.
 
-- `src/index.ts` — `fetch` only via `DurableDavRouterWorker` (stateless, no `scheduled`, no DO re-exports).
-- `src/workers/DurableDavRouterWorker.ts` — Hono routes (no file-routing). `src/types.d.ts` — global `Env`.
-- `src/workers/routes/` — `BackendRoutes` (`GET|POST /user/backends`, `GET|PATCH|DELETE /user/backends/:slug`, `GET /user/backends/:slug/me` per-backend identity proxy with `backend_username` cache write, quota `MAX_BACKENDS_PER_USER`, origin-only `base_url`, best-effort `/health` probe) + `AggregatedVolumeRoutes` (`GET /user/volumes` fan-out with `Promise.allSettled` fail-soft per backend, `POST /user/volumes?backend=` create proxy with `backend_username` cache update, `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` + `/user/volumes/:owner/:volume/*` subpath proxy for `/files/*` + `/credentials/*`) + `RouterDavProxyRoutes` (`/:owner/:volume` + `/:owner/:volume/*` for all `SUPPORT_METHODS`, `?backend=`/`X-Backend` resolution, KV `davRoute` lookaside (24h via `ROUTE_CACHE_TTL_SECONDS`, per-isolate L1 + self-heal on forward 404/502) with volume-root `PROPFIND Depth: 0` auto-resolve on cold ambiguity (unique hit routes + populates, true collision → `409 AmbiguousBackend`, new top-level volume → `409` requiring selector), volume-root mutation invalidation (`MKCOL`/`DELETE`/`MOVE` + `Destination`), `Destination` rewrite, header allowlists, `AbortSignal` timeout via `BACKEND_FETCH_TIMEOUT_MS`) + `UserRoutes` (`GET /user/me` email-only).
-- `src/middleware/` — `MiddlewareHandlers.userAuthentication()` (`/user/*` via `AccessAuthService` + `UserService.upsertUser` email-only).
+- `src/index.ts` — `fetch` only via `DurableDavRouterWorker` (stateless: no cron, no DOs, no `scheduled`).
+- `src/workers/DurableDavRouterWorker.ts` — Hono routes (no file-routing), in this order: `securityHeaders` → `onError` → `/health` + SPA shell routes → `scopeMiddleware` → **`OPTIONS *` preflight** → `registerRateLimits` → `/user/*` auth → `/user/*` routes → volume-root content negotiation → WebDAV proxy. Order matters: the preflight must precede auth (a preflight carries no credentials), and the rate limiter must precede auth so it can key on the resolved identity. Runs `AppConfiguration.validate()` once per isolate on the first request. `src/types.d.ts` — global `Env`.
+- `src/workers/routes/` — `BackendRoutes` (`GET|POST /user/backends`, `GET|PATCH|DELETE /user/backends/:slug`, `GET /user/backends/:slug/me` identity proxy with `backend_username` cache write, `GET /user/backends/:slug/probe` diagnostic) + `AggregatedVolumeRoutes` (`GET /user/volumes` fail-soft fan-out, `POST /user/volumes?backend=`, `GET|PATCH|DELETE /user/volumes/:owner/:volume`, `/user/volumes/:owner/:volume/*` subpath proxy) + `RouterDavProxyRoutes` (all `SUPPORT_METHODS` on `/:owner/:volume[/...]`, plus `app.all` catch-alls returning `405`+`Allow` for a non-DAV method) + `UserRoutes` (`GET /user/me`).
+- `src/middleware/` — `securityHeaders` (baseline headers; CSP on the HTML shell only; `no-store` on `/user/*`; HSTS over HTTPS only), `rateLimit`+`rateLimitConfig` (per-isolate token buckets, keyed on the authenticated email or the trusted `CF-Connecting-IP`, **fail open**), `scopeMiddleware`, `MiddlewareHandlers.userAuthentication()`.
 
 ## Auth
 
-- `/user/*` — Cloudflare Access (`DEMO_MODE` → `DEV_AUTH_EMAIL` → JWT → `ctx.access` fallback); fan-out to backends forwards `Cf-Access-Jwt-Assertion`/`Authorization`/`Cookie` verbatim (pure passthrough, no stored secrets).
-- WebDAV `/:owner/:volume/*` — owner-routed (no Access identity): per-backend `backend_username` cache → `listByBackendUsername(owner)`; proxies bucket Basic `Authorization` + `Cookie` verbatim, backend enforces per-bucket auth. Unknown owner/no backend → `404`; bare requests hit the KV `davRoute` lookaside first (miss → auto-probes volume roots; unique owner routes + populates, true collision → `409` without slug enumeration).
+- `/user/*` — Cloudflare Access (`DEMO_MODE` → `DEV_AUTH_EMAIL` → JWT → `ctx.access` fallback). Fan-out forwards `Cf-Access-Jwt-Assertion`/`Authorization`/`Cookie` verbatim (pure passthrough, no stored secrets). The user row is upserted here so `router_backends.owner_email` has a parent to reference.
+- WebDAV `/:owner/:volume/*` — owner-routed (no Access identity): per-backend `backend_username` cache → `listByBackendUsername(owner)`. Proxies bucket Basic verbatim; the backend enforces per-bucket auth. Unknown owner/no backend → `404`.
+
+## Route cache self-heal
+
+`RouterDavProxyRoutes` consults the KV `davRoute` lookaside (per-isolate L1 + KV, TTL from `ROUTE_CACHE_TTL_SECONDS`) for bare client URLs. A cached entry is **revalidated against D1 before forwarding** — a cache entry can name a deleted backend or a `base_url` that has since been edited, and the first symptom of that is a request already sent to the wrong origin. If the forward still returns `404`/`410`, the entry is evicted and (for idempotent methods only) re-resolved. `502`/`504` are deliberately **not** staleness signals: they mean the origin is unreachable, which says nothing about whether the route is stale.
+
+Replaying a request re-sends a body that has already been consumed, so a stale route on a `PUT` could write a truncated (or empty) file and a mutation that succeeded before its response was lost would apply twice. That is why replay is restricted to `GET`/`HEAD`/`OPTIONS`/`PROPFIND`.
 
 ## Routes
 
-- Backends: `GET|POST /user/backends` · `GET|PATCH|DELETE /user/backends/:slug` · `GET /user/backends/:slug/me` → `{slug, username}`.
-- Volumes (aggregated): `GET /user/volumes(?backend=)` → `{volumes: [{...backend}], backends: [{slug, ok}]}` · `POST /user/volumes?backend=` · `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` · `ALL /user/volumes/:owner/:volume/*`.
-- WebDAV proxy: `OPTIONS`/`PROPFIND`/`PROPPATCH`/`MKCOL`/`GET`/`HEAD`/`PUT`/`DELETE`/`COPY`/`MOVE`/`LOCK`/`UNLOCK` on `/:owner/:volume` + `/:owner/:volume/*`.
+- Backends: `GET|POST /user/backends` · `GET|PATCH|DELETE /user/backends/:slug` · `GET /user/backends/:slug/me` → `{slug, username}` · `GET /user/backends/:slug/probe`.
+- Volumes: `GET /user/volumes(?backend=)` → `{volumes, backends: [{slug, ok, status}]}` · `POST /user/volumes?backend=` · `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` · `ALL /user/volumes/:owner/:volume/*`.
+- WebDAV proxy: the 12 `SUPPORT_METHODS` on `/:owner/:volume` + `/:owner/:volume/*`; anything else → `405` with `Allow`.
 - Users: `GET /user/me` → `{email}`.
-- Public: `GET /health` (`{ok, service: 'durable-dav-router'}`) · `/docs` · SPA shell `GET /, /new, /backends/new, /settings`.
+- Public: `GET /health` · `/docs` · SPA shell `GET /, /new, /backends/new, /settings` · `OPTIONS *` preflight.
 
 ## Composition
 
-- Single scope per request: `scopeMiddleware` installs one `Container` + `ServiceContext`; handlers resolve via `BaseRoute.getScope(c).get(Tokens.X)`.
-- `src/endpoints/IBaseRoute.ts` — `BaseRoute` template (`handle()` → `handleRequest()` + `toErrorResponse()` mapping `ServiceError`; AWS envelope `{Exception:{Type,Message}}`).
+- Single scope per request: `scopeMiddleware` installs one `Container`; handlers resolve via `BaseRoute.getScope(c).get(Tokens.X)`.
+- `src/endpoints/IBaseRoute.ts` — a namespace of statics, **not** a template-method base: every route is a `registerX(app)` closure, so nothing extends it. It owns `getScope`, `readJson` (malformed/oversized body discrimination + 1 MiB cap), `jsonError` (canonical `Exception.Type` mapping), and `toErrorResponse` (delegates status/body to the shared `ErrorMapper`, then adds the request's locale and any `ConflictError.details`).
+- Route handlers read bodies through `readJson` + an explicit type check. A raw `c.req.json() as {...}` cast lets a non-string field reach `.trim()` and surface as a 500 where the answer is a 400.
 - Never import `@durable-dav-router/backend-data` values in routes (type-only allowed); never import `dav-store`/`background` (deleted) — use `@durable-dav-router/backend-services/router` proxy helpers + `fetch`.
