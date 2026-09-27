@@ -207,6 +207,58 @@ describe('RouterDavProxyRoutes owner routing', () => {
     expect(res.headers.get('MS-Author-Via')).toBe('DAV');
   });
 
+  it('forwards a DAV OPTIONS capability probe and returns the backend DAV: header', async () => {
+    // The regression this pins: a terminal `app.options('*')` preflight handler
+    // in the worker answered every OPTIONS with a bare 204, so this proxy never
+    // ran and no client ever saw a `DAV:` header. RFC 4918 §9.1 requires it, and
+    // clients that probe on connect aborted with "No Content". The stub mirrors
+    // the real backend (`DavRoutes.handleDav`): 200 + Allow + DAV + MS-Author-Via.
+    const calls: CapturedFetch[] = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input instanceof Request ? input.url : input), init: init ?? {} });
+      return new Response(null, {
+        status: 200,
+        headers: {
+          Allow: 'OPTIONS, PROPFIND, GET, PUT, DELETE',
+          DAV: '1, 2',
+          'MS-Author-Via': 'DAV',
+        },
+      });
+    });
+    const db = fakeDb({
+      backends: [
+        {
+          id: '1',
+          owner_email: 'starfish@example.com',
+          slug: 'solo',
+          base_url: 'https://backend.example.com',
+          backend_username: 'Starfish',
+        },
+      ],
+    });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const handler = routes.get('ON /:owner/:volume');
+    const res = await handler!(
+      fakeContext({
+        method: 'OPTIONS',
+        url: 'https://router.example.com/Starfish/test123',
+        env: { DB: db },
+        params: { owner: 'Starfish', volume: 'test123' },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+    // The probe actually reached the origin, not a router shortcut.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://backend.example.com/Starfish/test123');
+    expect(calls[0].init.method).toBe('OPTIONS');
+    // The advertisement rides back to the client untouched.
+    expect(res.status).toBe(200);
+    expect(res.headers.get('DAV')).toBe('1, 2');
+    expect(res.headers.get('Allow')).toContain('PROPFIND');
+    expect(res.headers.get('MS-Author-Via')).toBe('DAV');
+  });
+
   it('strips ?backend= and preserves trailing slash on collections', async () => {
     stubFetchWithProbes({});
     const db = fakeDb({

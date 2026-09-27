@@ -31,9 +31,25 @@ describe('router authenticated API (integration)', () => {
 
     it('answers a CORS preflight without credentials', async () => {
       // A preflight carries no credentials by design, so requiring auth here
-      // would break every cross-origin call to the API.
-      const res = await get('/user/backends', { method: 'OPTIONS', headers: { Origin: 'https://app.example.com' } });
+      // would break every cross-origin call to the API. `Access-Control-Request-
+      // Method` is what distinguishes a preflight from a WebDAV capability
+      // probe, which must instead reach the backend for its `DAV:` header.
+      const res = await get('/user/backends', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://app.example.com', 'Access-Control-Request-Method': 'GET' },
+      });
       expect(res.status).toBe(204);
+    });
+
+    it('reaches the DAV proxy with a WebDAV OPTIONS capability probe', async () => {
+      // A DAV probe carries no `Access-Control-Request-Method`, so the CORS
+      // preflight shortcut must not swallow it — it has to be routed like any
+      // other owner-routed DAV request. An unseeded owner has no backend, so the
+      // proxy's own 404 is the signal that the request got that far; the `204`
+      // the preflight shortcut used to return here is the regression (RFC 4918
+      // §9.1 clients read the missing `DAV:` header as "not a DAV server").
+      const res = await get('/someowner/somevolume', { method: 'OPTIONS' });
+      expect(res.status).toBe(404);
     });
 
     it('does not grant a cross-origin browser request by default', async () => {
