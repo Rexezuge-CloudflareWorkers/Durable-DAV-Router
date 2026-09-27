@@ -29,11 +29,13 @@ export {
   getCachedRoute,
   putCachedRoute,
   invalidateCachedRoute,
+  invalidateCachedRouteIfPresent,
   purgeCachedRoutes,
   parseDestinationVolume,
   routeCacheParts,
   getRouteCacheTtlSeconds,
   isCachedRoute,
+  sameRoute,
   clearRouteCacheL1,
 } from './RouteCacheService';
 export type { CachedRoute } from './RouteCacheService';

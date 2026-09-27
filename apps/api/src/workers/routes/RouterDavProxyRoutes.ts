@@ -7,10 +7,10 @@ import {
   getCachedRoute,
   getProxyTimeoutMs,
   invalidateCachedRoute,
+  invalidateCachedRouteIfPresent,
   joinBackendUrlWithoutSelector,
   parseDestinationVolume,
   probeCandidateBackends,
-  putCachedRoute,
   resolveBackend,
   stripSlashes,
 } from '@durable-dav-router/backend-services/router';
@@ -18,9 +18,10 @@ import type { BackendService } from '@durable-dav-router/backend-services/router
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { SUPPORT_METHODS, applyCors } from '@durable-dav-router/webdav';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
+import { evictStaleRoute, replaceStaleRoute, runInBackground } from './routeCacheReconcile';
+import type { ProxyContext, StaleRoute } from './routeCacheReconcile';
 
 type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
-type ProxyContext = { req: { raw: Request }; env: Env; executionCtx?: unknown };
 
 function explicitBackendSlug(request: Request): string | null {
   try {
@@ -33,29 +34,6 @@ function explicitBackendSlug(request: Request): string | null {
   return h?.trim() ? h.trim() : null;
 }
 
-// Fire-and-forget cache writes: `waitUntil` when the runtime provides it,
-// otherwise a detached promise. L1 updates inside the cache helpers run
-// synchronously on call, so the next request in this isolate already hits.
-function runInBackground(c: ProxyContext, promise: Promise<unknown>, label: string): void {
-  const swallow = (error: unknown): undefined => {
-    // Never let a cache write break the request, but do not lose the signal
-    // either: a failed invalidation leaves a stale route in place for the whole
-    // TTL, and a failed populate is invisible until a slow request is traced.
-    console.warn(`${label} failed: ${error instanceof Error ? error.message : String(error)}`);
-    return undefined;
-  };
-  try {
-    const ctx = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void } | undefined;
-    if (ctx && typeof ctx.waitUntil === 'function') {
-      ctx.waitUntil(promise.catch(swallow));
-      return;
-    }
-  } catch {
-    // fall through to detached promise
-  }
-  void promise.catch(swallow);
-}
-
 function resolveKvCache(scope: { get: (token: never) => KvCache }): KvCache | null {
   try {
     return scope.get(Tokens.KvCache as never);
@@ -66,10 +44,6 @@ function resolveKvCache(scope: { get: (token: never) => KvCache }): KvCache | nu
 
 function serviceOf(scope: { get: (token: never) => BackendService }): BackendService {
   return scope.get(Tokens.BackendService as never);
-}
-
-function cachedBackendId(backend: { id?: unknown; slug: string }): string {
-  return typeof backend.id === 'string' && backend.id.length > 0 ? backend.id : backend.slug;
 }
 
 // Forward statuses that mark a cached resolution stale: the volume moved or was
@@ -99,7 +73,13 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
   // KV lookaside: bare client URLs repeat the same owner/volume for every
   // operation of a sync run. A hit skips both the D1 owner lookup and the N
   // parallel volume-root probes. Trust + self-heal: a stale hit surfaces as a
-  // forward 404/410, which evicts and re-resolves.
+  // forward 404/410, which re-resolves.
+  //
+  // `stale` records an entry this request must reconcile before responding, so
+  // the write decision lands *after* the re-resolution and can see whether the
+  // route actually changed. Deciding up front meant deleting on the way in and
+  // writing the same value on the way out.
+  let stale: StaleRoute | null = null;
   if (!explicit) {
     const cached = await getCachedRoute(kv, owner, volume).catch(() => null);
     if (cached) {
@@ -117,17 +97,29 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
           trackVolumeMutation(c, kv, owner, volume, inner, res.status);
           return res;
         }
+        // A 404/410 from the origin is a *hint*, never proof on its own: it may
+        // be that sub-resource's answer (a client walking a tree 404s constantly
+        // — stale `If` headers, files removed on another device, resources a
+        // partial sync has not recreated yet) rather than the volume's, and the
+        // origin was just revalidated as still owning `/:owner/:volume`. So
+        // nothing is evicted here; the re-resolution below decides, and it does
+        // so by *comparing* — if the volume resolves to the backend already
+        // cached, the entry was right and every write would be churn. That is
+        // what used to happen on each of those 404s: a delete followed by a put
+        // of the identical value, forever.
         await res.body?.cancel().catch(() => undefined);
         if (!REPLAY_SAFE_METHODS.has(method)) {
           // The origin is authoritative for this request; evict so the *next*
           // one re-resolves, but do not replay this request against a second
-          // backend.
+          // backend. There is no re-resolution to compare against, so this is
+          // the one eviction that cannot be turned into a no-op.
           runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
           return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
         }
-        runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
+        stale = { route: cached, proven: false };
       } else {
-        runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
+        // D1 disagrees, so the entry is wrong whatever the origin answers.
+        stale = { route: cached, proven: true };
       }
     }
   }
@@ -148,10 +140,12 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
     backends = [];
   }
   if (backends.length === 0) {
+    evictStaleRoute(c, kv, stale, owner, volume, null);
     return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
   }
   const resolved = resolveBackend(backends as never, explicit);
   if (resolved.kind === 'not-found') {
+    evictStaleRoute(c, kv, stale, owner, volume, null);
     return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
   }
   if (resolved.kind === 'ambiguous') {
@@ -171,19 +165,27 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
       timeoutMs,
     }).catch(() => ({ kind: 'unavailable' }) as const);
     if (probed.kind === 'single') {
-      // Bare by construction (explicit never yields ambiguous) → cacheable.
-      rememberRoute(c, kv, owner, volume, probed.backend);
+      // Bare by construction (explicit never yields ambiguous) → cacheable, and
+      // the one case a probe was actually skipped for: this is the resolution
+      // the lookaside exists to make free.
+      replaceStaleRoute(c, kv, stale, owner, volume, probed.backend);
       return proxyAndTrack(c, kv, probed.backend, owner, volume, inner, trailingSlash, timeoutMs);
     }
     if (probed.kind === 'not-found') {
+      evictStaleRoute(c, kv, stale, owner, volume, null);
       return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
     }
     if (probed.kind === 'unavailable') {
+      // No evidence either way: `502` means the candidate origins are
+      // unreachable, not that the entry is wrong, so a merely-suspect entry
+      // stays. A D1-proven one still has to go.
+      if (stale?.proven) evictStaleRoute(c, kv, stale, owner, volume, null);
       return applyCors(new Response('Backend unreachable', { status: 502 }), c.req.raw);
     }
     // Genuine collision (same volume on several backends). Unauthenticated
     // WebDAV callers get no slug enumeration — they already know their slugs
     // from the authenticated dashboard (`/user/volumes`). Never cached.
+    evictStaleRoute(c, kv, stale, owner, volume, null);
     return applyCors(
       Response.json(
         {
@@ -195,28 +197,17 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
     );
   }
   const backend = resolved.backend;
-  // Lone-backend owners are cacheable, but explicit selections are not: with
-  // a true collision an explicit choice must never become the bare default.
-  if (!explicit) rememberRoute(c, kv, owner, volume, backend);
+  // Deliberately not cached. `resolveBackend` short-circuits a one-candidate
+  // set without probing, so an entry here would hold a value the D1 read in
+  // this same request already produced — a KV write spent to save a D1 read,
+  // against an allowance of 1,000 writes to 100,000 reads per day. The
+  // ambiguous branch above is where the probe the cache exists to avoid
+  // happens, so that is the only resolution worth storing.
+  //
+  // The cost is one wasted KV *read* per L1 miss for lone-backend owners, and
+  // an owner only stops being lone after a probe wrote an entry for it.
+  evictStaleRoute(c, kv, stale, owner, volume, backend);
   return proxyAndTrack(c, kv, backend, owner, volume, inner, trailingSlash, getProxyTimeoutMs(c.env));
-}
-
-function rememberRoute(
-  c: ProxyContext,
-  kv: KvCache | null,
-  owner: string,
-  volume: string,
-  backend: { id?: unknown; slug: string; base_url: string },
-): void {
-  runInBackground(
-    c,
-    putCachedRoute(kv, c.env, owner, volume, {
-      backendId: cachedBackendId(backend),
-      slug: backend.slug,
-      baseUrl: backend.base_url,
-    }),
-    'route cache populate',
-  );
 }
 
 async function proxyAndTrack(
@@ -240,6 +231,9 @@ function trackVolumeMutation(c: ProxyContext, kv: KvCache | null, owner: string,
   if (status < 200 || status >= 300) return;
   const method = c.req.raw.method;
   if (inner === '' && ['MKCOL', 'DELETE', 'MOVE'].includes(method)) {
+    // Unconditional: this request just proved it holds the route, so the entry
+    // is almost certainly present. Unlike the `Destination` case below, a read
+    // first would spend an operation to save one.
     runInBackground(c, invalidateCachedRoute(kv, owner, volume), 'route cache invalidate');
   }
   if (method === 'MOVE' || method === 'COPY') {
@@ -247,7 +241,14 @@ function trackVolumeMutation(c: ProxyContext, kv: KvCache | null, owner: string,
       const routerOrigin = new URL(c.req.raw.url).origin;
       const dest = parseDestinationVolume(routerOrigin, c.req.raw.headers.get('Destination'));
       if (dest && (dest.owner !== owner || dest.volume !== volume)) {
-        runInBackground(c, invalidateCachedRoute(kv, dest.owner, dest.volume), 'route cache invalidate (destination)');
+        // Read-before-delete: a cross-volume sync MOVEs into directories the
+        // router never cached, and a delete spent on a missing key counts
+        // against the same daily allowance as one spent on a present key.
+        runInBackground(
+          c,
+          invalidateCachedRouteIfPresent(kv, dest.owner, dest.volume),
+          'route cache invalidate (destination)',
+        );
       }
     } catch {
       // ignore malformed URL; the proxied backend reports the real error

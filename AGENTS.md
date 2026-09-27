@@ -22,6 +22,7 @@ Violating any of these reintroduces a fixed vulnerability; the test suite assert
 - **5xx bodies are masked.** `ErrorMapper` logs the cause and returns a localized generic message; raw D1 text discloses the schema.
 - **CORS origins are not reflected.** An allow-list is required, plus `Vary: Origin`.
 - **Never replay a mutating request.** A stale cached route revalidates against D1 first; replay is restricted to idempotent methods so a consumed body is not re-sent.
+- **Never evict-then-restore a route cache entry.** The KV free plan allots 1,000 writes + 1,000 deletes per day against 100,000 reads, and a `404` is only a *hint*: a client asking for inner paths that do not exist made every request spend a delete plus a put of the identical value, exhausting the daily budget in ~40 minutes while answering every request correctly. A stale entry is compared against the re-resolution (`sameRoute`) and written only when the value actually changes; a lone backend is never cached at all. Tests assert operation **counts**, not just statuses.
 
 ## Commands
 

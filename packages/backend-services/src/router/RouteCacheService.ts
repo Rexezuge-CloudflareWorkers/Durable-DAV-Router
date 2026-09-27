@@ -8,12 +8,28 @@ import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 // backends costs N parallel volume-root probes per operation. Buckets rarely
 // change, so resolved owners are cached long-lived (24h default,
 // `ROUTE_CACHE_TTL_SECONDS`). D1 stays authoritative: misses re-probe,
-// mutations invalidate, and stale hits self-heal on forward 404/502.
+// mutations invalidate, and stale hits self-heal on forward 404/410.
 //
 // Keying is credential-free (`owner.toLowerCase()` + verbatim volume) —
-// existence is a backend property, safe to share across requesters. Only
-// `single` resolutions are stored; `ambiguous`/`unavailable`/misses never
-// populate so collisions and brand-new volumes keep probing.
+// existence is a backend property, safe to share across requesters. Only a
+// resolution that actually skipped a probe is stored: `ambiguous`/`unavailable`
+// /misses never populate, so collisions and brand-new volumes keep probing.
+//
+// Writes are the scarce resource here, and the Workers KV free plan allots
+// 1,000 writes + 1,000 deletes per day against 100,000 reads. Every write
+// policy below exists to keep that asymmetry from being spent on churn:
+//
+//   - A lone backend is never cached. `resolveBackend` short-circuits a
+//     one-candidate set without probing, so the entry would hold a value the
+//     D1 read in the same request already produced — a write spent to save a
+//     read, 100× the wrong way round.
+//   - A stale entry is replaced with a single `put`, never `delete`-then-`put`.
+//     `put` is an upsert, so overwriting a stale value needs no delete first.
+//   - A 404/410 from the origin never evicts on its own. It is a hint — it may
+//     be some sub-resource's answer rather than the volume's — so the entry is
+//     only rewritten when the re-resolution actually disagrees with it.
+//   - The `Destination` purge of a MOVE/COPY reads before it deletes, because
+//     most cross-volume syncs name a destination the router never cached.
 
 interface CachedRoute {
   backendId: string;
@@ -125,6 +141,34 @@ async function invalidateCachedRoute(kv: KvCache | null | undefined, owner: stri
   }
 }
 
+// Evict only when something is actually stored there.
+//
+// Used for the `Destination` half of a MOVE/COPY, which fires on every such
+// request whether or not the destination volume was ever cached — a cross-volume
+// sync names mostly volumes the router has no entry for, and an unconditional
+// delete spends a scarce delete on a missing key. A read settles it at a
+// hundredth of the free-plan cost, and the read-then-delete race is harmless
+// for a cache: a concurrent populate is either re-read on the next request or
+// overwritten by the 24h TTL.
+async function invalidateCachedRouteIfPresent(kv: KvCache | null | undefined, owner: string, volume: string): Promise<void> {
+  delL1(owner, volume);
+  if (!kv) return;
+  try {
+    if ((await kv.getJson('davRoute', routeCacheParts(owner, volume))) === null) return;
+    await kv.del('davRoute', routeCacheParts(owner, volume));
+  } catch {
+    // Fail-soft; TTL + self-heal bound the stale window.
+  }
+}
+
+// Whether a re-resolution would store a different value than what is cached.
+//
+// The write decision for a stale entry hinges on this: if the answer is yes the
+// entry already holds the right answer and every write is pure churn.
+function sameRoute(a: CachedRoute, b: CachedRoute): boolean {
+  return a.backendId === b.backendId && a.baseUrl === b.baseUrl;
+}
+
 async function purgeCachedRoutes(kv: KvCache | null | undefined): Promise<number> {
   clearL1();
   if (!kv) return 0;
@@ -189,11 +233,13 @@ export {
   getCachedRoute,
   putCachedRoute,
   invalidateCachedRoute,
+  invalidateCachedRouteIfPresent,
   purgeCachedRoutes,
   parseDestinationVolume,
   routeCacheParts,
   getRouteCacheTtlSeconds,
   isCachedRoute,
+  sameRoute,
   clearL1 as clearRouteCacheL1,
 };
 export type { CachedRoute };

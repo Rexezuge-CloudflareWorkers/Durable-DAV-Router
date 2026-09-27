@@ -4,13 +4,47 @@ import {
   getCachedRoute,
   getRouteCacheTtlSeconds,
   invalidateCachedRoute,
+  invalidateCachedRouteIfPresent,
   isCachedRoute,
   parseDestinationVolume,
   putCachedRoute,
   purgeCachedRoutes,
   routeCacheParts,
+  sameRoute,
 } from '@durable-dav-router/backend-services/router';
 import { buildKvKey, clampTtl, KV_DOMAINS, KvCache } from '@durable-dav-router/backend-runtime/kv';
+
+/**
+`KVNamespace` double that counts operations, so a test can assert cost.
+*/
+function countingKv(initial: Record<string, string> = {}) {
+  const store = new Map(Object.entries(initial));
+  const ops = { get: 0, put: 0, delete: 0 };
+  return {
+    store,
+    ops,
+    get(key: string): Promise<string | null> {
+      ops.get += 1;
+      return Promise.resolve(store.get(key) ?? null);
+    },
+    put(key: string, value: string): Promise<void> {
+      ops.put += 1;
+      store.set(key, value);
+      return Promise.resolve();
+    },
+    delete(key: string): Promise<boolean> {
+      ops.delete += 1;
+      store.delete(key);
+      return Promise.resolve(true);
+    },
+    list(options: { prefix: string }): Promise<{ keys: Array<{ name: string }>; list_complete: boolean }> {
+      return Promise.resolve({
+        keys: [...store.keys()].filter((name) => name.startsWith(options.prefix)).map((name) => ({ name })),
+        list_complete: true,
+      });
+    },
+  };
+}
 
 function makeFakeKv(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial));
@@ -99,6 +133,68 @@ describe('RouteCacheService', () => {
     await expect(getCachedRoute(kv, 'owner', 'two')).resolves.toEqual(ROUTE);
     await expect(purgeCachedRoutes(kv)).resolves.toBe(1);
     await expect(getCachedRoute(kv, 'owner', 'two')).resolves.toBeNull();
+  });
+});
+
+describe('sameRoute', () => {
+  // The whole write policy for a stale entry rests on this comparison, so it
+  // has to track the route's meaning and nothing else.
+  it('treats the same backend and origin as unchanged', () => {
+    expect(sameRoute(ROUTE, { ...ROUTE })).toBe(true);
+  });
+
+  it('ignores the slug, which is not part of the route', () => {
+    // A rename leaves the resolution identical, so it must not cost a write.
+    expect(sameRoute(ROUTE, { ...ROUTE, slug: 'renamed' })).toBe(true);
+  });
+
+  it('separates a different backend and a different origin', () => {
+    expect(sameRoute(ROUTE, { ...ROUTE, backendId: '2' })).toBe(false);
+    expect(sameRoute(ROUTE, { ...ROUTE, baseUrl: 'https://b.example.com' })).toBe(false);
+  });
+});
+
+describe('invalidateCachedRouteIfPresent', () => {
+  beforeEach(() => {
+    clearRouteCacheL1();
+  });
+
+  it('spends no delete on a key it never stored', async () => {
+    // A cross-volume sync MOVEs into directories the router never cached, and
+    // the free plan allots 1,000 deletes against 100,000 reads — a read settles
+    // "is it there?" at a hundredth of the price.
+    const raw = countingKv();
+    const kv = new KvCache(raw as never);
+    await invalidateCachedRouteIfPresent(kv, 'owner', 'nevercached');
+    expect(raw.ops.delete).toBe(0);
+    expect(raw.ops.get).toBe(1);
+  });
+
+  it('deletes a key that is there', async () => {
+    const raw = countingKv();
+    const kv = new KvCache(raw as never);
+    await putCachedRoute(kv, {}, 'owner', 'present', ROUTE);
+    clearRouteCacheL1();
+    const before = raw.ops.delete;
+    await invalidateCachedRouteIfPresent(kv, 'owner', 'present');
+    expect(raw.ops.delete).toBe(before + 1);
+    await expect(getCachedRoute(kv, 'owner', 'present')).resolves.toBeNull();
+  });
+
+  it('drops the L1 entry too, since a fresh isolate cannot', async () => {
+    const raw = countingKv();
+    const kv = new KvCache(raw as never);
+    await putCachedRoute(kv, {}, 'owner', 'l1only', ROUTE);
+    await invalidateCachedRouteIfPresent(kv, 'owner', 'l1only');
+    await expect(getCachedRoute(kv, 'owner', 'l1only')).resolves.toBeNull();
+  });
+
+  it('is fail-soft with no binding, and spends no delete when the read throws', async () => {
+    const raw = countingKv();
+    raw.get = () => Promise.reject(new Error('KV get failed'));
+    await expect(invalidateCachedRouteIfPresent(new KvCache(raw as never), 'owner', 'vol')).resolves.toBeUndefined();
+    expect(raw.ops.delete).toBe(0);
+    await expect(invalidateCachedRouteIfPresent(null, 'owner', 'vol')).resolves.toBeUndefined();
   });
 });
 
