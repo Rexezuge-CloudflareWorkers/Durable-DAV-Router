@@ -12,7 +12,7 @@ export function ContextBar({ crumb, actions, bare = false }: { crumb: React.Reac
   const { t } = useTranslation();
   const row = (
     <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
-      <Link to="/" aria-label={t('header.home', 'Durable-DAV Home')} className="shrink-0">
+      <Link to="/" aria-label={t('header.home', 'Durable-DAV-Router Home')} className="shrink-0">
         <Logo />
       </Link>
       <span aria-hidden="true" className="text-[var(--color-text-muted)] font-normal">
