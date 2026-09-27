@@ -168,3 +168,65 @@ describe('web dav path helpers', () => {
     expect(parentDavPath('')).toBeNull();
   });
 });
+
+/**
+ * The `path` a listing yields is fed straight back into the next request URL, so
+ * these cases pair "parse a real body" with "use the parsed `path`". A
+ * parser/server disagreement is invisible when either half is checked alone —
+ * that is exactly how the unprefixed-fixture bug above shipped green while the
+ * bucket browser could not open a single file.
+ */
+describe('web PROPFIND parser against a root-anchored backend', () => {
+  const ROOT_XML = `<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:">
+  <response><href>/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>/photos/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>/notes.txt</href><propstat><prop><resourcetype/><getcontentlength>42</getcontentlength></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+</multistatus>`;
+
+  it('drops the self response and yields volume-relative paths', () => {
+    // The volume root's own href is `/` here rather than `/test/bucket/`. The
+    // parser must reduce both to the same volume-relative empty path and drop
+    // it, or the root renders as a phantom row inside itself.
+    const entries = parseMultistatus(ROOT_XML, '', BASE);
+    expect(entries.map((e) => [e.name, e.path, e.isCollection])).toEqual([
+      ['photos', 'photos', true],
+      ['notes.txt', 'notes.txt', false],
+    ]);
+    expect(entries.map((e) => e.path)).not.toContain('');
+  });
+
+  it('produces paths the browser plane can request', () => {
+    // The parsed `path` must be a valid inner path for the browser plane, which
+    // is `/user/volumes/<owner>/<volume>/files[/<path>]` — the same base the
+    // request went to, whatever shape the hrefs arrived in.
+    const entries = parseMultistatus(ROOT_XML, '', BASE);
+    const file = entries.find((e) => !e.isCollection)!;
+    const inner = file.path;
+    expect(inner).toBe('notes.txt');
+    // No base residue: a leading `test/bucket` here is the 404 the sibling fix
+    // was written to remove, and it would return in root mode if the prefix
+    // strip were ever made unconditional.
+    expect(inner.startsWith('test/')).toBe(false);
+    expect(inner.split('/').some((s) => ['', '.', '..'].includes(s))).toBe(false);
+  });
+
+  it('still recognises the self response when listing a subdirectory', () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:">
+  <response><href>/photos/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+  <response><href>/photos/a.txt</href><propstat><prop><resourcetype/></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+</multistatus>`;
+    const entries = parseMultistatus(xml, 'photos', BASE);
+    expect(entries.map((e) => e.path)).toEqual(['photos/a.txt']);
+    // Strictly below the folder being listed, never a sibling or an ancestor.
+    expect(entries[0]?.path.startsWith('photos/')).toBe(true);
+  });
+
+  it('distinguishes a root-anchored child from the listed folder itself', () => {
+    // Both hrefs reduce to a path that must not be confused: `/photos/` is the
+    // self response when listing `photos`, and a child when listing the root.
+    expect(parseMultistatus(ROOT_XML, 'photos', BASE).map((e) => e.path)).not.toContain('photos');
+    expect(parseMultistatus(ROOT_XML, '', BASE).map((e) => e.path)).toContain('photos');
+  });
+});

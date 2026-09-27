@@ -138,6 +138,29 @@ async function purgeCachedRoutes(kv: KvCache | null | undefined): Promise<number
 // Extract the affected volume from a WebDAV `Destination` header when it
 // targets this router origin (`/:owner/:volume[/...]`). Cross-origin
 // destinations pass through untouched → null.
+//
+// A backend may anchor its `DAV:href` values at the server root instead of
+// carrying `/owner/volume` (its per-bucket `href_prefix_mode` setting, chosen
+// for clients that 404 on the conforming shape). A root-anchored
+// `Destination` — `/docs/a.txt` — carries no owner/volume at all, so this reads
+// the first two segments as such and invents `{owner: 'docs', volume: 'a.txt'}`.
+// `trackVolumeMutation` then purges a route-cache key for a volume that cannot
+// exist. That is accepted rather than fixed, for three reasons:
+//
+//   1. The information is genuinely absent. Under that mode `/alice/photos/x` is
+//      either the root-relative path `alice/photos/x` or the base-mode
+//      destination for `alice/photos`, and no router-side rule separates them.
+//   2. Nothing correct is missed. Cross-volume moves are not expressible in that
+//      mode — the backend re-attaches its own base, so `/shared/x` lands inside
+//      the *current* volume — and same-volume moves, the common case, need no
+//      destination-side purge at all.
+//   3. The blast radius is a cache entry. This value only ever keys a route-cache
+//      purge, so the cost is a re-probe, never a data or authorization decision.
+//
+// Teaching the router the mode in order to purge precisely would mean caching a
+// per-volume setting fetched from a backend purely to pick a KV key — adding
+// backend-derived state this component does not otherwise hold, and spending the
+// passthrough simplicity that is the whole design, on a cache-timing detail.
 function parseDestinationVolume(routerOrigin: string, destination: string | null): { owner: string; volume: string } | null {
   if (!destination) return null;
   try {
