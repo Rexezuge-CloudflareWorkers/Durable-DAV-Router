@@ -710,3 +710,159 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     expect(forwards).toEqual(['PUT https://b.example.com/owner/mvvol']);
   });
 });
+
+/**
+ * Backend `href_prefix_mode` = `root` passthrough.
+ *
+ * A backend may anchor its `DAV:href` values at the server root rather than
+ * carrying `/owner/volume` — its per-bucket setting, for clients that 404 on
+ * the RFC-conforming shape. The router's job here is to add *nothing*: forward
+ * the body, and swap only the origin on a `Destination`.
+ *
+ * These cases exist because the two halves are separately plausible and jointly
+ * load-bearing. Forwarding the body unparsed is what makes a root-anchored href
+ * reach the client intact, and swapping only the origin is what lets the client
+ * send that href back and have the backend resolve it. A change to either would
+ * leave a client that lists a directory and then cannot move or copy in it.
+ */
+describe('RouterDavProxyRoutes root-anchored href passthrough', () => {
+  beforeEach(() => {
+    clearRouteCacheL1();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearRouteCacheL1();
+  });
+
+  const SOLO: BackendSeed[] = [
+    { id: '1', owner_email: 'o@example.com', slug: 'solo', base_url: 'https://backend.example.com', backend_username: 'owner' },
+  ];
+
+  it('forwards a root-anchored 207 body unparsed', async () => {
+    // The response body must arrive byte-identical: the router has no href
+    // builder, so any rewriting here would have to be a string transform over
+    // XML it deliberately does not parse.
+    const body = `<?xml version="1.0" encoding="utf-8"?>\n<multistatus xmlns="DAV:">\n<response>\n<href>/</href>\n</response>\n<response>\n<href>/docs/</href>\n</response>\n<response>\n<href>/docs/a.txt</href>\n</response>\n</multistatus>\n`;
+    vi.stubGlobal('fetch', async () => new Response(body, { status: 207, headers: { 'Content-Type': 'application/xml' } }));
+    const db = fakeDb({ backends: SOLO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const res = await routes.get('ON /:owner/:volume/*')!(
+      fakeContext({
+        url: 'https://router.example.com/owner/vol/docs',
+        env: { DB: db },
+        params: { owner: 'owner', volume: 'vol' },
+        headers: { Authorization: 'Basic eA==', Depth: '1' },
+      }) as never,
+    );
+    expect(res.status).toBe(207);
+    expect(await res.text()).toBe(body);
+  });
+
+  it('origin-swaps a root-anchored Destination and preserves its path verbatim', async () => {
+    // The client echoes back an href it was given. Because the rewrite swaps
+    // only the origin and keeps `pathname`, `/docs/a.txt` reaches the backend as
+    // `https://backend.example.com/docs/a.txt` — which is what lets the backend
+    // resolve it in root mode. A rewrite that re-attached the volume base here
+    // would double it.
+    const calls = stubFetchWithProbes({}, 201);
+    const db = fakeDb({ backends: SOLO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const res = await routes.get('ON /:owner/:volume/*')!(
+      fakeContext({
+        method: 'MOVE',
+        url: 'https://router.example.com/owner/vol/docs/a.txt',
+        env: { DB: db },
+        params: { owner: 'owner', volume: 'vol' },
+        headers: { Authorization: 'Basic eA==', Destination: 'https://router.example.com/docs/b.txt', Overwrite: 'F' },
+      }) as never,
+    );
+    expect(res.status).toBe(201);
+    const forward = calls.at(-1)!;
+    expect(forward.url).toBe('https://backend.example.com/owner/vol/docs/a.txt');
+    expect((forward.init.headers as Headers).get('Destination')).toBe('https://backend.example.com/docs/b.txt');
+  });
+
+  it('keeps the router selector out of a rewritten Destination', async () => {
+    // The backend has no `?backend=` concept, and the selector is stripped
+    // surgically rather than via a URLSearchParams round trip so signature-bearing
+    // queries survive — a root-anchored destination must not reintroduce one.
+    const calls = stubFetchWithProbes({}, 201);
+    const db = fakeDb({ backends: SOLO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    await routes.get('ON /:owner/:volume/*')!(
+      fakeContext({
+        method: 'COPY',
+        url: 'https://router.example.com/owner/vol/a.txt',
+        env: { DB: db },
+        params: { owner: 'owner', volume: 'vol' },
+        headers: { Authorization: 'Basic eA==', Destination: 'https://router.example.com/b.txt?backend=solo&sig=abc%20d' },
+      }) as never,
+    );
+    const destination = (calls.at(-1)!.init.headers as Headers).get('Destination');
+    expect(destination).toBe('https://backend.example.com/b.txt?sig=abc%20d');
+  });
+
+  it('leaves a cross-origin Destination for the backend to refuse', async () => {
+    // The router is not the authority on WebDAV destination validity; rewriting
+    // only same-router origins keeps that decision where the bucket's own rules
+    // live.
+    const calls = stubFetchWithProbes({}, 502);
+    const db = fakeDb({ backends: SOLO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    await routes.get('ON /:owner/:volume/*')!(
+      fakeContext({
+        method: 'MOVE',
+        url: 'https://router.example.com/owner/vol/a.txt',
+        env: { DB: db },
+        params: { owner: 'owner', volume: 'vol' },
+        headers: { Authorization: 'Basic eA==', Destination: 'https://evil.example.net/steal' },
+      }) as never,
+    );
+    expect((calls.at(-1)!.init.headers as Headers).get('Destination')).toBe('https://evil.example.net/steal');
+  });
+
+  it('leaves the routed volume cached after a root-anchored same-volume move', async () => {
+    // Documented, deliberate behaviour rather than a bug: a root-anchored
+    // `Destination` carries no owner/volume, so `parseDestinationVolume` invents
+    // one from the first two segments (`docs`/`b.txt`) and `trackVolumeMutation`
+    // purges *that* fabricated key. The request's own route entry must survive,
+    // or every root-mode MOVE would cost a re-probe of the whole candidate set.
+    //
+    // Two backends sharing the owner, so routing is genuinely ambiguous and the
+    // cache is genuinely consulted — with one backend there is no probe and the
+    // assertion below would hold vacuously.
+    const calls = stubFetchWithProbes({ 'https://a.example.com': 404, 'https://b.example.com': 207 }, 201);
+    const kv = makeFakeKv();
+    const db = fakeDb({ backends: BACKENDS_TWO });
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const handler = routes.get('ON /:owner/:volume/*')!;
+    const move = () =>
+      handler(
+        fakeContext({
+          method: 'MOVE',
+          url: 'https://router.example.com/owner/destvol/a.txt',
+          env: { DB: db, CACHE: kv },
+          params: { owner: 'owner', volume: 'destvol' },
+          headers: { Authorization: 'Basic eA==', Destination: 'https://router.example.com/docs/b.txt' },
+        }) as never,
+      );
+    // First move: ambiguous owner, so both backends are probed and the route is
+    // cached against `owner`/`destvol`.
+    const first = await move();
+    expect(first.status).toBe(201);
+    const afterFirst = probeCount(calls);
+    expect(afterFirst).toBe(2);
+    expect([...kv.store.keys()].some((k) => k.includes('destvol'))).toBe(true);
+
+    // Second identical move: a cache hit, so the fabricated `docs`/`b.txt` purge
+    // demonstrably did not evict the real entry.
+    const second = await move();
+    expect(second.status).toBe(201);
+    expect(probeCount(calls)).toBe(afterFirst);
+  });
+});

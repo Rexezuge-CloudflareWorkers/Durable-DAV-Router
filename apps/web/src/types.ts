@@ -13,10 +13,24 @@ export interface Volume {
   fullName: string;
   description?: string | null;
   isPrivate: boolean;
+  /**
+   * How the owning backend anchors this bucket's `DAV:href` values.
+   *
+   * `base` is RFC 4918 §8.3 — hrefs carry `/owner/volume` — and is the
+   * backend's default. `root` anchors them at `/` for clients that 404
+   * otherwise; the backend owns that choice, and the router neither interprets
+   * nor enforces it (it forwards 207 bodies verbatim).
+   *
+   * Optional because the router fronts arbitrary backends: one predating the
+   * setting omits it, which reads as `base`.
+   */
+  hrefPrefixMode?: DavHrefPrefixMode;
   href: string;
   backend?: string;
   backendBaseUrl?: string;
 }
+
+export type DavHrefPrefixMode = 'base' | 'root';
 
 export interface AggregatedVolume extends Volume {
   backend: string;
@@ -42,6 +56,13 @@ export interface BackendHealth {
 
 export interface VolumeDetail extends Volume {
   description: string | null;
+  /**
+   * Required here even though it is optional on `Volume`: a detail read always
+   * goes through `toVolumeDetail`, which resolves a backend that omits the field
+   * to the conforming `base`. Components can then render the control without
+   * re-deriving that default.
+   */
+  hrefPrefixMode: DavHrefPrefixMode;
 }
 
 export interface BucketCredential {
