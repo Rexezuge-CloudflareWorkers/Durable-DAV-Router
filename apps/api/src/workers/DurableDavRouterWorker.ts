@@ -55,12 +55,23 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
 
     app.use('*', scopeMiddleware);
 
-    // CORS preflight must be answered before authentication. `OPTIONS` is a
-    // supported WebDAV method, so it also reaches the proxy route registered
-    // below; without this, a preflight for any `/user/*` request was answered
-    // with 401 and browsers never issued the real call. Preflights carry no
-    // credentials by design, so requiring auth here can only break clients.
-    app.options('*', (c) => applyCors(new Response(null, { status: 204 }), c.req.raw));
+    // A CORS preflight must be answered before authentication: preflights carry
+    // no credentials by design, so requiring auth here can only break clients,
+    // and a preflight for any `/user/*` request used to be answered with 401 so
+    // browsers never issued the real call.
+    //
+    // It must answer *only* preflights. A Fetch-spec preflight carries
+    // `Access-Control-Request-Method`; a WebDAV client sends at most `Origin`.
+    // This handler is terminal, so answering every `OPTIONS` also swallowed the
+    // DAV capability probe — `OPTIONS` is one of the 12 `SUPPORT_METHODS` — and
+    // replied `204` with no `DAV:` header. RFC 4918 §9.1 requires that header,
+    // and clients that probe capabilities on connect aborted outright ("No
+    // Content"). Anything without `Access-Control-Request-Method` falls through
+    // to the proxy below, which forwards the backend's own `DAV:`/`Allow:`
+    // advertisement (both are in `PASSTHROUGH_RESPONSE_HEADERS`).
+    app.options('*', async (c, next) => {
+      return c.req.header('Access-Control-Request-Method') ? applyCors(new Response(null, { status: 204 }), c.req.raw) : next();
+    });
 
     // Before `/user/*` auth so the limiter can key on the authenticated email
     // once the identity is known; the identity falls back to the trusted

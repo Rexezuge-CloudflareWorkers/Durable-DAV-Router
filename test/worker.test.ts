@@ -200,14 +200,36 @@ describe('rate limiting is wired into the app', () => {
 describe('CORS preflight', () => {
   it('answers OPTIONS on /user/* before authentication', async () => {
     // A preflight carries no credentials by design; requiring auth broke every
-    // cross-origin call to the authenticated API.
-    const res = await call(worker(), '/user/backends', { method: 'OPTIONS', headers: { Origin: 'https://app.example.com' } });
+    // cross-origin call to the authenticated API. `Access-Control-Request-Method`
+    // is what makes this a preflight rather than a DAV capability probe, and a
+    // browser always sends it — which is why it is safe to narrow the shortcut
+    // to requests that carry it.
+    const res = await call(worker(), '/user/backends', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://app.example.com', 'Access-Control-Request-Method': 'GET' },
+    });
     expect(res.status).toBe(204);
   });
 
-  it('answers OPTIONS on a DAV path', async () => {
+  it('answers a DAV OPTIONS that is not a preflight with the proxy 404, not 204', async () => {
+    // A DAV capability probe carries no `Access-Control-Request-Method`, so it
+    // must reach the DAV proxy rather than the preflight shortcut. `DB: {}` has
+    // no backend for this owner, which is the same 404 a PROPFIND gets. A bare
+    // 204 here is the regression: RFC 4918 §9.1 clients read the missing `DAV:`
+    // header as "not a DAV server" and abort with "No Content".
     const res = await call(worker(), '/owner/volume', { method: 'OPTIONS' });
+    expect(res.status).toBe(404);
+  });
+
+  it('answers a preflight on a DAV path without proxying it', async () => {
+    // A browser preflighting a cross-origin DAV call is still ours: it must not
+    // be forwarded to a backend, and must not be answered 401.
+    const res = await call(worker(), '/owner/volume', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://app.example.com', 'Access-Control-Request-Method': 'PROPFIND' },
+    });
     expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Methods')).toContain('PROPFIND');
   });
 
   it('does not grant a non-allow-listed origin', async () => {
