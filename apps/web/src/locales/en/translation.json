@@ -1,9 +1,11 @@
 {
   "header": {
+    "brandAccent": "Durable-DAV-",
+    "brandRest": "Router",
     "dashboard": "Dashboard",
     "new": "New",
     "settings": "Settings",
-    "home": "Durable-DAV Home"
+    "home": "Durable-DAV-Router Home"
   },
   "common": {
     "cancel": "Cancel",
