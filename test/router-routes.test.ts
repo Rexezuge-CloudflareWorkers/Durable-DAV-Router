@@ -220,6 +220,63 @@ describe('backend + aggregated volume routes', () => {
     expect(deleted.status).toBe(200);
   });
 
+  it('leaves the route cache alone when a backend is edited or removed', async () => {
+    // A `PATCH`/`DELETE` used to purge every `davRoute` key in the namespace —
+    // every user's, not this backend's — costing one delete per cached route on
+    // a single settings-page save, against 1,000 deletes per day on the free
+    // plan. The `davRoute` lookaside revalidates each entry against D1 before
+    // forwarding, so an edited `base_url` or a removed backend is caught on the
+    // next request instead.
+    const { db } = fakeDb();
+    const { app, routes } = stubApp();
+    registerBackendRoutes(app as never);
+    const store = new Map([
+      ['davRoute:v1:alice:photos', '{"backendId":"1"}'],
+      ['davRoute:v1:bob:archive', '{"backendId":"2"}'],
+    ]);
+    const kv = {
+      store,
+      get: (key: string) => Promise.resolve(store.get(key) ?? null),
+      put: (key: string, value: string) => {
+        store.set(key, value);
+        return Promise.resolve();
+      },
+      delete: (key: string) => {
+        store.delete(key);
+        return Promise.resolve(true);
+      },
+      list: (options: { prefix: string }) =>
+        Promise.resolve({
+          keys: [...store.keys()].filter((n) => n.startsWith(options.prefix)).map((name) => ({ name })),
+          list_complete: true,
+        }),
+    };
+    const env = { ...ENV_BASE, DB: db, CACHE: kv };
+    await routes.get('POST /user/backends')!(
+      fakeContext({
+        method: 'POST',
+        url: 'https://router.example.com/user/backends',
+        env,
+        body: { slug: 'office', baseUrl: 'https://backend.example.com' },
+      }),
+    );
+    const patched = await routes.get('PATCH /user/backends/:slug')!(
+      fakeContext({
+        method: 'PATCH',
+        url: 'https://router.example.com/user/backends/office',
+        env,
+        params: { slug: 'office' },
+        body: { baseUrl: 'https://moved.example.com' },
+      }),
+    );
+    expect(patched.status).toBe(200);
+    const deleted = await routes.get('DELETE /user/backends/:slug')!(
+      fakeContext({ method: 'DELETE', url: 'https://router.example.com/user/backends/office', env, params: { slug: 'office' } }),
+    );
+    expect(deleted.status).toBe(200);
+    expect([...store.keys()].sort()).toEqual(['davRoute:v1:alice:photos', 'davRoute:v1:bob:archive']);
+  });
+
   it('fans out aggregated volumes', async () => {
     const { db } = fakeDb();
     const { app, routes } = stubApp();

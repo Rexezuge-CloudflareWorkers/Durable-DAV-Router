@@ -121,7 +121,7 @@ Fetch stub where volume-root `PROPFIND Depth: 0` probes get per-origin statuses.
 function stubFetchWithProbes(probeStatusByOrigin: Record<string, number>, forwardStatus = 207) {
   const calls: CapturedFetch[] = [];
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+    const url = requestUrl(input);
     calls.push({ url, init: init ?? {} });
     const headers = new Headers((init?.headers ?? {}) as HeadersInit);
     const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0' && !url.includes('/folder');
@@ -430,9 +430,268 @@ function makeFakeKv(initial: Record<string, string> = {}) {
   };
 }
 
+/**
+ * `fetch` accepts a string, a `URL`, or a `Request`; every stub here wants the URL.
+ */
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
 function probeCount(calls: CapturedFetch[]): number {
   return calls.filter((c) => new Headers(c.init.headers as HeadersInit).get('Depth') === '0').length;
 }
+
+/**
+ * KV double that counts operations.
+ *
+ * The failure these tests exist for was a daily write/delete quota exhausted in
+ * 40 minutes, and no status-code assertion can see it: every request in the
+ * loop answered correctly. Asserting the *cost* of a request is the only way to
+ * pin it.
+ */
+function countingKv(initial: Record<string, string> = {}) {
+  const store = new Map(Object.entries(initial));
+  const ops = { get: 0, put: 0, delete: 0, list: 0 };
+  return {
+    store,
+    ops,
+    get(key: string): Promise<string | null> {
+      ops.get += 1;
+      return Promise.resolve(store.get(key) ?? null);
+    },
+    put(key: string, value: string): Promise<void> {
+      ops.put += 1;
+      store.set(key, value);
+      return Promise.resolve();
+    },
+    delete(key: string): Promise<boolean> {
+      ops.delete += 1;
+      store.delete(key);
+      return Promise.resolve(true);
+    },
+    list(options: { prefix: string }): Promise<{ keys: Array<{ name: string }>; list_complete: boolean }> {
+      ops.list += 1;
+      return Promise.resolve({
+        keys: [...store.keys()].filter((name) => name.startsWith(options.prefix)).map((name) => ({ name })),
+        list_complete: true,
+      });
+    },
+  };
+}
+
+/**
+ * Fetch stub for write-budget tests: volume-root `Depth: 0` probes answer per
+ * origin, and every forward 404s — the state a client in a resync loop, or one
+ * walking a tree of already-deleted files, keeps the router in.
+ */
+function stubProbesAndFailingForwards(probeStatusByOrigin: Record<string, number>) {
+  const calls: CapturedFetch[] = [];
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(input);
+    calls.push({ url, init: init ?? {} });
+    const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+    if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
+      const status = probeStatusByOrigin[new URL(url).origin] ?? 404;
+      return new Response(status === 207 ? '<ok/>' : 'probe', { status });
+    }
+    return new Response('gone', { status: 404 });
+  });
+  return calls;
+}
+
+// Every request answers `207 Multi-Status`, so only the route cache varies.
+function stubEverythingAnswers207(): void {
+  vi.stubGlobal('fetch', async () => new Response('<ok/>', { status: 207, headers: { 'Content-Type': 'application/xml' } }));
+}
+
+// Probes are indeterminate (`502`) while plain forwards answer `404`.
+function stubProbesUnavailableForwards404(): void {
+  vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+    const isProbe = (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0';
+    return isProbe ? new Response('down', { status: 502 }) : new Response('gone', { status: 404 });
+  });
+}
+
+/**
+ * Repeat a request as a *different isolate* would see it.
+ *
+ * The per-isolate L1 legitimately absorbs a warm route, so without dropping it
+ * a repeated request never reaches KV and the budget it spends is invisible.
+ * `clearRouteCacheL1` between iterations forces the KV read a fresh isolate pays,
+ * which is the state a real sync spreads itself across.
+ */
+async function repeatAcrossIsolates(count: number, run: () => Promise<Response>): Promise<number[]> {
+  const statuses: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    clearRouteCacheL1();
+    const res = await run();
+    statuses.push(res.status);
+  }
+  return statuses;
+}
+
+describe('RouterDavProxyRoutes KV write budget', () => {
+  beforeEach(() => {
+    clearRouteCacheL1();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearRouteCacheL1();
+  });
+
+  const SOLO: BackendSeed[] = [
+    { id: '1', owner_email: 'o@example.com', slug: 'solo', base_url: 'https://backend.example.com', backend_username: 'owner' },
+  ];
+
+  function proxyFor(kv: unknown, db: unknown, url: string, method = 'GET') {
+    const { app, routes } = stubApp();
+    registerRouterDavProxyRoutes(app as never);
+    const handler = routes.get('ON /:owner/:volume/*')!;
+    const { pathname } = new URL(url);
+    const [, owner, volume] = pathname.split('/', 3);
+    return () =>
+      handler(
+        fakeContext({
+          method,
+          url,
+          env: { DB: db, CACHE: kv },
+          params: { owner, volume },
+          headers: { Authorization: 'Basic eA==' },
+        }) as never,
+      );
+  }
+
+  it('spends one write total on a client that 404s on every inner path', async () => {
+    // The reported failure. A bare client asking for files that are not there
+    // used to spend a delete plus a put of the identical value on *every*
+    // request, because a 404 evicted the route and the re-resolution
+    // immediately re-stored it. The response was correct throughout; only the
+    // quota moved, 1,000 writes and 1,000 deletes gone in well under an hour.
+    stubProbesAndFailingForwards({ 'https://a.example.com': 404, 'https://b.example.com': 207 });
+    const kv = countingKv();
+    const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/gonevol/missing.txt');
+    const statuses = await repeatAcrossIsolates(6, request);
+    expect(statuses).toEqual([404, 404, 404, 404, 404, 404]);
+    // The first request resolves and caches; the five 404s after it cost nothing.
+    expect(kv.ops.put).toBe(1);
+    expect(kv.ops.delete).toBe(0);
+  });
+
+  it('spends nothing when a root 404 re-resolves to the backend already cached', async () => {
+    // The volume is simply gone from that origin. The entry already names the
+    // right backend, so there is no value to write — a delete here buys a
+    // re-probe on the next request and nothing else.
+    stubProbesAndFailingForwards({ 'https://a.example.com': 404, 'https://b.example.com': 207 });
+    const kv = countingKv({ 'davRoute:v1:owner:root404': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
+    const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/root404', 'PROPFIND');
+    const statuses = await repeatAcrossIsolates(4, request);
+    expect(statuses).toEqual([404, 404, 404, 404]);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.ops.delete).toBe(0);
+  });
+
+  it('replaces a stale entry with one put and no delete when the volume moved', async () => {
+    // `put` is an upsert, so the stale value never needed deleting first. The
+    // pair of operations is the whole point: one write, and it is a real change.
+    stubProbesAndFailingForwards({ 'https://a.example.com': 207, 'https://b.example.com': 404 });
+    const kv = countingKv({ 'davRoute:v1:owner:moved': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
+    const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/moved', 'PROPFIND');
+    await repeatAcrossIsolates(2, request);
+    expect(kv.ops.put).toBe(1);
+    expect(kv.ops.delete).toBe(0);
+    expect(JSON.parse(kv.store.get('davRoute:v1:owner:moved') ?? '{}')).toMatchObject({
+      backendId: '1',
+      baseUrl: 'https://a.example.com',
+    });
+  });
+
+  it('evicts a stale entry exactly once when no backend claims the volume', async () => {
+    // Afterwards there is no entry left to evict, so a client that keeps asking
+    // for a deleted bucket costs a single delete rather than one per request.
+    stubProbesAndFailingForwards({});
+    const kv = countingKv({ 'davRoute:v1:owner:nobody': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
+    const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/nobody', 'PROPFIND');
+    const statuses = await repeatAcrossIsolates(3, request);
+    expect(statuses).toEqual([404, 404, 404]);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.ops.delete).toBe(1);
+  });
+
+  it('never writes a route for a lone-backend owner', async () => {
+    // `resolveBackend` short-circuits a one-candidate set without probing, so an
+    // entry here would cache a value the same request's D1 read already
+    // produced — a scarce KV write spent to save a cheap D1 read.
+    stubProbesAndFailingForwards({ 'https://backend.example.com': 207 });
+    const kv = countingKv();
+    const request = proxyFor(kv, fakeDb({ backends: SOLO }), 'https://router.example.com/owner/solovol/file.txt');
+    await repeatAcrossIsolates(3, request);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.store.size).toBe(0);
+  });
+
+  it('drops an entry whose base_url was edited, without any purge to do it', async () => {
+    // The safety net is the per-request D1 revalidation, not a namespace sweep
+    // on the settings page. A purged namespace cost one delete per cached route
+    // in the *account* for a single user's save.
+    stubEverythingAnswers207();
+    const kv = countingKv({
+      'davRoute:v1:owner:edited': JSON.stringify({ backendId: '1', slug: 'solo', baseUrl: 'https://old.example.com' }),
+    });
+    const request = proxyFor(kv, fakeDb({ backends: SOLO }), 'https://router.example.com/owner/edited');
+    const statuses = await repeatAcrossIsolates(1, request);
+    expect(statuses).toEqual([207]);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.ops.delete).toBe(1);
+    expect(kv.store.size).toBe(0);
+  });
+
+  it('drops an entry naming a deleted backend, and forwards to the survivor', async () => {
+    stubEverythingAnswers207();
+    const kv = countingKv({
+      'davRoute:v1:owner:orphaned': JSON.stringify({ backendId: '99', slug: 'gone', baseUrl: 'https://gone.example.com' }),
+    });
+    const request = proxyFor(kv, fakeDb({ backends: SOLO }), 'https://router.example.com/owner/orphaned');
+    const res = await request();
+    expect(res.status).toBe(207);
+    expect(kv.ops.delete).toBe(1);
+    expect(kv.store.size).toBe(0);
+  });
+
+  it('keeps a merely-suspect entry when the origins turn out to be unreachable', async () => {
+    // The cached origin 404s the volume root, then every candidate is down. A
+    // 502 says the backends are unreachable, not that the route is wrong, so
+    // there is no evidence to act on and nothing is written — `502` is
+    // deliberately excluded from the staleness set for the same reason.
+    stubProbesUnavailableForwards404();
+    const kv = countingKv({
+      'davRoute:v1:owner:blip': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
+    });
+    const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/blip', 'PROPFIND');
+    const statuses = await repeatAcrossIsolates(1, request);
+    expect(statuses).toEqual([502]);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.ops.delete).toBe(0);
+    expect(kv.store.size).toBe(1);
+  });
+
+  it('still evicts a D1-proven entry when the origins turn out to be unreachable', async () => {
+    // The mirror image, and why the eviction is conditional on *why* the entry
+    // was distrusted: D1 already established this entry names a `base_url` that
+    // no longer exists, so an unreachable candidate set adds nothing — the entry
+    // is wrong regardless and has to go.
+    stubProbesUnavailableForwards404();
+    const kv = countingKv({
+      'davRoute:v1:owner:blip': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://edited.example.com' }),
+    });
+    const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/blip', 'PROPFIND');
+    const statuses = await repeatAcrossIsolates(1, request);
+    expect(statuses).toEqual([502]);
+    expect(kv.ops.delete).toBe(1);
+    expect(kv.store.size).toBe(0);
+  });
+});
 
 describe('RouterDavProxyRoutes KV route cache', () => {
   beforeEach(() => {
@@ -534,7 +793,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
   it('stale hits self-heal: forward 404 evicts and re-resolves', async () => {
     const calls: CapturedFetch[] = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const url = requestUrl(input);
       const origin = new URL(url).origin;
       calls.push({ url, init: init ?? {} });
       const headers = new Headers((init?.headers ?? {}) as HeadersInit);
@@ -696,7 +955,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
   it('drops 502/504 from the staleness set so a backend blip is not mistaken for a moved volume', async () => {
     const calls: CapturedFetch[] = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const url = requestUrl(input);
       calls.push({ url, init: init ?? {} });
       const headers = new Headers((init?.headers ?? {}) as HeadersInit);
       if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
@@ -730,7 +989,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     // twice — once to each of two backends.
     const forwards: string[] = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url);
+      const url = requestUrl(input);
       const origin = new URL(url).origin;
       const headers = new Headers((init?.headers ?? {}) as HeadersInit);
       if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {

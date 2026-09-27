@@ -5,23 +5,14 @@ import {
   fetchWithTimeout,
   getProxyTimeoutMs,
   joinBackendUrl,
-  purgeCachedRoutes,
   stripTrailingSlashes,
   truncateSnippet,
 } from '@durable-dav-router/backend-services/router';
-import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 import type { HonoContext } from '@/endpoints/IBaseRoute';
 
 type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
 
-function kvOf(scope: { get: (token: never) => KvCache }): KvCache | null {
-  try {
-    return scope.get(Tokens.KvCache as never);
-  } catch {
-    return null;
-  }
-}
 function toBackendJson(r: {
   slug: string;
   base_url: string;
@@ -196,8 +187,13 @@ function registerBackendRoutes(app: App): void {
         ...(body.baseUrl !== undefined && { baseUrl: body.baseUrl }),
         ...(body.displayName !== undefined && { displayName: body.displayName }),
       });
-      // base_url snapshots cached in `davRoute` go stale on edit → purge.
-      await purgeCachedRoutes(kvOf(scope as never)).catch(() => 0);
+      // No route-cache purge: the `davRoute` lookaside revalidates every entry
+      // against D1 before it forwards (`findBackendById`, then a `base_url`
+      // comparison), so an edited `base_url` is caught on the very next request
+      // and re-resolved without spending a forward. Purging instead cost one
+      // delete per cached route in the whole namespace — every user's, not this
+      // backend's — on a single settings-page save, against an allowance of
+      // 1,000 deletes per day.
       const timeoutMs = getProxyTimeoutMs(c.env);
       const status = await probeBackendHealth(updated.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
       await scope.get(Tokens.BackendService).recordProbe(email, updated.slug, status);
@@ -216,9 +212,9 @@ function registerBackendRoutes(app: App): void {
     const email = c.get('AuthenticatedUserEmailAddress');
     try {
       await scope.get(Tokens.BackendService).deleteBackend(email, c.req.param('slug') ?? '');
-      // Owner→backend candidate sets changed → cached resolutions may pin a
-      // removed backend. Purge the `davRoute` lookaside (fail-soft).
-      await purgeCachedRoutes(kvOf(scope as never)).catch(() => 0);
+      // Likewise no purge: a cached route naming the removed backend fails its
+      // D1 revalidation (`findBackendById` returns null) and is re-resolved on
+      // the next bare request, which is the same path an edit takes.
       return c.json({ ok: true });
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
