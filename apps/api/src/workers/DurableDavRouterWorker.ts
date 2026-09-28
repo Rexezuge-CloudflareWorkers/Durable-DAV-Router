@@ -10,12 +10,10 @@ import { registerAggregatedVolumeRoutes } from './routes/AggregatedVolumeRoutes'
 import { registerRouterDavProxyRoutes } from './routes/RouterDavProxyRoutes';
 import { registerUserProfileRoutes } from './routes/UserRoutes';
 import { SPA_HTML } from '@/generated/spa-shell';
+import type { RouterEnv } from '@/requestContext';
 import { applyCors } from '@durable-dav-router/webdav';
 
-type AppRouter = HonoOpenAPIRouterType<{
-  Bindings: Env;
-  Variables: { AuthenticatedUserEmailAddress: string };
-}>;
+type AppRouter = HonoOpenAPIRouterType<RouterEnv>;
 
 function acceptsHtml(request: Request): boolean {
   return (request.headers.get('Accept') ?? '').includes('text/html');
@@ -31,10 +29,7 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
   constructor() {
     super();
 
-    const app = new Hono<{
-      Bindings: Env;
-      Variables: { AuthenticatedUserEmailAddress: string };
-    }>();
+    const app = new Hono<RouterEnv>();
 
     app.use('*', securityHeaders());
     app.onError((error, c) => {
@@ -73,7 +68,7 @@ class DurableDavRouterWorker extends AbstractEntrypointWorker {
       return c.req.header('Access-Control-Request-Method') ? applyCors(new Response(null, { status: 204 }), c.req.raw) : next();
     });
 
-    // Before `/user/*` auth so the limiter can key on the authenticated email
+    // Before `/user/*` auth so the limiter can key on the authenticated account
     // once the identity is known; the identity falls back to the trusted
     // connecting IP for anonymous WebDAV traffic.
     registerRateLimits(app);

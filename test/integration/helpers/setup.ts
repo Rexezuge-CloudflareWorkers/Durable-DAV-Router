@@ -12,10 +12,26 @@ export async function ensureAesSecret(_env: TestEnv): Promise<void> {
   // No Secrets Store binding: router stores no secrets (pure passthrough).
 }
 
-export async function ensureUser(db: D1Database, email: string): Promise<string> {
+/**
+ * Seed an account, stamping the migration-0004 identity columns.
+ *
+ * `id` and `current_email` are NOT NULL in practice, and a fixture that omits
+ * them produces an account the registry cannot resolve — which reads as "the
+ * user has no backends" rather than as a broken fixture. `email` stays the
+ * anchor, so this matches the shape of a pre-0004 row and a post-0004 one alike.
+ */
+export async function ensureUser(db: D1Database, email: string, id?: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const normalizedEmail = email.toLowerCase();
-  await db.prepare(`INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)`).bind(normalizedEmail, now).run();
+  const userId = id ?? `usr_${normalizedEmail.replaceAll(/[^a-z0-9]+/g, '_')}`;
+  await db
+    .prepare('INSERT OR IGNORE INTO users (email, created_at, id, current_email) VALUES (?, ?, ?, ?)')
+    .bind(normalizedEmail, now, userId, normalizedEmail)
+    .run();
+  await db
+    .prepare('INSERT OR IGNORE INTO user_emails (email, user_id, is_verified, created_at) VALUES (?, ?, 1, ?)')
+    .bind(normalizedEmail, userId, now)
+    .run();
   return normalizedEmail;
 }
 
@@ -31,6 +47,7 @@ export async function seedBackend(
   db: D1Database,
   input: {
     ownerEmail: string;
+    ownerUserId?: string;
     slug: string;
     baseUrl: string;
     displayName?: string | null;
@@ -39,15 +56,19 @@ export async function seedBackend(
 ): Promise<string> {
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  await ensureUser(db, input.ownerEmail);
+  const ownerEmail = await ensureUser(db, input.ownerEmail, input.ownerUserId);
+  // `owner_user_id` is the ownership key; `owner_email` is the frozen anchor
+  // that satisfies the foreign key into `users(email)`. Both are written.
+  const ownerUserId = input.ownerUserId ?? `usr_${ownerEmail.replaceAll(/[^a-z0-9]+/g, '_')}`;
   await db
     .prepare(
-      `INSERT OR IGNORE INTO router_backends (id, owner_email, slug, slug_ci, base_url, display_name, created_at, updated_at, backend_username, backend_username_ci) ` +
-        `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, created_at, updated_at, backend_username, backend_username_ci) ` +
+        `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
-      input.ownerEmail.toLowerCase(),
+      ownerEmail,
+      ownerUserId,
       input.slug,
       input.slug.toLowerCase(),
       input.baseUrl,

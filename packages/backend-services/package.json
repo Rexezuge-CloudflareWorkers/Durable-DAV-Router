@@ -8,6 +8,8 @@
     ".": "./src/index.ts",
     "./auth": "./src/auth/index.ts",
     "./auth/*": "./src/auth/*.ts",
+    "./identity": "./src/identity/index.ts",
+    "./identity/*": "./src/identity/*.ts",
     "./user": "./src/user/index.ts",
     "./user/*": "./src/user/*.ts",
     "./composition": "./src/composition/index.ts",

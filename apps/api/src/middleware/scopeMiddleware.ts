@@ -1,8 +1,9 @@
 import type { Context, Next } from 'hono';
 import { asScopedContext, setRequestScope } from '@durable-dav-router/backend-runtime/di';
 import { createRequestScope } from '@durable-dav-router/backend-services/composition';
+import type { RouterEnv } from '../requestContext';
 
-type ScopeContext = Context<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type ScopeContext = Context<RouterEnv>;
 
 /**
  * Single-scope-per-request middleware (Otter composition-root pattern).

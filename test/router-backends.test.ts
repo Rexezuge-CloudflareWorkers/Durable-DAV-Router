@@ -9,13 +9,26 @@ import {
   rewriteDestinationForBackend,
   stripBackendSelector,
 } from '@durable-dav-router/backend-services/router';
-import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
+import type { BackendOwner, RouterBackendRow } from '@durable-dav-router/backend-data/dao';
+import type { AccountIdentity } from '@durable-dav-router/backend-services/identity';
 import { BadRequestError, ConflictError, DatabaseError, NotFoundError } from '@durable-dav-router/backend-errors';
+
+/**
+ * A resolved caller. `anchorEmail` is the account's frozen `users.email` — for a
+ * pre-0004 account that is its real address; for a newer one it can be an opaque
+ * `anchor-<hex>@users.invalid`. Neither the id nor the anchor changes when the
+ * account's sign-in address does, which is the property every test below leans
+ * on.
+ */
+function account(email = 'user@example.com', id = 'usr_test1'): AccountIdentity {
+  return { id, email, anchorEmail: email };
+}
 
 function row(slug: string, baseUrl = 'https://backend.example.com'): RouterBackendRow {
   return {
     id: `id-${slug}`,
     owner_email: 'user@example.com',
+    owner_user_id: 'usr_test1',
     slug,
     slug_ci: slug.toLowerCase(),
     base_url: baseUrl,
@@ -185,29 +198,30 @@ describe('BackendService with fakes', () => {
   function fakeDAO(seed: RouterBackendRow[] = []) {
     const store = new Map(seed.map((r) => [r.id, { ...r }]));
     return {
-      getByOwnerSlug: async (ownerEmail: string, slug: string) =>
-        [...store.values()].find((r) => r.owner_email === ownerEmail.toLowerCase() && r.slug_ci === slug.toLowerCase()) ?? null,
+      getByOwnerSlug: async (ownerUserId: string, slug: string) =>
+        [...store.values()].find((r) => r.owner_user_id === ownerUserId && r.slug_ci === slug.toLowerCase()) ?? null,
       getById: async (id: string) => store.get(id) ?? null,
-      listByOwnerEmail: async (ownerEmail: string) => [...store.values()].filter((r) => r.owner_email === ownerEmail.toLowerCase()),
+      listByOwnerUserId: async (ownerUserId: string) => [...store.values()].filter((r) => r.owner_user_id === ownerUserId),
       listByBackendUsernameCi: async (usernameCi: string) =>
         [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === usernameCi.toLowerCase()),
-      countByOwnerEmail: async (ownerEmail: string) => [...store.values()].filter((r) => r.owner_email === ownerEmail.toLowerCase()).length,
+      countByOwnerUserId: async (ownerUserId: string) => [...store.values()].filter((r) => r.owner_user_id === ownerUserId).length,
       createGuarded: async (
-        input: { id: string; ownerEmail: string; slug: string; baseUrl: string; displayName: string | null; now: number },
+        input: { id: string; owner: BackendOwner; slug: string; baseUrl: string; displayName: string | null; now: number },
         max: number,
       ): Promise<'ok' | 'duplicate' | 'quota-exceeded'> => {
         // Mirror the real statement: the quota check and the insert are one
-        // atomic operation, and the (owner_email, slug_ci) uniqueness is a
+        // atomic operation, and the (owner_user_id, slug_ci) uniqueness is a
         // constraint rather than a pre-flight SELECT.
-        const owner = input.ownerEmail.toLowerCase();
+        const { userId, anchorEmail } = input.owner;
         const slugCi = input.slug.toLowerCase();
-        const exists = [...store.values()].some((r) => r.owner_email === owner && r.slug_ci === slugCi);
+        const exists = [...store.values()].some((r) => r.owner_user_id === userId && r.slug_ci === slugCi);
         if (exists) return 'duplicate';
-        const owned = [...store.values()].filter((r) => r.owner_email === owner).length;
+        const owned = [...store.values()].filter((r) => r.owner_user_id === userId).length;
         if (owned >= max) return 'quota-exceeded';
         store.set(input.id, {
           id: input.id,
-          owner_email: owner,
+          owner_email: anchorEmail.toLowerCase(),
+          owner_user_id: userId,
           slug: input.slug,
           slug_ci: slugCi,
           base_url: input.baseUrl,
@@ -221,10 +235,11 @@ describe('BackendService with fakes', () => {
         });
         return 'ok';
       },
-      create: async (input: { id: string; ownerEmail: string; slug: string; baseUrl: string; displayName: string | null; now: number }) => {
+      create: async (input: { id: string; owner: BackendOwner; slug: string; baseUrl: string; displayName: string | null; now: number }) => {
         store.set(input.id, {
           id: input.id,
-          owner_email: input.ownerEmail.toLowerCase(),
+          owner_email: input.owner.anchorEmail.toLowerCase(),
+          owner_user_id: input.owner.userId,
           slug: input.slug,
           slug_ci: input.slug.toLowerCase(),
           base_url: input.baseUrl,
@@ -270,9 +285,9 @@ describe('BackendService with fakes', () => {
   it('creates then rejects duplicate slugs', async () => {
     const dao = fakeDAO();
     const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
-    await svc.createBackend({ ownerEmail: 'User@Example.com', slug: 'office', baseUrl: 'https://dav.example.com' });
+    await svc.createBackend({ owner: account('User@Example.com'), slug: 'office', baseUrl: 'https://dav.example.com' });
     await expect(
-      svc.createBackend({ ownerEmail: 'user@example.com', slug: 'office', baseUrl: 'https://other.example.com' }),
+      svc.createBackend({ owner: account(), slug: 'office', baseUrl: 'https://other.example.com' }),
     ).rejects.toThrow();
   });
 
@@ -282,8 +297,8 @@ describe('BackendService with fakes', () => {
     const dao = fakeDAO();
     const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
     const results = await Promise.allSettled([
-      svc.createBackend({ ownerEmail: 'u@example.com', slug: 'race', baseUrl: 'https://a.example.com' }),
-      svc.createBackend({ ownerEmail: 'u@example.com', slug: 'race', baseUrl: 'https://b.example.com' }),
+      svc.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'race', baseUrl: 'https://a.example.com' }),
+      svc.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'race', baseUrl: 'https://b.example.com' }),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
@@ -296,7 +311,7 @@ describe('BackendService with fakes', () => {
     const prod = new BackendService({ DB: {} as never, ENVIRONMENT: 'production' } as never, {
       backendDAO: () => Promise.resolve(fakeDAO() as never),
     });
-    await expect(prod.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
+    await expect(prod.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
       /private, loopback/i,
     );
 
@@ -305,7 +320,7 @@ describe('BackendService with fakes', () => {
     const dev = new BackendService({ DB: {} as never, ENVIRONMENT: 'development' } as never, {
       backendDAO: () => Promise.resolve(fakeDAO() as never),
     });
-    await expect(dev.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).resolves.toBeTruthy();
+    await expect(dev.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'local', baseUrl: 'http://localhost:8787' })).resolves.toBeTruthy();
   });
 
   it('lets ALLOW_PRIVATE_BACKEND_HOSTS override the environment default', async () => {
@@ -313,13 +328,13 @@ describe('BackendService with fakes', () => {
       backendDAO: () => Promise.resolve(fakeDAO() as never),
     });
     await expect(
-      prodOptIn.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' }),
+      prodOptIn.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'local', baseUrl: 'http://localhost:8787' }),
     ).resolves.toBeTruthy();
 
     const devOptOut = new BackendService({ DB: {} as never, ENVIRONMENT: 'development', ALLOW_PRIVATE_BACKEND_HOSTS: 'false' } as never, {
       backendDAO: () => Promise.resolve(fakeDAO() as never),
     });
-    await expect(devOptOut.createBackend({ ownerEmail: 'u@example.com', slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
+    await expect(devOptOut.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'local', baseUrl: 'http://localhost:8787' })).rejects.toThrow(
       /private, loopback/i,
     );
   });
@@ -338,7 +353,7 @@ describe('BackendService with fakes', () => {
       },
     };
     const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(exploding as never) });
-    await expect(svc.getBackend('u@example.com', 'office')).rejects.toBeInstanceOf(DatabaseError);
+    await expect(svc.getBackend(account('u@example.com', 'usr_u'), 'office')).rejects.toBeInstanceOf(DatabaseError);
   });
 
   it('tolerates a missing schema, which is the one legitimate degradation', async () => {
@@ -350,13 +365,13 @@ describe('BackendService with fakes', () => {
       },
     };
     const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(missingSchema as never) });
-    await expect(svc.getBackend('u@example.com', 'office')).rejects.toBeInstanceOf(NotFoundError);
+    await expect(svc.getBackend(account('u@example.com', 'usr_u'), 'office')).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it('enforces the per-user quota', async () => {
     const dao = fakeDAO();
     const svc = new BackendService({ DB: {} as never, MAX_BACKENDS_PER_USER: '1' }, { backendDAO: () => Promise.resolve(dao as never) });
-    await svc.createBackend({ ownerEmail: 'u@example.com', slug: 'a', baseUrl: 'https://a.example.com' });
-    await expect(svc.createBackend({ ownerEmail: 'u@example.com', slug: 'b', baseUrl: 'https://b.example.com' })).rejects.toThrow();
+    await svc.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'a', baseUrl: 'https://a.example.com' });
+    await expect(svc.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'b', baseUrl: 'https://b.example.com' })).rejects.toThrow();
   });
 });

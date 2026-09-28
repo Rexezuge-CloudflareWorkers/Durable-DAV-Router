@@ -15,6 +15,7 @@
     "test:coverage:integration": "vitest run --coverage --config test/integration/vitest.config.mts",
     "lint": "NODE_OPTIONS=--max-old-space-size=8192 eslint --fix --quiet .",
     "validate:locales": "node scripts/validate_locales.mjs",
+    "change-email": "tsx scripts/change-email.ts",
     "typegen": "wrangler types --config ./apps/api/wrangler.template.jsonc --env-interface CloudflareEnv"
   },
   "devDependencies": {

@@ -1,7 +1,8 @@
 import type { Context, Next } from 'hono';
 import { RateLimitedError } from '@durable-dav-router/backend-errors';
+import type { RouterEnv } from '@/requestContext';
 
-type RateLimitContext = Context<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type RateLimitContext = Context<RouterEnv>;
 
 interface Bucket {
   count: number;
@@ -98,7 +99,10 @@ function rateLimit(opts: {
       cleanup(now);
       let identity = 'anon';
       try {
-        identity = c.get('AuthenticatedUserEmailAddress') ?? `ip:${clientIp(c)}`;
+        // Keyed on the account id, not the address: a user who changes their
+        // email keeps their bucket, so a change cannot be used to shed a
+        // rate limit that is currently exhausted.
+        identity = c.get('AuthenticatedAccount')?.id ?? `ip:${clientIp(c)}`;
       } catch {
         identity = `ip:${clientIp(c)}`;
       }

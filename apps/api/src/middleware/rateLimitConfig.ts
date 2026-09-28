@@ -1,4 +1,5 @@
 import type { Hono } from 'hono';
+import type { RouterEnv } from '@/requestContext';
 import { rateLimit } from './rateLimit';
 
 interface RateLimitDef {
@@ -27,7 +28,7 @@ const RATE_LIMIT_DEFS: readonly RateLimitDef[] = [
   { path: '/:owner/:volume*', windowMs: 60_000, max: 600, keyPrefix: 'webdav' },
 ];
 
-function registerRateLimits(app: Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>): void {
+function registerRateLimits(app: Hono<RouterEnv>): void {
   for (const def of RATE_LIMIT_DEFS) {
     app.use(def.path, rateLimit({ windowMs: def.windowMs, max: def.max, keyPrefix: def.keyPrefix }));
   }

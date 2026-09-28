@@ -1,8 +1,9 @@
-import type { RouterBackendDAO, UserDAO } from '@durable-dav-router/backend-data/dao';
+import type { RouterBackendDAO, UserDAO, UserEmailDAO } from '@durable-dav-router/backend-data/dao';
 import type { Token } from '@durable-dav-router/backend-runtime/di';
 import type { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import type { AccessAuthService } from '../auth/AccessAuthService';
+import type { UserIdentityService } from '../identity/UserIdentityService';
 import type { UserService } from '../user/UserService';
 import type { BackendService } from '../router/BackendService';
 
@@ -15,8 +16,13 @@ import type { BackendService } from '../router/BackendService';
 const Tokens = {
   KvCache: Symbol('KvCache') as Token<KvCache>,
   UserDAO: Symbol('UserDAO') as Token<() => Promise<UserDAO>>,
+  UserEmailDAO: Symbol('UserEmailDAO') as Token<() => Promise<UserEmailDAO>>,
   RouterBackendDAO: Symbol('RouterBackendDAO') as Token<() => Promise<RouterBackendDAO>>,
   AccessAuthService: Symbol('AccessAuthService') as Token<AccessAuthService>,
+  // One memoized address→account resolver per request scope, so the auth
+  // middleware and every route that reads the caller's backends share a single
+  // registry lookup.
+  UserIdentityService: Symbol('UserIdentityService') as Token<UserIdentityService>,
   UserService: Symbol('UserService') as Token<UserService>,
   BackendService: Symbol('BackendService') as Token<BackendService>,
   // `AppConfig` is bound for services that need injected configuration; it is

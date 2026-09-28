@@ -1,11 +1,12 @@
 import { RouterBackendDAO } from '@durable-dav-router/backend-data/dao';
-import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
+import type { BackendOwner, RouterBackendRow } from '@durable-dav-router/backend-data/dao';
 import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
 import { isMissingSchemaError } from '@durable-dav-router/backend-data/utils';
 import { BadRequestError, ConflictError, DatabaseError, ForbiddenError, NotFoundError } from '@durable-dav-router/backend-errors';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { TimestampUtil, UUIDUtil } from '@durable-dav-router/shared/utils';
 import { isPrivateOrInternalHost } from '@durable-dav-router/shared/utils';
+import type { AccountIdentity } from '../identity/UserIdentityService';
 import { stripTrailingSlashes } from './BackendProxyService';
 
 interface BackendServiceEnv {
@@ -118,6 +119,18 @@ function isPrivateBackendHostAllowed(env: BackendServiceEnv, config: AppConfigur
 }
 
 /**
+ * Narrow a resolved account to what a `router_backends` row needs.
+ *
+ * The id is the ownership key; the anchor is the frozen value the `owner_email`
+ * foreign key resolves against. `account.email` — the *mutable* address — is
+ * deliberately dropped rather than passed along: it is precisely the value the
+ * anchor exists to stop depending on, so no DAO below this line can reach it.
+ */
+function toBackendOwner(account: AccountIdentity): BackendOwner {
+  return { userId: account.id, anchorEmail: account.anchorEmail };
+}
+
+/**
  * Wrap a D1 read so a genuine database fault surfaces as a 5xx instead of
  * being flattened into "not found".
  *
@@ -135,6 +148,16 @@ async function d1Read<T>(operation: () => Promise<T>, context: string, fallback:
   }
 }
 
+/**
+ * The per-user backend registry.
+ *
+ * Every owner-scoped method takes the caller's resolved `AccountIdentity`
+ * rather than an address, and narrows it internally. The id is the identity: it
+ * is stable across an address change, so a user who moves their email keeps
+ * every backend registered under the old one. The anchor rides along because
+ * `router_backends.owner_email` is a foreign key into `users(email)` and that
+ * column is now immutable.
+ */
 class BackendService {
   private readonly deps: Required<BackendServiceDeps>;
   private readonly allowPrivateHosts: boolean;
@@ -164,18 +187,18 @@ class BackendService {
     return Math.max(100, this.deps.config.getMaxBackendsPerUser() + 1);
   }
 
-  private async findBackend(ownerEmail: string, slug: string): Promise<RouterBackendRow | null> {
+  private async findBackend(owner: AccountIdentity, slug: string): Promise<RouterBackendRow | null> {
     const dao = await this.deps.backendDAO();
-    return d1Read(() => dao.getByOwnerSlug(ownerEmail.toLowerCase(), slug), 'lookup router backend', null);
+    return d1Read(() => dao.getByOwnerSlug(owner.id, slug), 'lookup router backend', null);
   }
 
   public async createBackend(input: {
-    ownerEmail: string;
+    owner: AccountIdentity;
     slug: string;
     baseUrl: string;
     displayName?: string | null;
   }): Promise<RouterBackendRow> {
-    const ownerEmail = input.ownerEmail.toLowerCase();
+    const account = input.owner;
     const slug = normalizeSlug(input.slug);
     const baseUrl = normalizeBaseUrl(input.baseUrl, this.allowPrivateHosts);
     const displayName = input.displayName === undefined || input.displayName === null ? null : normalizeDisplayName(input.displayName);
@@ -183,14 +206,14 @@ class BackendService {
     // The uniqueness and quota checks below exist only to produce a friendly
     // error; the database constraints are the actual enforcement, so they are
     // what the create relies on. See `createGuarded`.
-    const existing = await this.findBackend(ownerEmail, slug);
+    const existing = await this.findBackend(account, slug);
     if (existing) throw new ConflictError('Backend slug already exists');
     const max = this.deps.config.getMaxBackendsPerUser();
-    const count = await d1Read(() => dao.countByOwnerEmail(ownerEmail), 'count router backends', 0);
+    const count = await d1Read(() => dao.countByOwnerUserId(account.id), 'count router backends', 0);
     if (count >= max) throw new ForbiddenError(`Backend limit reached (${max})`);
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     const id = UUIDUtil.getRandomUUID();
-    const created = await dao.createGuarded({ id, ownerEmail, slug, baseUrl, displayName, now }, max);
+    const created = await dao.createGuarded({ id, owner: toBackendOwner(account), slug, baseUrl, displayName, now }, max);
     if (created === 'duplicate') throw new ConflictError('Backend slug already exists');
     if (created === 'quota-exceeded') throw new ForbiddenError(`Backend limit reached (${max})`);
     const row = await dao.getById(id);
@@ -198,8 +221,8 @@ class BackendService {
     return row;
   }
 
-  public async getBackend(ownerEmail: string, slug: string): Promise<RouterBackendRow> {
-    const row = await this.findBackend(ownerEmail, slug);
+  public async getBackend(owner: AccountIdentity, slug: string): Promise<RouterBackendRow> {
+    const row = await this.findBackend(owner, slug);
     if (!row) throw new NotFoundError('Backend not found');
     return row;
   }
@@ -218,18 +241,18 @@ class BackendService {
     return d1Read(() => dao.getById(id), 'lookup router backend by id', null);
   }
 
-  public async listBackends(ownerEmail: string): Promise<RouterBackendRow[]> {
+  public async listBackends(owner: AccountIdentity): Promise<RouterBackendRow[]> {
     const dao = await this.deps.backendDAO();
-    return d1Read(() => dao.listByOwnerEmail(ownerEmail.toLowerCase(), this.listWindow()), 'list router backends', []);
+    return d1Read(() => dao.listByOwnerUserId(owner.id, this.listWindow()), 'list router backends', []);
   }
 
   public async updateBackend(
-    ownerEmail: string,
+    owner: AccountIdentity,
     slug: string,
     patch: { baseUrl?: string; displayName?: string | null },
   ): Promise<RouterBackendRow> {
     const dao = await this.deps.backendDAO();
-    const row = await this.getBackend(ownerEmail, slug);
+    const row = await this.getBackend(owner, slug);
     const updates: { baseUrl?: string; displayName?: string | null } = {};
     if (patch.baseUrl !== undefined) updates.baseUrl = normalizeBaseUrl(patch.baseUrl, this.allowPrivateHosts);
     if (patch.displayName !== undefined) {
@@ -242,8 +265,8 @@ class BackendService {
     return updated;
   }
 
-  public async deleteBackend(ownerEmail: string, slug: string): Promise<void> {
-    const row = await this.getBackend(ownerEmail, slug);
+  public async deleteBackend(owner: AccountIdentity, slug: string): Promise<void> {
+    const row = await this.getBackend(owner, slug);
     const dao = await this.deps.backendDAO();
     await dao.deleteById(row.id);
   }
@@ -253,9 +276,9 @@ class BackendService {
    * request that triggered it. Errors are logged so a persistent D1 fault is
    * visible rather than silently dropping status updates forever.
    */
-  public async recordProbe(ownerEmail: string, slug: string, status: number | null): Promise<void> {
+  public async recordProbe(owner: AccountIdentity, slug: string, status: number | null): Promise<void> {
     const dao = await this.deps.backendDAO();
-    const row = await this.findBackend(ownerEmail, slug);
+    const row = await this.findBackend(owner, slug);
     if (!row) return;
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     await dao.update(row.id, { now, lastSeenAt: now, lastStatus: status }).catch((error: unknown) => {
@@ -263,9 +286,9 @@ class BackendService {
     });
   }
 
-  public async recordBackendUsername(ownerEmail: string, slug: string, username: string | null): Promise<void> {
+  public async recordBackendUsername(owner: AccountIdentity, slug: string, username: string | null): Promise<void> {
     const dao = await this.deps.backendDAO();
-    const row = await this.findBackend(ownerEmail, slug);
+    const row = await this.findBackend(owner, slug);
     if (!row) return;
     const normalized = typeof username === 'string' && username.trim() ? username.trim() : null;
     // Skip the write when nothing changed: this runs after every proxied
@@ -297,5 +320,5 @@ class BackendService {
   }
 }
 
-export { BackendService, normalizeSlug, normalizeBaseUrl, normalizeDisplayName, isPrivateBackendHostAllowed };
+export { BackendService, normalizeSlug, normalizeBaseUrl, normalizeDisplayName, isPrivateBackendHostAllowed, toBackendOwner };
 export type { BackendServiceEnv, BackendServiceDeps };

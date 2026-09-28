@@ -15,10 +15,21 @@ interface FakeContext {
     json: () => Promise<unknown>;
   };
   env: Record<string, unknown>;
-  get: (k: string) => string;
+  // The authenticated account lives on the context; `get` is untyped in Hono,
+  // so a stub must not narrow it back to `string`.
+  get: (k: string) => unknown;
   json: (data: unknown, status?: number) => Response;
 }
 
+/**
+ * D1 double for the backend routes.
+ *
+ * Ownership predicates match **exactly** on `owner_user_id`, the column the real
+ * statements use. The DAOs lowercase the *parameter* rather than the column so
+ * the comparison stays exact and the index stays usable; a double that folded
+ * both sides would make a wrong predicate look correct. The integration suite
+ * asserts the query plans, which is where that difference is actually visible.
+ */
 function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string, Row> } {
   const rows = new Map<string, Row>();
   const db = {
@@ -32,28 +43,24 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
         async first<T>(): Promise<T | null> {
           const [v0, v1] = state.values as string[];
           if (state.sql.includes('slug_ci = ?')) {
-            const found = [...rows.values()].find((r) => r.owner_email.toLowerCase() === v0.toLowerCase() && r.slug_ci === v1);
+            const found = [...rows.values()].find((r) => r.owner_user_id === v0 && r.slug_ci === v1);
             return (found ?? null) as T | null;
           }
           if (state.sql.includes('WHERE id = ?')) {
             return (rows.get(v0) ?? null) as T | null;
           }
           return state.sql.includes('COUNT(*)')
-            ? ({ cnt: [...rows.values()].filter((r) => r.owner_email.toLowerCase() === v0.toLowerCase()).length } as T)
+            ? ({ cnt: [...rows.values()].filter((r) => r.owner_user_id === v0).length } as T)
             : null;
         },
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
-          if (state.sql.includes('backend_username_ci = ?')) {
-            return {
-              results: [...rows.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === v0.toLowerCase()) as T[],
-            };
-          }
-          return { results: [...rows.values()].filter((r) => r.owner_email.toLowerCase() === v0.toLowerCase()) as T[] };
+          return ({ results: state.sql.includes('backend_username_ci = ?') ? [...rows.values()].filter((r) => r.backend_username_ci === v0) as T[] : [...rows.values()].filter((r) => r.owner_user_id === v0) as T[] });
         },
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
           if (state.sql.startsWith('INSERT INTO router_backends')) {
-            const [id, ownerEmail, slug, slugCi, baseUrl, displayName, createdAt, updatedAt] = state.values as [
+            const [id, ownerEmail, ownerUserId, slug, slugCi, baseUrl, displayName, createdAt, updatedAt] = state.values as [
+              string,
               string,
               string,
               string,
@@ -66,6 +73,7 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
             rows.set(id, {
               id,
               owner_email: ownerEmail,
+              owner_user_id: ownerUserId,
               slug,
               slug_ci: slugCi,
               base_url: baseUrl,
@@ -145,7 +153,8 @@ function fakeContext(opts: {
       json: async () => opts.body ?? {},
     },
     env: opts.env,
-    get: (k: string) => (k === 'AuthenticatedUserEmailAddress' ? 'test@example.com' : ''),
+    get: (k: string): unknown =>
+      k === 'AuthenticatedAccount' ? { id: 'usr_test', email: 'test@example.com', anchorEmail: 'test@example.com' } : undefined,
     json: (data: unknown, status = 200) => Response.json(data, { status }),
   };
 }
