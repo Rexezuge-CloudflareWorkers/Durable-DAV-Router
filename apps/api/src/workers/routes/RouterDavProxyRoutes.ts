@@ -18,10 +18,12 @@ import type { BackendService } from '@durable-dav-router/backend-services/router
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { SUPPORT_METHODS, applyCors } from '@durable-dav-router/webdav';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
+import type { RouterEnv } from '@/requestContext';
 import { evictStaleRoute, replaceStaleRoute, runInBackground } from './routeCacheReconcile';
 import type { ProxyContext, StaleRoute } from './routeCacheReconcile';
 
-type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type App = Hono<RouterEnv>;
+
 
 function explicitBackendSlug(request: Request): string | null {
   try {
@@ -126,10 +128,12 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
   // WebDAV proxy is owner-routed, not requester-routed. Native clients only
   // send per-bucket Basic `Authorization` — they never carry Cloudflare Access
   // JWT — so requiring an Access identity here breaks every client (401).
-  // Usernames are per-backend (same email may own different handles on
+  // Usernames are per-backend (one account may hold different handles on
   // different backends); the router keeps only a `backend_username` cache per
-  // registered backend and routes on it. The backend enforces
-  // public-vs-private itself with the verbatim-proxied credentials.
+  // registered backend and routes on it, which is why the path segment named
+  // `owner` below is not the router account and is never resolved against
+  // `users`. The backend enforces public-vs-private itself with the
+  // verbatim-proxied credentials.
   let backends: Array<{ slug: string; base_url: string }> = [];
   try {
     backends = await scope

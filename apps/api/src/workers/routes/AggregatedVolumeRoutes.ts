@@ -12,9 +12,11 @@ import {
   truncateSnippet,
 } from '@durable-dav-router/backend-services/router';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
+import { NotFoundError } from '@durable-dav-router/backend-errors';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
+import type { AuthenticatedAccount, RouterEnv } from '@/requestContext';
 
-type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type App = Hono<RouterEnv>;
 
 function kvOf(scope: { get: (token: never) => KvCache }): KvCache | null {
   try {
@@ -102,26 +104,46 @@ interface ProxyOneContext {
   json: (data: unknown, status?: number) => any;
 }
 
+/**
+ * The caller's account, for a helper that takes a narrowed context type.
+ *
+ * These two helpers exist because the WebDAV proxy needs a structural subset of
+ * Hono's context (only `req` and `env`), which is why they are reached through
+ * `c as never`. The `get` shape is spelled out rather than borrowed from
+ * `RouterContext` because the parameter type genuinely is not the app's context
+ * — and a silent `undefined` here would become an empty backend list, i.e. a
+ * caller seeing "no backends" rather than a 401.
+ */
+function authenticatedAccount(c: unknown): AuthenticatedAccount {
+  const account = (c as { get?: (key: 'AuthenticatedAccount') => AuthenticatedAccount | undefined }).get?.('AuthenticatedAccount');
+  if (!account) throw new NotFoundError('Not authenticated');
+  return account;
+}
+
 // Single-bucket management proxies verbatim to the owning backend.
 // `?backend=` (or `X-Backend`) disambiguates when several backends exist;
 // a lone backend is used implicitly, multiple without selector → 409.
 async function proxyOne(c: ProxyOneContext): Promise<Response> {
   const scope = BaseRoute.getScope(c as never);
-  const email = (c as unknown as { get: (k: string) => string }).get?.('AuthenticatedUserEmailAddress') ?? '';
-  const owner = c.req.param('owner') ?? '';
+  const account = authenticatedAccount(c);
+  // Named `volumeOwner`, not `owner`: this is the *per-backend* username segment
+  // of the path, which is a different namespace from the router account. The two
+  // collided once the account arrived as an object, and the WebDAV owner-routing
+  // key is the one thing that must not be confused with an identity.
+  const volumeOwner = c.req.param('owner') ?? '';
   const volume = c.req.param('volume') ?? '';
   try {
-    const backends = await scope.get(Tokens.BackendService).listBackends(email);
+    const backends = await scope.get(Tokens.BackendService).listBackends(account);
     const backend = selectBackend(backends, explicitBackendSlug(c));
     const target = joinBackendUrlWithoutSelector(
       backend.base_url,
-      `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`,
+      `/user/volumes/${encodeURIComponent(volumeOwner)}/${encodeURIComponent(volume)}`,
       new URL(c.req.raw.url).search,
     );
     const res = await forwardToBackend(c.req.raw, target, c.env, c.req.raw.body);
     // Volume deletion changes future probe outcomes → evict the cached owner.
     if (c.req.raw.method === 'DELETE' && res.status >= 200 && res.status < 300) {
-      await invalidateCachedRoute(kvOf(scope as never), owner, volume).catch(() => undefined);
+      await invalidateCachedRoute(kvOf(scope as never), volumeOwner, volume).catch(() => undefined);
     }
     return res;
   } catch (error) {
@@ -140,9 +162,9 @@ interface ProxySubpathContext {
 // backend through one shape.
 async function proxySubpath(c: ProxySubpathContext): Promise<Response> {
   const scope = BaseRoute.getScope(c as never);
-  const email = (c as unknown as { get: (k: string) => string }).get?.('AuthenticatedUserEmailAddress') ?? '';
+  const account = authenticatedAccount(c);
   try {
-    const backends = await scope.get(Tokens.BackendService).listBackends(email);
+    const backends = await scope.get(Tokens.BackendService).listBackends(account);
     const raw = c.req.raw;
     // Read the selector from the raw request rather than the Hono helpers, then
     // reuse the shared reader so both planes agree on precedence and trimming.
@@ -172,9 +194,9 @@ function registerAggregatedVolumeRoutes(app: App): void {
   // than one backend exists; proxies verbatim to backend POST /user/volumes).
   app.post('/user/volumes', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const account = c.get('AuthenticatedAccount');
     try {
-      const backends = await scope.get(Tokens.BackendService).listBackends(email);
+      const backends = await scope.get(Tokens.BackendService).listBackends(account);
       const backend = selectBackend(backends, explicitBackendSlug(c));
       const body = await c.req.json().catch(() => ({}));
       // Re-serialize the parsed body rather than streaming `c.req.raw.body`, so
@@ -193,7 +215,7 @@ function registerAggregatedVolumeRoutes(app: App): void {
           if (typeof created.owner === 'string' && created.owner.trim()) {
             await scope
               .get(Tokens.BackendService)
-              .recordBackendUsername(email, backend.slug, created.owner.trim())
+              .recordBackendUsername(account, backend.slug, created.owner.trim())
               .catch(() => undefined);
           }
         } catch {
@@ -209,10 +231,10 @@ function registerAggregatedVolumeRoutes(app: App): void {
   // Aggregated bucket list across all registered backends (fail-soft per backend).
   app.get('/user/volumes', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const account = c.get('AuthenticatedAccount');
     const onlySlug = explicitBackendSlug(c);
     try {
-      let backends = await scope.get(Tokens.BackendService).listBackends(email);
+      let backends = await scope.get(Tokens.BackendService).listBackends(account);
       if (onlySlug) backends = backends.filter((b) => b.slug.toLowerCase() === onlySlug.toLowerCase());
       if (backends.length === 0) return c.json({ volumes: [], backends: [] });
       const timeoutMs = getProxyTimeoutMs(c.env);

@@ -65,10 +65,19 @@ describe('router authenticated API (integration)', () => {
       expect(res.headers.get('Vary') ?? '').toContain('Origin');
     });
 
-    it('returns the authenticated email from /user/me', async () => {
+    it('returns the current address and the account id from /user/me', async () => {
+      // `email` is `users.current_email` — the *current* sign-in address, never
+      // the frozen anchor, which can be an opaque `anchor-<hex>@users.invalid`
+      // and must not be reported to a client. `id` is the stable identity a
+      // client can hold across an address change.
       const res = await get('/user/me');
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ email: OWNER });
+      const body = (await res.json()) as { email: string; id: string };
+      expect(body.email).toBe(OWNER);
+      // The integration fixture seeds a readable id on purpose, so this asserts
+      // the id is a non-empty stable key rather than a production-format opaque
+      // one; `UserIdentityUpgrade.int.test.ts` checks the generated format.
+      expect(body.id).toBe('usr_test_example_com');
     });
 
     it('never caches a /user/* response', async () => {
@@ -336,7 +345,11 @@ describe('router authenticated API (integration)', () => {
       const db = (env as unknown as TestEnv).DB;
       const now = Math.floor(Date.now() / 1000);
       const mixed = `Mixed-${Date.now()}`;
-      await db.prepare('INSERT OR IGNORE INTO users (email, created_at) VALUES (?, ?)').bind(mixed.toLowerCase(), now).run();
+      const userId = `usr_mixed_${Date.now()}`;
+      await db
+        .prepare('INSERT OR IGNORE INTO users (email, created_at, id, current_email) VALUES (?, ?, ?, ?)')
+        .bind(mixed.toLowerCase(), now, userId, mixed.toLowerCase())
+        .run();
       // A raw mixed-case insert must fail, not quietly succeed.
       await expect(
         db
@@ -352,7 +365,7 @@ describe('router authenticated API (integration)', () => {
       const id = `dao-${Date.now()}`;
       await new RouterBackendDAO(db as never).create({
         id,
-        ownerEmail: mixed,
+        owner: { userId, anchorEmail: mixed },
         slug: mixed,
         baseUrl: 'https://b.example.com',
         displayName: null,

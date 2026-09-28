@@ -4,6 +4,7 @@ import type { AccessIdentityContext } from '@durable-dav-router/backend-services
 import { ErrorSanitizationUtil } from '@durable-dav-router/shared/utils';
 import { BaseRoute } from '../endpoints/IBaseRoute';
 import type { HonoContext } from '../endpoints/IBaseRoute';
+import type { AuthenticatedAccount } from '../requestContext';
 
 type RequestContext = HonoContext;
 
@@ -14,18 +15,21 @@ function getScope(c: RequestContext): ReturnType<typeof BaseRoute.getScope> {
 /**
  * Resolve the caller's identity and record it for the request.
  *
- * The user row is upserted here rather than in each handler so `/user/*` has a
- * row to reference: `router_backends.owner_email` is a foreign key into
- * `users(email)`, so a backend registered before the user row existed would
- * fail to insert.
+ * `upsertUser` runs here rather than in each handler so `/user/*` has an account
+ * to reference: `router_backends.owner_user_id` points at `users(id)`, so a
+ * backend registered before the account existed would fail to insert.
+ *
+ * It returns the *account*, not the address. The address Access asserts is an
+ * attribute of the account, and routes need the id — that is what stays valid
+ * when the user changes their email, so the whole `/user/*` plane keeps working
+ * across the change instead of 404ing on backends registered under the old one.
  */
-async function authenticateUserIdentity(c: RequestContext): Promise<string> {
+async function authenticateUserIdentity(c: RequestContext): Promise<AuthenticatedAccount> {
   const scope = getScope(c);
   const email = await scope
     .get(Tokens.AccessAuthService)
     .getAuthenticatedUserEmail(c.req.raw, c.executionCtx as unknown as AccessIdentityContext);
-  await scope.get(Tokens.UserService).upsertUser(email);
-  return email;
+  return scope.get(Tokens.UserService).upsertUser(email);
 }
 
 /**
@@ -38,7 +42,7 @@ async function authenticateUserIdentity(c: RequestContext): Promise<string> {
  */
 async function userAuthenticationHandler(c: RequestContext, next: Next): Promise<Response | void> {
   try {
-    c.set('AuthenticatedUserEmailAddress', await authenticateUserIdentity(c));
+    c.set('AuthenticatedAccount', await authenticateUserIdentity(c));
   } catch (error: unknown) {
     // Only an authentication failure is expected here; anything else is a bug
     // and is logged with its cause.

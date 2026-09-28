@@ -4,8 +4,9 @@ import { ErrorSanitizationUtil, canonicalizeLanguageTag } from '@durable-dav-rou
 import { createRequestScope } from '@durable-dav-router/backend-services/composition';
 import { getRequestScope, asScopedContext } from '@durable-dav-router/backend-runtime/di';
 import { mapServiceError } from '@durable-dav-router/backend-services/errors';
+import type { RouterEnv } from '@/requestContext';
 
-type HonoContext = Context<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type HonoContext = Context<RouterEnv>;
 
 /**
  * Route helpers for the Hono app.

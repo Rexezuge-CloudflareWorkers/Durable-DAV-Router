@@ -1,6 +1,7 @@
 import type { Context, Next } from 'hono';
+import type { RouterEnv } from '@/requestContext';
 
-type HeaderContext = Context<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type HeaderContext = Context<RouterEnv>;
 
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',

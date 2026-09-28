@@ -31,6 +31,13 @@ Scope: Wrangler bindings, build output, env vars. Parent index: `../../../AGENTS
 
 Add a new env var in `ConfigurationDefaults.ts` (+ an `AppConfiguration` method, or a section object in `config/sections/`), list it in the `ServiceEnv` interface, and read it through `EnvParser` — never inline. A var missing from `ServiceEnv` can be added without a type error and silently never reach the config layer.
 
+## D1 migrations
+
+- Never plan a migration around `DROP TABLE` + `RENAME` of a table other tables reference — the implicit `DELETE FROM` cascades, and D1 cannot use `PRAGMA foreign_keys = OFF` because every statement runs in an implicit transaction. Add columns and backfill instead; only a table with no children may be rebuilt.
+- `router_backends.owner_email` carries `ON DELETE CASCADE` on `users(email)`, so `users` is never rebuilt and `users.email` is never updated. That is why `0004_router_user_identity.sql` freezes it as an **anchor** and introduces `users.id` as the identity, rather than repointing the foreign key.
+- A migration that *must* rebuild should prove enforcement is off before its first destructive statement, so the run aborts instead of deleting rows.
+- **Apply migrations before deploying the code.** `0004` is a hard requirement: `router_backends.owner_user_id` and the `user_emails` registry are queried unconditionally, so a database without them 500s the owner-scoped plane. `UserIdentityService` tolerates a *pre-0004 row*, not a pre-0004 database.
+
 ## Dependency injection (`packages/backend-runtime/src/di/` + `config/`)
 
 - `AppConfiguration` — injectable instance view over env parsing: a thin facade over the section objects (`AuthConfig`, `RouterLimits`), one method per setting. Prefer injecting it in new services; mock via constructor deps.

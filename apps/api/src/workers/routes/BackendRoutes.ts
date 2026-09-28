@@ -10,8 +10,9 @@ import {
 } from '@durable-dav-router/backend-services/router';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 import type { HonoContext } from '@/endpoints/IBaseRoute';
+import type { RouterEnv } from '@/requestContext';
 
-type App = Hono<{ Bindings: Env; Variables: { AuthenticatedUserEmailAddress: string } }>;
+type App = Hono<RouterEnv>;
 
 function toBackendJson(r: {
   slug: string;
@@ -123,9 +124,9 @@ async function readCreateBody(c: HonoContext): Promise<{ body: CreateBackendBody
 function registerBackendRoutes(app: App): void {
   app.get('/user/backends', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const owner = c.get('AuthenticatedAccount');
     try {
-      const rows = await scope.get(Tokens.BackendService).listBackends(email);
+      const rows = await scope.get(Tokens.BackendService).listBackends(owner);
       return c.json({ backends: rows.map(toBackendJson) });
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
@@ -134,12 +135,12 @@ function registerBackendRoutes(app: App): void {
 
   app.post('/user/backends', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const owner = c.get('AuthenticatedAccount');
     const parsed = await readCreateBody(c);
     if ('error' in parsed) return parsed.error;
     try {
       const created = await scope.get(Tokens.BackendService).createBackend({
-        ownerEmail: email,
+        owner,
         slug: parsed.body.slug as string,
         baseUrl: parsed.body.baseUrl as string,
         displayName: (parsed.body.displayName as string | null | undefined) ?? null,
@@ -147,10 +148,10 @@ function registerBackendRoutes(app: App): void {
       // Best-effort liveness probe; never blocks creation.
       const timeoutMs = getProxyTimeoutMs(c.env);
       const status = await probeBackendHealth(created.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
-      await scope.get(Tokens.BackendService).recordProbe(email, created.slug, status);
+      await scope.get(Tokens.BackendService).recordProbe(owner, created.slug, status);
       const refreshed = await scope
         .get(Tokens.BackendService)
-        .getBackend(email, created.slug)
+        .getBackend(owner, created.slug)
         .catch(() => created);
       return c.json(toBackendJson(refreshed), 201);
     } catch (error) {
@@ -160,9 +161,9 @@ function registerBackendRoutes(app: App): void {
 
   app.get('/user/backends/:slug', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const owner = c.get('AuthenticatedAccount');
     try {
-      const row = await scope.get(Tokens.BackendService).getBackend(email, c.req.param('slug') ?? '');
+      const row = await scope.get(Tokens.BackendService).getBackend(owner, c.req.param('slug') ?? '');
       return c.json(toBackendJson(row));
     } catch (error) {
       return BaseRoute.toErrorResponse(c as never, error);
@@ -171,7 +172,7 @@ function registerBackendRoutes(app: App): void {
 
   app.patch('/user/backends/:slug', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const owner = c.get('AuthenticatedAccount');
     const parsed = await BaseRoute.readJson<{ baseUrl?: unknown; displayName?: unknown }>(c);
     if (parsed.oversized) return BaseRoute.jsonError(c, 'Request body too large', 413);
     if (parsed.malformed) return BaseRoute.jsonError(c, 'Malformed JSON body', 400);
@@ -183,7 +184,7 @@ function registerBackendRoutes(app: App): void {
       return BaseRoute.jsonError(c, 'displayName must be a string or null', 400);
     }
     try {
-      const updated = await scope.get(Tokens.BackendService).updateBackend(email, c.req.param('slug') ?? '', {
+      const updated = await scope.get(Tokens.BackendService).updateBackend(owner, c.req.param('slug') ?? '', {
         ...(body.baseUrl !== undefined && { baseUrl: body.baseUrl }),
         ...(body.displayName !== undefined && { displayName: body.displayName }),
       });
@@ -196,10 +197,10 @@ function registerBackendRoutes(app: App): void {
       // 1,000 deletes per day.
       const timeoutMs = getProxyTimeoutMs(c.env);
       const status = await probeBackendHealth(updated.base_url, timeoutMs, incomingAuthHeaders(c.req.raw));
-      await scope.get(Tokens.BackendService).recordProbe(email, updated.slug, status);
+      await scope.get(Tokens.BackendService).recordProbe(owner, updated.slug, status);
       const refreshed = await scope
         .get(Tokens.BackendService)
-        .getBackend(email, updated.slug)
+        .getBackend(owner, updated.slug)
         .catch(() => updated);
       return c.json(toBackendJson(refreshed));
     } catch (error) {
@@ -209,9 +210,9 @@ function registerBackendRoutes(app: App): void {
 
   app.delete('/user/backends/:slug', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const owner = c.get('AuthenticatedAccount');
     try {
-      await scope.get(Tokens.BackendService).deleteBackend(email, c.req.param('slug') ?? '');
+      await scope.get(Tokens.BackendService).deleteBackend(owner, c.req.param('slug') ?? '');
       // Likewise no purge: a cached route naming the removed backend fails its
       // D1 revalidation (`findBackendById` returns null) and is re-resolved on
       // the next bare request, which is the same path an edit takes.
@@ -221,15 +222,15 @@ function registerBackendRoutes(app: App): void {
     }
   });
 
-  // Per-backend identity: the username the authenticated email owns on this
+  // Per-backend identity: the username the authenticated account owns on this
   // backend (usernames are per-backend, never global). Proxies verbatim to
   // backend `GET /user/me` with passthrough auth and caches the result in
   // `router_backends.backend_username` for WebDAV owner routing.
   app.get('/user/backends/:slug/me', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const owner = c.get('AuthenticatedAccount');
     try {
-      const row = await scope.get(Tokens.BackendService).getBackend(email, c.req.param('slug') ?? '');
+      const row = await scope.get(Tokens.BackendService).getBackend(owner, c.req.param('slug') ?? '');
       const timeoutMs = getProxyTimeoutMs(c.env);
       const auth = markAsRouterRequest(incomingAuthHeaders(c.req.raw));
       const res = await fetchWithTimeout(
@@ -253,7 +254,7 @@ function registerBackendRoutes(app: App): void {
       }
       await scope
         .get(Tokens.BackendService)
-        .recordBackendUsername(email, row.slug, username)
+        .recordBackendUsername(owner, row.slug, username)
         .catch(() => undefined);
       return c.json({ slug: row.slug, username });
     } catch (error) {
@@ -268,9 +269,9 @@ function registerBackendRoutes(app: App): void {
   // allows browsers but not Worker fetches.
   app.get('/user/backends/:slug/probe', async (c) => {
     const scope = BaseRoute.getScope(c);
-    const email = c.get('AuthenticatedUserEmailAddress');
+    const owner = c.get('AuthenticatedAccount');
     try {
-      const row = await scope.get(Tokens.BackendService).getBackend(email, c.req.param('slug') ?? '');
+      const row = await scope.get(Tokens.BackendService).getBackend(owner, c.req.param('slug') ?? '');
       const timeoutMs = getProxyTimeoutMs(c.env);
       const auth = markAsRouterRequest(incomingAuthHeaders(c.req.raw));
 
@@ -298,7 +299,7 @@ function registerBackendRoutes(app: App): void {
       const [health, volumes] = await Promise.all([check('/health'), check('/user/volumes')]);
       await scope
         .get(Tokens.BackendService)
-        .recordProbe(email, row.slug, health.status)
+        .recordProbe(owner, row.slug, health.status)
         .catch(() => undefined);
       return c.json({
         slug: row.slug,

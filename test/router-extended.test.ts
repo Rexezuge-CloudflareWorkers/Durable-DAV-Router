@@ -13,6 +13,16 @@ import {
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { Tokens, createRequestScope } from '@durable-dav-router/backend-services/composition';
 
+/**
+ * Minimal D1 double for `RouterBackendDAO`.
+ *
+ * Ownership predicates match **exactly**, on the column the real statement uses
+ * (`owner_user_id` for the id-keyed reads, `owner_email` nowhere). The DAOs
+ * lowercase the *parameter* rather than the column precisely so the comparison
+ * stays exact — a double that lowercased both sides would let a wrong predicate
+ * look correct, which is how a `lower(col) = lower(?)` survived a full suite
+ * before the query plan caught it. The integration suite asserts the plans.
+ */
 function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
   const store = new Map(rows.map((r) => [r.id, { ...r }]));
   return {
@@ -26,16 +36,14 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
         async first<T>(): Promise<T | null> {
           const [v0, v1] = state.values as string[];
           if (state.sql.includes('slug_ci = ?')) {
-            const found = [...store.values()].find(
-              (r) => r.owner_email.toLowerCase() === v0.toLowerCase() && r.slug_ci === v1,
-            );
+            const found = [...store.values()].find((r) => r.owner_user_id === v0 && r.slug_ci === v1);
             return (found ?? null) as T | null;
           }
           if (state.sql.includes('WHERE id = ?')) {
             return (store.get(v0) ?? null) as T | null;
           }
           if (state.sql.includes('COUNT(*)')) {
-            const n = [...store.values()].filter((r) => r.owner_email.toLowerCase() === v0.toLowerCase()).length;
+            const n = [...store.values()].filter((r) => r.owner_user_id === v0).length;
             return { cnt: n } as T;
           }
           return null;
@@ -43,15 +51,16 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
           if (state.sql.includes('backend_username_ci = ?')) {
-            const results = [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === v0.toLowerCase());
+            const results = [...store.values()].filter((r) => r.backend_username_ci === v0);
             return { results: results as T[] };
           }
-          const results = [...store.values()].filter((r) => r.owner_email.toLowerCase() === v0.toLowerCase());
+          const results = [...store.values()].filter((r) => r.owner_user_id === v0);
           return { results: results as T[] };
         },
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
           if (state.sql.startsWith('INSERT INTO router_backends')) {
-            const [id, ownerEmail, slug, slugCi, baseUrl, displayName, createdAt, updatedAt] = state.values as [
+            const [id, ownerEmail, ownerUserId, slug, slugCi, baseUrl, displayName, createdAt, updatedAt] = state.values as [
+              string,
               string,
               string,
               string,
@@ -64,6 +73,7 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
             store.set(id, {
               id,
               owner_email: ownerEmail,
+              owner_user_id: ownerUserId,
               slug,
               slug_ci: slugCi,
               base_url: baseUrl,
@@ -98,47 +108,84 @@ function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
 }
 
 describe('RouterBackendDAO', () => {
-  it('creates and reads backends case-insensitively', async () => {
+  it('creates and reads backends back by account key', async () => {
     const dao = new RouterBackendDAO(fakeDb());
     await dao.create({
       id: '1',
-      ownerEmail: 'User@Example.com',
+      owner: { userId: 'usr_1', anchorEmail: 'User@Example.com' },
       slug: 'Office',
       baseUrl: 'https://b.example.com',
       displayName: null,
       now: 7,
     });
-    // Owner stored as-given; lookups are case-insensitive.
-    await expect(dao.getByOwnerSlug('user@example.com', 'OFFICE')).resolves.toMatchObject({ slug: 'Office' });
+    // The anchor is stored lowercased (it is both an FK target and part of the
+    // uniqueness constraint), and the slug is matched on its case-folded form.
+    await expect(dao.getByOwnerSlug('usr_1', 'OFFICE')).resolves.toMatchObject({ slug: 'Office', owner_email: 'user@example.com' });
     await expect(dao.getById('1')).resolves.toMatchObject({ base_url: 'https://b.example.com' });
-    await expect(dao.countByOwnerEmail('USER@example.com')).resolves.toBe(1);
-    await expect(dao.listByOwnerEmail('user@example.com')).resolves.toHaveLength(1);
+    await expect(dao.countByOwnerUserId('usr_1')).resolves.toBe(1);
+    await expect(dao.listByOwnerUserId('usr_1')).resolves.toHaveLength(1);
     await dao.deleteById('1');
     await expect(dao.getById('1')).resolves.toBeNull();
+  });
+
+  it('scopes every owner-scoped read to the account, not the address', async () => {
+    // Two accounts, two different anchors, one shared sign-in address. Nothing
+    // here may be decided by an address: `owner_email` is a frozen anchor that
+    // is 1:1 with the id, and the id is what ownership means.
+    const dao = new RouterBackendDAO(fakeDb());
+    await dao.create({ id: 'a', owner: { userId: 'usr_a', anchorEmail: 'alice@corp.com' }, slug: 'x', baseUrl: 'https://a.example.com', displayName: null, now: 1 });
+    await dao.create({ id: 'b', owner: { userId: 'usr_b', anchorEmail: 'bob@corp.com' }, slug: 'x', baseUrl: 'https://b.example.com', displayName: null, now: 1 });
+    await expect(dao.listByOwnerUserId('usr_a')).resolves.toHaveLength(1);
+    await expect(dao.listByOwnerUserId('usr_a')).resolves.toMatchObject([{ id: 'a' }]);
+    await expect(dao.getByOwnerSlug('usr_a', 'x')).resolves.toMatchObject({ id: 'a' });
+    await expect(dao.getByOwnerSlug('usr_b', 'x')).resolves.toMatchObject({ id: 'b' });
   });
 });
 
 describe('BackendService extended', () => {
+  const account = { id: 'usr_u', email: 'u@e.com', anchorEmail: 'u@e.com' };
+
   it('rejects invalid slug and baseUrl', async () => {
     const svc = new BackendService({ DB: fakeDb() });
-    await expect(svc.createBackend({ ownerEmail: 'u@e.com', slug: '-bad-', baseUrl: 'https://b.example.com' })).rejects.toThrow();
-    await expect(svc.createBackend({ ownerEmail: 'u@e.com', slug: 'ok', baseUrl: 'https://b.example.com/sub' })).rejects.toThrow();
-    await expect(svc.createBackend({ ownerEmail: 'u@e.com', slug: 'ok', baseUrl: 'notaurl' })).rejects.toThrow();
+    await expect(svc.createBackend({ owner: account, slug: '-bad-', baseUrl: 'https://b.example.com' })).rejects.toThrow();
+    await expect(svc.createBackend({ owner: account, slug: 'ok', baseUrl: 'https://b.example.com/sub' })).rejects.toThrow();
+    await expect(svc.createBackend({ owner: account, slug: 'ok', baseUrl: 'notaurl' })).rejects.toThrow();
   });
 
   it('gets, lists, updates, and deletes', async () => {
     const svc = new BackendService({ DB: fakeDb() });
-    await svc.createBackend({ ownerEmail: 'u@e.com', slug: 'a', baseUrl: 'https://a.example.com', displayName: 'A' });
-    await expect(svc.getBackend('u@e.com', 'a')).resolves.toMatchObject({ slug: 'a' });
-    await expect(svc.getBackend('u@e.com', 'missing')).rejects.toThrow();
-    await expect(svc.listBackends('u@e.com')).resolves.toHaveLength(1);
-    await svc.deleteBackend('u@e.com', 'a');
-    await expect(svc.listBackends('u@e.com')).resolves.toHaveLength(0);
+    await svc.createBackend({ owner: account, slug: 'a', baseUrl: 'https://a.example.com', displayName: 'A' });
+    await expect(svc.getBackend(account, 'a')).resolves.toMatchObject({ slug: 'a' });
+    await expect(svc.getBackend(account, 'missing')).rejects.toThrow();
+    await expect(svc.listBackends(account)).resolves.toHaveLength(1);
+    await svc.deleteBackend(account, 'a');
+    await expect(svc.listBackends(account)).resolves.toHaveLength(0);
+  });
+
+  it('keeps a backend reachable after the account changes its sign-in address', async () => {
+    // The regression this whole change exists to prevent. `owner_email` is the
+    // frozen anchor and `owner_user_id` the identity, so moving `email` must
+    // change nothing an owner-scoped read depends on.
+    const svc = new BackendService({ DB: fakeDb() });
+    const before = { id: 'usr_u', email: 'old@e.com', anchorEmail: 'u@e.com' };
+    await svc.createBackend({ owner: before, slug: 'office', baseUrl: 'https://a.example.com' });
+    const after = { id: 'usr_u', email: 'new@e.com', anchorEmail: 'u@e.com' };
+    await expect(svc.listBackends(after)).resolves.toHaveLength(1);
+    await expect(svc.getBackend(after, 'office')).resolves.toMatchObject({ slug: 'office' });
+  });
+
+  it('does not leak another account’s backends across a shared sign-in address', async () => {
+    const svc = new BackendService({ DB: fakeDb() });
+    await svc.createBackend({ owner: { id: 'usr_a', email: 'shared@e.com', anchorEmail: 'alice@e.com' }, slug: 'a', baseUrl: 'https://a.example.com' });
+    await svc.createBackend({ owner: { id: 'usr_b', email: 'shared@e.com', anchorEmail: 'bob@e.com' }, slug: 'b', baseUrl: 'https://b.example.com' });
+    // Same `email`, different accounts. Ownership is decided by id.
+    const asAlice = { id: 'usr_a', email: 'shared@e.com', anchorEmail: 'alice@e.com' };
+    await expect(svc.listBackends(asAlice)).resolves.toMatchObject([{ slug: 'a' }]);
   });
 
   it('recordProbe tolerates unknown slugs', async () => {
     const svc = new BackendService({ DB: fakeDb() });
-    await expect(svc.recordProbe('u@e.com', 'ghost', 200)).resolves.toBeUndefined();
+    await expect(svc.recordProbe(account, 'ghost', 200)).resolves.toBeUndefined();
   });
 });
 

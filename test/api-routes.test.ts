@@ -24,10 +24,23 @@ interface FakeContext {
     json: () => Promise<unknown>;
   };
   env: Record<string, unknown>;
-  get: (k: string) => string;
+  // The authenticated account lives on the context; `get` is untyped in Hono,
+  // so a stub must not narrow it back to `string`.
+  get: (k: string) => unknown;
   json: (data: unknown, status?: number) => Response;
 }
 
+/**
+ * D1 double for the `/user/*` routes.
+ *
+ * Ownership predicates match **exactly** on `owner_user_id`, the column the real
+ * statements use, and `eq` is strict equality rather than a case-folded compare.
+ * The DAOs lowercase the *parameter* instead of the column so the comparison
+ * stays exact and the index stays usable; a double that folded both sides would
+ * make a wrong predicate look correct — which is how `lower(col) = lower(?)`
+ * survived a full suite before `EXPLAIN QUERY PLAN` caught it. The integration
+ * suite asserts the plans.
+ */
 function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string, Row> } {
   const rows = new Map<string, Row>();
   const eq = (a: unknown, b: unknown) => a === b;
@@ -42,15 +55,15 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
         async first<T>(): Promise<T | null> {
           const [v0, v1] = state.values as string[];
           if (state.sql.includes('slug_ci = ?')) {
-            const found = [...rows.values()].find((r) => eq(r.owner_email, v0) && eq(r.slug_ci, v1));
+            const found = [...rows.values()].find((r) => eq(r.owner_user_id, v0) && eq(r.slug_ci, v1));
             return (found ?? null) as T | null;
           }
           if (state.sql.includes('WHERE id = ?')) return (rows.get(v0) ?? null) as T | null;
-          return state.sql.includes('COUNT(*)') ? ({ cnt: [...rows.values()].filter((r) => eq(r.owner_email, v0)).length } as T) : null;
+          return state.sql.includes('COUNT(*)') ? ({ cnt: [...rows.values()].filter((r) => eq(r.owner_user_id, v0)).length } as T) : null;
         },
         async all<T>(): Promise<{ results: T[] }> {
           const [v0] = state.values as [string];
-          return ({ results: state.sql.includes('backend_username_ci = ?') ? [...rows.values()].filter((r) => eq(r.backend_username_ci, v0)) as T[] : [...rows.values()].filter((r) => eq(r.owner_email, v0)) as T[] });
+          return ({ results: state.sql.includes('backend_username_ci = ?') ? [...rows.values()].filter((r) => eq(r.backend_username_ci, v0)) as T[] : [...rows.values()].filter((r) => eq(r.owner_user_id, v0)) as T[] });
         },
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
           const sql = state.sql;
@@ -58,7 +71,8 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
             // Mirrors the real guarded insert: a `SELECT ... WHERE` supplies
             // the row only when the owner is under quota, and a duplicate is
             // dropped by the unique index rather than raising.
-            const [id, ownerEmail, slug, slugCi, baseUrl, displayName, createdAt, updatedAt, ownerForQuota, max] = state.values as [
+            const [id, ownerEmail, ownerUserId, slug, slugCi, baseUrl, displayName, createdAt, updatedAt, ownerForQuota, max] = state.values as [
+              string,
               string,
               string,
               string,
@@ -70,14 +84,15 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
               string,
               number,
             ];
-            const owned = [...rows.values()].filter((r) => eq(r.owner_email, ownerForQuota));
+            const owned = [...rows.values()].filter((r) => eq(r.owner_user_id, ownerForQuota));
             if (owned.length >= max) return { success: true, meta: { changes: 0 } };
-            if (owned.some((r) => eq(r.owner_email, ownerForQuota) && eq(r.slug_ci, slugCi))) {
+            if (owned.some((r) => eq(r.slug_ci, slugCi))) {
               return { success: true, meta: { changes: 0 } };
             }
             rows.set(id, {
               id,
               owner_email: ownerEmail,
+              owner_user_id: ownerUserId,
               slug,
               slug_ci: slugCi,
               base_url: baseUrl,
@@ -167,7 +182,20 @@ function fakeContext(opts: {
       },
     },
     env: opts.env,
-    get: (k: string) => (k === 'AuthenticatedUserEmailAddress' ? (opts.email ?? 'test@example.com') : ''),
+    // The request context carries the resolved *account*, not a bare address.
+    // `anchorEmail` is the frozen `users.email`; for a fixture it is the same
+    // address, but the two are deliberately separate fields so a route that
+    // reaches for the mutable one by mistake is visible.
+    //
+    // The id is derived from the address rather than hardcoded, so two different
+    // addresses in one test are two different *accounts* — ownership is decided
+    // by the id, and a shared `usr_test` would make a cross-account isolation
+    // assertion pass for the wrong reason.
+    get: (k: string): unknown => {
+      if (k !== 'AuthenticatedAccount') return undefined;
+      const email = opts.email ?? 'test@example.com';
+      return { id: `usr_${email.replaceAll(/[^a-z0-9]+/gi, '_')}`, email, anchorEmail: email };
+    },
     json: (data: unknown, status = 200) => Response.json(data, { status }),
   };
 }
@@ -323,6 +351,7 @@ describe('GET /user/backends', () => {
     rows.set('1', {
       id: '1',
       owner_email: 'test@example.com',
+      owner_user_id: 'usr_test_example_com',
       slug: 'office',
       slug_ci: 'office',
       base_url: 'https://b.com',
@@ -363,6 +392,9 @@ function oneBackendRow() {
   rows.set('1', {
     id: '1',
     owner_email: 'test@example.com',
+    // Ownership keys on the id; `owner_email` is the frozen anchor the foreign
+    // key resolves against. Both are present on a real row.
+    owner_user_id: 'usr_test_example_com',
     slug: 'office',
     slug_ci: 'office',
     base_url: 'https://b.com',
@@ -390,7 +422,9 @@ describe('GET/PATCH/DELETE /user/backends/:slug', () => {
 
   it('returns 404 for another account’s backend', async () => {
     // Owner scoping is enforced in the query, so a different identity simply
-    // does not match.
+    // does not match. The fixture derives the id from the address, because
+    // ownership is decided by the id: two addresses sharing one `usr_test` would
+    // make this pass for the wrong reason.
     const { routes, env } = withBackend();
     const res = await call(
       routes,
@@ -503,6 +537,7 @@ describe('GET /user/volumes fan-out', () => {
     rows.set('1', {
       id: '1',
       owner_email: 'test@example.com',
+      owner_user_id: 'usr_test_example_com',
       slug: 'a',
       slug_ci: 'a',
       base_url: 'https://a.com',
@@ -517,6 +552,7 @@ describe('GET /user/volumes fan-out', () => {
     rows.set('2', {
       id: '2',
       owner_email: 'test@example.com',
+      owner_user_id: 'usr_test_example_com',
       slug: 'b',
       slug_ci: 'b',
       base_url: 'https://b.com',
@@ -590,6 +626,7 @@ describe('POST /user/volumes', () => {
     rows.set('1', {
       id: '1',
       owner_email: 'test@example.com',
+      owner_user_id: 'usr_test_example_com',
       slug: 'a',
       slug_ci: 'a',
       base_url: 'https://a.com',
@@ -636,6 +673,7 @@ describe('POST /user/volumes', () => {
       rows.set(id, {
         id,
         owner_email: 'test@example.com',
+        owner_user_id: 'usr_test_example_com',
         slug,
         slug_ci: slug,
         base_url: `https://${slug}.com`,
@@ -699,24 +737,28 @@ describe('POST /user/volumes', () => {
 });
 
 describe('GET /user/me', () => {
-  it('returns the authenticated email', async () => {
+  it('returns the current sign-in address and the account id', async () => {
+    // The address is the *current* one (`users.current_email`), never the frozen
+    // anchor — an anchor can be an opaque `anchor-<hex>@users.invalid`, so
+    // reporting it would be both a leak and a lie. The id is the stable identity
+    // a client can hold across an address change.
     const { db } = fakeDb();
     const { app, routes } = stubApp();
     registerUserProfileRoutes(app as never);
     const res = await call(routes, 'GET /user/me', fakeContext({ env: { ...ENV, DB: db }, email: 'user@example.com' }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ email: 'user@example.com' });
+    expect(await res.json()).toEqual({ email: 'user@example.com', id: 'usr_user_example_com' });
   });
 
   it('still answers when the user row is missing', async () => {
-    // The identity came from Access, so the email is authoritative even if the
+    // The identity came from Access, so the address is authoritative even if the
     // D1 read finds nothing.
     const { db } = fakeDb();
     const { app, routes } = stubApp();
     registerUserProfileRoutes(app as never);
     const res = await call(routes, 'GET /user/me', fakeContext({ env: { ...ENV, DB: db }, email: 'user@example.com' }));
     expect(res.status).toBe(200);
-    expect((await res.json()) as { email: string }).toEqual({ email: 'user@example.com' });
+    expect((await res.json()) as { email: string }).toMatchObject({ email: 'user@example.com' });
   });
 });
 
