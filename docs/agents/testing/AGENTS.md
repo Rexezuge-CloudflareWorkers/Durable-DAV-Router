@@ -2,9 +2,18 @@
 
 Scope: unit + integration tests. Parent index: `../../../AGENTS.md`.
 
-Current thresholds (`vitest.config.mts`): **statements 70 / branches 68 / functions 69 / lines 72** (enforced floor; measured 71/68/69/72). Never lower a threshold to make CI pass — raise it as coverage grows.
+Two gates, run by the same `pnpm run test` / `pnpm run test:coverage`:
 
-This number is a whole-repository one. `apps/web` joined the `include` list in the change that added the SPA to the gate, and it is 44 presentational modules whose first tests arrived later; `vitest.config.mts` records that history and names splitting the SPA into its own project as the follow-up.
+| Config | Covers | Floor (measured) |
+| --- | --- | --- |
+| `vitest.config.mts` | `apps/api` + `packages/**` | **88 / 80 / 88 / 91** (89.6 / 82.0 / 89.7 / 92.1) |
+| `vitest.web.config.mts` | `apps/web` | **55 / 52 / 54 / 56** (55.8 / 52.3 / 54.1 / 56.5) |
+
+Never lower a threshold to make CI pass — raise it as coverage grows.
+
+The SPA is a separate gate, and a separate config file rather than a Vitest `projects` entry: with one config the SPA suites ran under `node` and the worker suites under `jsdom` in the same pass, so a test could pass in one environment and fail in the other with neither run noticing. The two partition the suite by filename — every SPA suite is named `web-*` — and the router config excludes that glob explicitly, because a pattern that silently matches nothing drops half the suite without a word.
+
+Both use `coverage.all: true`. Without it the v8 provider reports only modules a test happened to import, so an untested component is *absent* rather than counted as zero: this tree read 83% before the flag and 56% after, and 83% was the lie. The SPA also runs on `pool: 'threads'` — a forked worker per file is the shape that exhausts a constrained machine, at which point the run dies partway with a bare "Worker exited unexpectedly" and no failing test.
 
 Exclusions: `**/*.test.{ts,tsx}`, `**/*.d.ts`, `**/index.ts`, `**/types.d.ts`, `**/model/**`, plus the build-generated `apps/api/src/generated/**` blob, type-only modules (`D1Types`, `ServiceEnv`, `env.d.ts`), and re-export barrels (`dao/identity.ts`, `dao/router.ts`) — none of which have runtime behavior to exercise.
 

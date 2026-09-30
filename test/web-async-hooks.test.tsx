@@ -195,7 +195,7 @@ describe('useAsyncLoad', () => {
 });
 
 describe('useBusyAction', () => {
-  function Actions() {
+  function Actions({ onRejected }: { onRejected?: (error: unknown) => void }) {
     const { busy, run } = useBusyAction();
     return (
       <div>
@@ -209,11 +209,15 @@ describe('useBusyAction', () => {
         >
           ok
         </button>
+        {/* `run` propagates the rejection by design: it clears `busy` on the way
+            out and leaves the *reporting* to the caller, which is the only layer
+            that knows the message to show. A caller that forgets therefore gets an
+            unhandled rejection — loud, rather than a silent no-op. */}
         <button
           onClick={() => {
             void run(async () => {
               throw new Error('nope');
-            });
+            }).catch(onRejected ?? (() => undefined));
           }}
         >
           fail
@@ -232,15 +236,18 @@ describe('useBusyAction', () => {
     await waitFor(() => expect(screen.getByTestId('busy').textContent).toBe('no'));
   });
 
-  it('clears busy when the action throws', async () => {
+  it('clears busy when the action throws, and still surfaces the error', async () => {
     // The failure mode this hook exists for: a mutation that forgets its
     // `finally` leaves every button in the bucket browser disabled until the next
-    // page load, with no error shown.
-    render(<Actions />);
+    // page load, with no error shown. Clearing `busy` and propagating are separate
+    // concerns — the caller owns the message, the hook owns the flag.
+    const onRejected = vi.fn();
+    render(<Actions onRejected={onRejected} />);
     act(() => {
       screen.getByRole('button', { name: 'fail' }).click();
     });
     await waitFor(() => expect(screen.getByTestId('busy').textContent).toBe('no'));
+    expect(onRejected).toHaveBeenCalledOnce();
   });
 
   it("returns the action's value, and a failure yields undefined", async () => {

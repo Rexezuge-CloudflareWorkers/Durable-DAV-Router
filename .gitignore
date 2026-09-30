@@ -45,6 +45,8 @@ lib-cov
 
 coverage
 coverage-integration
+# The SPA's own coverage gate writes beside it; see vitest.web.config.mts.
+coverage-spa
 \*.lcov
 
 # nyc test coverage
