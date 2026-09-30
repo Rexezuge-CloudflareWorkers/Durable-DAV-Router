@@ -9,7 +9,6 @@ export {
   truncateSnippet,
   rewriteDestinationForBackend,
   buildProxiedHeaders,
-  buildProbeHeaders,
   filterProxiedResponseHeaders,
   forwardDavRequest,
   resolveBackend,
@@ -17,15 +16,21 @@ export {
   getProxyTimeoutMs,
   stripTrailingSlashes,
   stripSlashes,
+  PASSTHROUGH_REQUEST_HEADERS,
+  PASSTHROUGH_RESPONSE_HEADERS,
+} from './BackendProxyService';
+export type { BackendResolution } from './BackendProxyService';
+// Volume-existence probing, split out of `BackendProxyService` to keep that
+// file under the god-file guard. Re-exported here so callers keep one import.
+export {
+  buildProbeHeaders,
   VOLUME_PROBE_BODY,
   PROBE_AUTHORIZATION,
   MAX_PROBE_CANDIDATES,
   classifyProbeStatus,
   probeCandidateBackends,
-  PASSTHROUGH_REQUEST_HEADERS,
-  PASSTHROUGH_RESPONSE_HEADERS,
-} from './BackendProxyService';
-export type { BackendResolution, AutoResolution, ProbeSignal } from './BackendProxyService';
+} from './BackendProbe';
+export type { AutoResolution, ProbeSignal } from './BackendProbe';
 export {
   getCachedRoute,
   putCachedRoute,

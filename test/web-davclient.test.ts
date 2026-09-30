@@ -41,14 +41,14 @@ interface Call {
  * hand-rolled save/restore so an exception mid-test cannot leak the stub into
  * the next one.
  */
-async function withFetch<T>(body: string, run: () => Promise<T>, status = 207): Promise<{ result: T; calls: Call[] }> {
+async function withFetch<T>(body: string, run: () => Promise<T>, status = 207, headers: Record<string, string> = {}): Promise<{ result: T; calls: Call[] }> {
   const calls: Call[] = [];
   vi.stubGlobal(
     'fetch',
     async (url: unknown, init?: RequestInit) => {
       calls.push({ url: String(url), init: init ?? {} });
       // 204/205/304 are null-body statuses; the Response constructor rejects a body.
-      return new Response(status === 204 ? null : body, { status });
+      return new Response(status === 204 ? null : body, { status, headers });
     },
   );
   try {
@@ -149,15 +149,70 @@ describe('listDirectory', () => {
   });
 
   it('strips the volume base from a real prefixed body', async () => {
-    const { result: entries } = await withFetch(prefixedBody('photos'), () => listDirectory(OWNER, VOLUME, 'photos'));
+    const { result } = await withFetch(prefixedBody('photos'), () => listDirectory(OWNER, VOLUME, 'photos'));
     // The self-response reduces to the base path and is dropped; the child keeps
     // a volume-relative path that the URL builder can address.
-    expect(entries).toMatchObject([{ name: 'notes.txt', path: 'photos/notes.txt', isCollection: false }]);
+    expect(result.entries).toMatchObject([{ name: 'notes.txt', path: 'photos/notes.txt', isCollection: false }]);
   });
 
   it('carries the ?backend= selector on a read', async () => {
     const call = await capture(prefixedBody(''), () => listDirectory(OWNER, VOLUME, '', 'office'));
     expect(call.url).toBe(`${FILES}/?backend=office`);
+  });
+
+  /**
+   * `listDirectory` now returns a `DavListing` rather than a bare array, so
+   * these read `.entries`.
+   */
+  it('appends paging parameters without a selector', async () => {
+    const call = await capture(prefixedBody('photos'), () => listDirectory(OWNER, VOLUME, 'photos', null, { page: 2, limit: 50 }));
+    expect(call.url).toBe(`${FILES}/photos?page=2&limit=50`);
+  });
+
+  it('joins paging parameters onto an existing ?backend= selector with &', async () => {
+    // Two `?` would silently drop the paging parameters, and the symptom would
+    // be a pager that never advances past page 1.
+    const call = await capture(prefixedBody('photos'), () => listDirectory(OWNER, VOLUME, 'photos', 'office', { page: 3, limit: 100 }));
+    expect(call.url).toBe(`${FILES}/photos?backend=office&page=3&limit=100`);
+  });
+
+  it('omits paging parameters entirely when no page is requested', async () => {
+    // A DAV-plane read and a WebDAV client's read must stay byte-identical to
+    // before: no query string at all.
+    const call = await capture(prefixedBody(''), () => listDirectory(OWNER, VOLUME, ''));
+    expect(call.url).toBe(`${FILES}/`);
+  });
+
+  it('reports the paging metadata the backend returned', async () => {
+    const { result } = await withFetch(prefixedBody('photos'), () => listDirectory(OWNER, VOLUME, 'photos', null, { page: 2, limit: 50 }), 207, {
+      'X-Dav-Page-Count': '12431',
+      'X-Dav-Page': '2',
+      'X-Dav-Page-Limit': '50',
+    });
+    expect(result).toMatchObject({ total: 12_431, page: 2, limit: 50, paged: true });
+  });
+
+  /**
+   * Version skew: a backend that does not implement paging omits the headers.
+   * The client must then read the body as a *complete* listing rather than
+   * silently assuming it is page 1 of many.
+   */
+  it('reports an unpaged listing when the backend omits the paging headers', async () => {
+    const { result } = await withFetch(prefixedBody('photos'), () => listDirectory(OWNER, VOLUME, 'photos', null, { page: 2, limit: 50 }));
+    expect(result.paged).toBe(false);
+    expect(result.total).toBeNull();
+    expect(result.entries).toMatchObject([{ name: 'notes.txt', path: 'photos/notes.txt' }]);
+  });
+
+  it('adopts the page the backend says it served, over the page requested', async () => {
+    // The backend clamps an out-of-range page; the URL should follow the served
+    // page so the address bar agrees with the rows on screen.
+    const { result } = await withFetch(prefixedBody('photos'), () => listDirectory(OWNER, VOLUME, 'photos', null, { page: 99, limit: 50 }), 207, {
+      'X-Dav-Page-Count': '12',
+      'X-Dav-Page': '1',
+      'X-Dav-Page-Limit': '50',
+    });
+    expect(result.page).toBe(1);
   });
 
   it('surfaces a non-207 as a BackendError carrying the type', async () => {

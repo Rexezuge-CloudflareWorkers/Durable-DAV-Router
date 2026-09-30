@@ -80,16 +80,67 @@ async function davFetch(url: string, init: RequestInit): Promise<Response> {
   return response;
 }
 
-export async function listDirectory(owner: string, volume: string, innerPath: string, backend?: string | null): Promise<DavEntry[]> {
-  const url = entryUrl(owner, volume, innerPath, backend);
+/**
+ * One page of a directory listing.
+ *
+ * `paged` is `false` when the backend did not answer with `X-Dav-Page-Count`,
+ * which means it does not implement paging — an older Durable-DAV behind this
+ * router. The caller then treats the returned entries as the complete listing.
+ * Note the router forwards those headers itself (`BackendProxyService`), so their
+ * absence means the *backend* lacks paging, not that the proxy stripped them.
+ */
+export interface DavListing {
+  entries: DavEntry[];
+  page: number;
+  limit: number;
+  /**
+  Total entries, or `null` when the backend did not report one.
+  */
+  total: number | null;
+  paged: boolean;
+}
+
+function readPagingHeader(response: Response, name: string): number | null {
+  const raw = response.headers.get(name);
+  if (raw === null || raw.trim() === '') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+export async function listDirectory(
+  owner: string,
+  volume: string,
+  innerPath: string,
+  backend?: string | null,
+  page?: { page: number; limit: number },
+): Promise<DavListing> {
+  const base = entryUrl(owner, volume, innerPath, backend);
+  // `entryUrl` already appends `?backend=` when a selector is present, so the
+  // join has to respect an existing query. Two `?` would silently drop the
+  // paging parameters, and the symptom would be a pager stuck on page 1.
+  const paging = page === undefined ? '' : `&page=${encodeURIComponent(String(page.page))}&limit=${encodeURIComponent(String(page.limit))}`;
+  const url = paging === '' ? base : `${base}${base.includes('?') ? paging : `?${paging.slice(1)}`}`;
   const body = `<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><allprop/></propfind>`;
   const response = await davFetch(url, {
     method: 'PROPFIND',
     headers: { Depth: '1', 'Content-Type': 'application/xml; charset=utf-8' },
     body,
   });
+  // Read the headers before the body: `readDav` consumes the stream.
+  const total = readPagingHeader(response, 'X-Dav-Page-Count');
+  const effectivePage = readPagingHeader(response, 'X-Dav-Page');
+  const effectiveLimit = readPagingHeader(response, 'X-Dav-Page-Limit');
   const xml = await readDav(response);
-  return parseMultistatus(xml, innerPath, davBase(owner, volume));
+  const entries = parseMultistatus(xml, innerPath, davBase(owner, volume));
+  return {
+    entries,
+    // Echo back the *effective* values: a request for page 99 of a 1-page
+    // collection is served page 1, and the URL should say so.
+    page: effectivePage ?? page?.page ?? 1,
+    limit: effectiveLimit ?? page?.limit ?? Math.max(1, entries.length),
+    total,
+    paged: total !== null,
+  };
 }
 
 export async function createDirectory(owner: string, volume: string, innerPath: string, backend?: string | null): Promise<void> {
