@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createBackend, deleteBackend, getBackendIdentity, listBackends, probeBackend, updateBackend } from '../apps/web/src/services/backendService';
-import { createBucketCredential, listBucketCredentials, revokeBucketCredential } from '../apps/web/src/services/credentialService';
+import {
+  createBucketCredential,
+  listBucketCredentials,
+  revokeBucketCredential,
+  setBucketCredentialReadOnly,
+} from '../apps/web/src/services/credentialService';
 import { loadCurrentUser } from '../apps/web/src/services/userService';
 import { deleteVolume, listMyVolumes, loadVolume, updateVolume } from '../apps/web/src/services/volumeService';
 
@@ -122,9 +127,40 @@ describe('credentialService', () => {
     const listed = await withFetch('{}', () => listBucketCredentials(owner, volume, 'office'));
     expect(target(only(listed.calls).url)).toBe(`${base}?backend=office`);
 
-    const created = await withFetch('{"credential_id":"c1"}', () => createBucketCredential(owner, volume, 'laptop', 30, 'office'));
+    const created = await withFetch('{"credential_id":"c1"}', () => createBucketCredential(owner, volume, 'laptop', 30, false, 'office'));
     expect(target(only(created.calls).url)).toBe(`${base}?backend=office`);
-    expect(await recordedJson(created.calls[0])).toEqual({ name: 'laptop', expiresInDays: 30 });
+    expect(await recordedJson(created.calls[0])).toEqual({ name: 'laptop', expiresInDays: 30, readOnly: false });
+  });
+
+  it('sends the read-only flag on create without disturbing the selector', async () => {
+    // `readOnly` precedes `backend` positionally. Had it been appended after the
+    // selector, a caller's `true` would land in `backend` and become
+    // `?backend=true` — a bucket that does not exist, reported as a 404 rather
+    // than as the access level the owner asked for.
+    const created = await withFetch('{"credential_id":"c1","readOnly":true}', () =>
+      createBucketCredential(owner, volume, 'backup', undefined, true, 'office'),
+    );
+    expect(target(only(created.calls).url)).toBe(`${base}?backend=office`);
+    expect(await recordedJson(created.calls[0])).toEqual({ name: 'backup', expiresInDays: undefined, readOnly: true });
+  });
+
+  it('flips the flag with PATCH, keeping the selector as the only query', async () => {
+    const flipped = await withFetch('{"credentialId":"c 1","readOnly":true}', () =>
+      setBucketCredentialReadOnly(owner, volume, 'c 1', true, 'office'),
+    );
+    expect(target(only(flipped.calls).url)).toBe(`${base}/${encodeURIComponent('c 1')}?backend=office`);
+    expect(flipped.calls[0]?.init.method).toBe('PATCH');
+    expect(await recordedJson(flipped.calls[0])).toEqual({ readOnly: true });
+  });
+
+  it('flips the flag back without a selector when no backend is given', async () => {
+    // The other direction matters as much: a flag that could only be set one way
+    // would leave the owner holding a credential they can never restore.
+    const flipped = await withFetch('{"credentialId":"c1","readOnly":false}', () =>
+      setBucketCredentialReadOnly(owner, volume, 'c1', false),
+    );
+    expect(only(flipped.calls).url).toBe(`${base}/c1`);
+    expect(await recordedJson(flipped.calls[0])).toEqual({ readOnly: false });
   });
 
   it('omits the selector when no backend is given', async () => {

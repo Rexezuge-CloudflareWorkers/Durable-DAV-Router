@@ -505,6 +505,31 @@ function stubEverythingAnswers207(): void {
   vi.stubGlobal('fetch', async () => new Response('<ok/>', { status: 207, headers: { 'Content-Type': 'application/xml' } }));
 }
 
+/**
+ * Probes succeed, plain forwards answer a backend authorization refusal.
+ *
+ * The body is a real `DAV:error` document with the `Content-Type` the backend
+ * sets, and no `WWW-Authenticate` — the exact shape a read-only credential's
+ * refusal has upstream, so a test can assert the router relays it rather than
+ * re-authoring or embellishing it.
+ */
+function stubForwardStatus(status: number): CapturedFetch[] {
+  const calls: CapturedFetch[] = [];
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(input);
+    calls.push({ url, init: init ?? {} });
+    const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+    if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
+      return new Response('<ok/>', { status: 207, headers: { 'Content-Type': 'application/xml' } });
+    }
+    return new Response('<?xml version="1.0" encoding="utf-8"?>\n<D:error xmlns:D="DAV:"><D:cannot-modify-protected-property/></D:error>', {
+      status,
+      headers: { 'Content-Type': 'application/xml; charset=utf-8' },
+    });
+  });
+  return calls;
+}
+
 // Probes are indeterminate (`502`) while plain forwards answer `404`.
 function stubProbesUnavailableForwards404(): void {
   vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -690,6 +715,46 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     expect(statuses).toEqual([502]);
     expect(kv.ops.delete).toBe(1);
     expect(kv.store.size).toBe(0);
+  });
+
+  it('spends nothing when a read-only credential retries a refused write', async () => {
+    // A backend 403 is an authorization answer about one credential, not
+    // evidence that the route is wrong — so it must not enter the staleness
+    // set, and `trackVolumeMutation` must skip it as it skips every non-2xx.
+    // A client looping on a refused PUT is the exact shape that once spent the
+    // daily write budget in ~40 minutes while answering every request correctly.
+    stubForwardStatus(403);
+    const kv = countingKv({
+      'davRoute:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
+    });
+    const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/photos/notes.txt', 'PUT');
+    const statuses = await repeatAcrossIsolates(6, request);
+    expect(statuses).toEqual([403, 403, 403, 403, 403, 403]);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.ops.delete).toBe(0);
+    // The entry survives: the route is still correct, it was the credential
+    // that was refused.
+    expect(kv.store.size).toBe(1);
+  });
+
+  it('forwards a backend 403 with its DAV:error body and no Basic challenge', async () => {
+    // The backend owns this refusal. The router must not translate it, and must
+    // not add `WWW-Authenticate` — that header on a 403 sends a native client
+    // into a re-prompt loop it can never satisfy. Both are asserted because
+    // either one would be invisible to a status-only test.
+    const calls = stubForwardStatus(403);
+    const kv = countingKv({
+      'davRoute:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
+    });
+    const res = await proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/photos/notes.txt', 'PUT')();
+
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain('cannot-modify-protected-property');
+    expect(res.headers.get('WWW-Authenticate')).toBeNull();
+    // The write reached exactly one backend — the cached one.
+    const forwards = calls.filter((c) => (c.init.method ?? 'GET') === 'PUT');
+    expect(forwards).toHaveLength(1);
+    expect(forwards[0]?.url).toBe('https://a.example.com/owner/photos/notes.txt');
   });
 });
 
