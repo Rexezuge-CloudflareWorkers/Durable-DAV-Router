@@ -11,6 +11,7 @@ export {
   buildProxiedHeaders,
   buildProbeHeaders,
   filterProxiedResponseHeaders,
+  forwardDavRequest,
   resolveBackend,
   fetchWithTimeout,
   getProxyTimeoutMs,

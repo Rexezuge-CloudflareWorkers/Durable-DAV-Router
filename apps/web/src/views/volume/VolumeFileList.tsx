@@ -8,6 +8,7 @@ import { EmptyState, LoadingSpinner } from '../../components/layout/PageState';
 function VolumeFileList({
   owner,
   volume,
+  backend,
   entries,
   status,
   busy,
@@ -18,6 +19,17 @@ function VolumeFileList({
 }: {
   owner: string;
   volume: string;
+  /**
+   * Upstream selector (`?backend=`), threaded through to every request this row
+   * makes — including the download `href`.
+   *
+   * It used to be dropped for the download only, and that is a real failure
+   * rather than a cosmetic one: with more than one backend registered the router
+   * cannot resolve the volume, so the link 409'd and the browser saved the JSON
+   * error body as the "downloaded" file. Every other action on this row (preview,
+   * rename, duplicate, delete) already carried it.
+   */
+  backend?: string | null;
   entries: DavEntry[];
   status: 'loading' | 'ready' | 'missing';
   busy: boolean;
@@ -57,7 +69,7 @@ function VolumeFileList({
           </button>
           {!entry.isCollection && (
             <a
-              href={downloadUrl(owner, volume, entry.path)}
+              href={downloadUrl(owner, volume, entry.path, backend)}
               download={entry.name}
               aria-label={t('files.download', 'Download')}
               className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-3)]"

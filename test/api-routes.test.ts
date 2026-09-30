@@ -736,6 +736,250 @@ describe('POST /user/volumes', () => {
   });
 });
 
+/**
+ * `/user/volumes/:owner/:volume/*` — the browser plane the bucket browser drives.
+ *
+ * The SPA is a WebDAV client on this path (`PROPFIND`/`GET`/`PUT`/`MKCOL`/
+ * `DELETE`/`COPY`/`MOVE` over `/files/*`), so the proxy has to behave like the
+ * WebDAV plane: forward the DAV-semantic headers and stream the body back. The
+ * JSON management forwarder it used to share dropped them, and each omission was
+ * a distinct user-visible failure — assert the header, not the route, because a
+ * status-code assertion cannot see a request that was forwarded with its meaning
+ * stripped.
+ */
+describe('browser-plane subpath proxy', () => {
+  const FILES = '/user/volumes/alice/photos/files';
+
+  const oneBackend = () => {
+    const { db, rows } = fakeDb();
+    const now = Math.floor(Date.now() / 1000);
+    rows.set('1', {
+      id: '1',
+      owner_email: 'test@example.com',
+      owner_user_id: 'usr_test_example_com',
+      slug: 'office',
+      slug_ci: 'office',
+      base_url: 'https://backend.example.com',
+      display_name: null,
+      created_at: now,
+      updated_at: now,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: null,
+      backend_username_ci: null,
+    });
+    const { app, routes } = stubApp();
+    registerAggregatedVolumeRoutes(app as never);
+    return { routes, env: { ...ENV, DB: db } };
+  };
+
+  /**
+  The `init` of the single upstream request the stub received.
+  */
+  const upstream = (): { url: string; method: string; headers: Headers; body: unknown } => {
+    const call = stubs.fetch.mock.calls.at(-1);
+    if (!call) throw new Error('no upstream request was made');
+    const init = (call[1] ?? {}) as RequestInit;
+    const input = call[0];
+    const url = String(input instanceof Request ? input.url : input);
+    return { url, method: init.method ?? 'GET', headers: new Headers(init.headers), body: init.body };
+  };
+
+  it('forwards Depth on a PROPFIND', async () => {
+    // The regression: `Depth` is what separates one collection from the whole
+    // subtree. RFC 4918 §9.1 makes a PROPFIND without it `Depth: infinity`, which
+    // is how the backend reads it, so a dropped header returned the entire tree
+    // and the UI listed `dir_A`, `dir_B`, and `A.txt` as siblings.
+    stubs.fetch.mockImplementation(async () => new Response('<multistatus/>', { status: 207 }));
+    const { routes, env } = oneBackend();
+    const res = await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'PROPFIND', env, url: `https://router.example.com${FILES}/dir_A?backend=office`, headers: { Depth: '1' } }),
+    );
+    expect(res.status).toBe(207);
+    expect(upstream().headers.get('Depth')).toBe('1');
+  });
+
+  it('forwards Overwrite alongside a MOVE', async () => {
+    // `Overwrite: F` is a precondition, not a hint: dropping it turns a
+    // must-not-exist move into an unconditional overwrite.
+    stubs.fetch.mockImplementation(async () => new Response(null, { status: 201 }));
+    const { routes, env } = oneBackend();
+    await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({
+        method: 'MOVE',
+        env,
+        url: `https://router.example.com${FILES}/a.txt?backend=office`,
+        headers: { Destination: `https://router.example.com${FILES}/b.txt?backend=office`, Overwrite: 'F' },
+      }),
+    );
+    expect(upstream().headers.get('Overwrite')).toBe('F');
+  });
+
+  it('rewrites a router-origin Destination onto the backend and strips the selector', async () => {
+    // The SPA builds `Destination` from its own origin, and the backend answers
+    // `502` for a cross-origin destination (§10.3). So an unrewritten header is a
+    // broken MOVE, and a leaked `?backend=` is the router's selector reaching an
+    // origin that has no use for it.
+    stubs.fetch.mockImplementation(async () => new Response(null, { status: 201 }));
+    const { routes, env } = oneBackend();
+    await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({
+        method: 'MOVE',
+        env,
+        url: `https://router.example.com${FILES}/a.txt?backend=office`,
+        headers: { Destination: `https://router.example.com${FILES}/b.txt?backend=office` },
+      }),
+    );
+    const dest = upstream().headers.get('Destination') ?? '';
+    expect(new URL(dest).origin).toBe('https://backend.example.com');
+    expect(new URL(dest).pathname).toBe(`${FILES}/b.txt`);
+    expect(dest).not.toContain('backend=');
+  });
+
+  it('never leaks the ?backend= selector on the forwarded URL', async () => {
+    stubs.fetch.mockImplementation(async () => new Response(null, { status: 204 }));
+    const { routes, env } = oneBackend();
+    await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'DELETE', env, url: `https://router.example.com${FILES}/a.txt?backend=office` }),
+    );
+    expect(upstream().url).toBe(`https://backend.example.com${FILES}/a.txt`);
+  });
+
+  it('returns file bytes unchanged instead of decoding them as text', async () => {
+    // The regression: `await res.text()` decoded the body as UTF-8 and re-encoded
+    // it, so every byte above 0x7F in a binary download became U+FFFD. A status
+    // assertion passes on a corrupted body, so compare the bytes.
+    const bytes = new Uint8Array([0x00, 0xff, 0xfe, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x80, 0x7f]);
+    stubs.fetch.mockImplementation(
+      async () => new Response(bytes, { status: 200, headers: { 'Content-Type': 'image/png' } }),
+    );
+    const { routes, env } = oneBackend();
+    const res = await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'GET', env, url: `https://router.example.com${FILES}/logo.png?backend=office` }),
+    );
+    expect(res.headers.get('Content-Type')).toBe('image/png');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+  });
+
+  it('preserves a 207 multistatus body verbatim', async () => {
+    // The bucket browser's whole contract is this body: `davXml.parseMultistatus`
+    // reads the `DAV:href` values, so any reshaping here silently changes which
+    // paths the UI addresses next.
+    const xml = '<?xml version="1.0"?><multistatus xmlns="DAV:"><response><href>/alice/photos/dir_A/</href></response></multistatus>';
+    stubs.fetch.mockImplementation(async () => new Response(xml, { status: 207, headers: { 'Content-Type': 'application/xml' } }));
+    const { routes, env } = oneBackend();
+    const res = await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'PROPFIND', env, url: `https://router.example.com${FILES}?backend=office`, headers: { Depth: '1' } }),
+    );
+    expect(res.status).toBe(207);
+    expect(await res.text()).toBe(xml);
+  });
+
+  it('forwards the Access assertion the backend authorises the browser plane with', async () => {
+    // The browser plane authenticates with the session, not a bucket credential,
+    // so losing the assertion turns every request into a 401.
+    stubs.fetch.mockImplementation(async () => new Response(null, { status: 204 }));
+    const { routes, env } = oneBackend();
+    await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({
+        method: 'DELETE',
+        env,
+        url: `https://router.example.com${FILES}/a.txt?backend=office`,
+        headers: { 'Cf-Access-Jwt-Assertion': 'jwt', Cookie: 'CF_Authorization=abc' },
+      }),
+    );
+    expect(upstream().headers.get('Cf-Access-Jwt-Assertion')).toBe('jwt');
+  });
+
+  it('identifies the router to the backend', async () => {
+    stubs.fetch.mockImplementation(async () => new Response(null, { status: 204 }));
+    const { routes, env } = oneBackend();
+    await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'DELETE', env, url: `https://router.example.com${FILES}/a.txt?backend=office`, headers: { 'User-Agent': 'Mozilla/5.0' } }),
+    );
+    expect(upstream().headers.get('User-Agent')).toBe('durable-dav-router');
+  });
+
+  it('does not force a JSON Accept onto a DAV request', async () => {
+    // The management plane pins `Accept: application/json`; on the browser plane
+    // that misrepresents the caller's media negotiation to the backend.
+    stubs.fetch.mockImplementation(async () => new Response(null, { status: 204 }));
+    const { routes, env } = oneBackend();
+    await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'GET', env, url: `https://router.example.com${FILES}/a.txt?backend=office`, headers: { Accept: 'text/plain' } }),
+    );
+    expect(upstream().headers.get('Accept')).toBe('text/plain');
+  });
+
+  it('still requires a selector when several backends match', async () => {
+    // Unchanged by design: the management plane asks for the selector rather
+    // than probing, so a hand-edited URL without `?backend=` is a 409. Every
+    // request the SPA originates now carries it.
+    const { db, rows } = fakeDb();
+    const now = Math.floor(Date.now() / 1000);
+    for (const [id, slug] of [
+      ['1', 'a'],
+      ['2', 'b'],
+    ]) {
+      rows.set(id, {
+        id,
+        owner_email: 'test@example.com',
+        owner_user_id: 'usr_test_example_com',
+        slug,
+        slug_ci: slug,
+        base_url: `https://${slug}.com`,
+        display_name: null,
+        created_at: now,
+        updated_at: now,
+        last_seen_at: null,
+        last_status: null,
+        backend_username: null,
+        backend_username_ci: null,
+      });
+    }
+    const { app, routes } = stubApp();
+    registerAggregatedVolumeRoutes(app as never);
+    const res = await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'GET', env: { ...ENV, DB: db }, url: `https://router.example.com${FILES}/a.txt` }),
+    );
+    expect(res.status).toBe(409);
+    expect(stubs.fetch).not.toHaveBeenCalled();
+  });
+
+  it('reports 502 when the selected backend is unreachable', async () => {
+    stubs.fetch.mockImplementation(async () => {
+      throw new Error('connection refused');
+    });
+    const { routes, env } = oneBackend();
+    const res = await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'GET', env, url: `https://router.example.com${FILES}/a.txt?backend=office` }),
+    );
+    expect(res.status).toBe(502);
+  });
+});
+
 describe('GET /user/me', () => {
   it('returns the current sign-in address and the account id', async () => {
     // The address is the *current* one (`users.current_email`), never the frozen
