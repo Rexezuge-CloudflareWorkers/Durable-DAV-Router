@@ -9,34 +9,85 @@ const webdavSrcPath = fileURLToPath(new URL('packages/webdav/src', import.meta.u
 const sharedSrcPath = fileURLToPath(new URL('packages/shared/src', import.meta.url));
 const backendServicesSrcPath = fileURLToPath(new URL('packages/backend-services/src', import.meta.url));
 
+/**
+ * The worker-and-packages test and coverage gate.
+ *
+ * The SPA has its own, in `vitest.web.config.mts`, and the reason is in that
+ * file's header. The short version: adding 44 presentational modules at 0% pulled a
+ * single shared floor down by 16 points, leaving the worker roughly a point of
+ * headroom, so a change adding legitimate code in `apps/api` could fail the gate on
+ * the strength of files two directories away. Two floors let each ratchet
+ * independently, and both only go up — `AGENTS.md` forbids lowering one.
+ *
+ * Two config files rather than Vitest `projects` in one: with a single config the
+ * SPA suites ran under `node` and the worker suites under `jsdom` in the same pass,
+ * so a test could pass in one environment and fail in the other with neither run
+ * noticing. `pnpm run test` and `pnpm run test:coverage` run both, and both gates
+ * are enforced.
+ */
+
+/**
+ * Every alias, mirroring `vitest.web.config.mts`.
+ *
+ * Duplicated rather than imported because a Vitest config is a standalone file with
+ * no module graph to share through, and a suite resolving a workspace import
+ * differently from its sibling fails in a way that looks like a product bug.
+ */
+const alias = [
+  { find: /^@durable-dav-router\/backend-data$/, replacement: `${backendDataSrcPath}/index.ts` },
+  { find: /^@durable-dav-router\/backend-errors$/, replacement: `${backendErrorsSrcPath}/index.ts` },
+  { find: /^@durable-dav-router\/backend-runtime$/, replacement: `${backendRuntimeSrcPath}/index.ts` },
+  { find: /^@durable-dav-router\/backend-services$/, replacement: `${backendServicesSrcPath}/index.ts` },
+  { find: /^@durable-dav-router\/webdav$/, replacement: `${webdavSrcPath}/index.ts` },
+  { find: /^@durable-dav-router\/shared$/, replacement: `${sharedSrcPath}/index.ts` },
+  { find: '@durable-dav-router/backend-data', replacement: backendDataSrcPath },
+  { find: '@durable-dav-router/backend-errors', replacement: backendErrorsSrcPath },
+  { find: '@durable-dav-router/backend-runtime', replacement: backendRuntimeSrcPath },
+  { find: '@durable-dav-router/backend-services', replacement: backendServicesSrcPath },
+  { find: '@durable-dav-router/webdav', replacement: webdavSrcPath },
+  { find: '@durable-dav-router/shared', replacement: sharedSrcPath },
+  { find: /^@\//, replacement: `${apiSrcPath}/` },
+];
+
+/**
+ * The SPA's suites, excluded here so the two configs partition the suite rather
+ * than each running all of it. Every SPA suite is named `web-*`.
+ */
+const SPA_FILES = 'test/**/web-*.test.{ts,tsx}';
+
 export default defineConfig({
+  resolve: { alias },
   test: {
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.{ts,tsx}'],
     // A custom `exclude` replaces Vitest's defaults, so `node_modules` must be
     // re-listed: `test` is a workspace project and therefore has its own. Without
-    // this, `test/**/*.test.ts` reaches into `test/node_modules` and tries to run
-    // other packages' own suites (which import `bun:test` and `@jest/globals`).
-    exclude: ['**/node_modules/**', '**/dist/**', 'test/integration/**'],
+    // it, `test/**/*.test.ts` reaches into `test/node_modules` and tries to run other
+    // packages' own suites. The SPA glob is here for the partition, not for coverage.
+    exclude: ['**/node_modules/**', '**/dist/**', 'test/integration/**', SPA_FILES],
     coverage: {
       provider: 'v8',
+      // Without this the v8 provider reports only modules a test happened to import,
+      // so a brand-new module with no test is invisible rather than counted as zero
+      // — which would make this gate unable to notice the exact regression it exists
+      // to catch.
+      all: true,
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
-      // `apps/web` was previously absent from this list, on a comment claiming
-      // it was "measured by its own config in `apps/web`". No such config ever
-      // existed — `apps/web` has no vitest config and no `test` script — so the
-      // entire SPA, including the bucket browser's href parser and its request
-      // URL builder, was invisible to the coverage gate. It is measured here now.
-      include: ['apps/api/src/**/*.ts', 'apps/web/src/**/*.{ts,tsx}', 'packages/**/src/**/*.ts'],
+      include: ['apps/api/src/**/*.ts', 'packages/**/src/**/*.ts'],
       exclude: [
+        // Build and test tooling, not product source: `scripts/` grows with project
+        // surface rather than with complexity, and the god-file guard excludes it for
+        // the same reason.
+        'scripts/**',
         '**/*.test.ts',
         '**/*.d.ts',
         '**/index.ts',
         '**/types.d.ts',
         '**/model/**',
-        // Generated at build time from the Vite bundle: a one-line HTML blob
-        // with no logic to exercise.
+        // Generated at build time from the Vite bundle: a one-line HTML blob with no
+        // logic to exercise.
         'apps/api/src/generated/**',
         // Type-only modules: no runtime code to cover.
         '**/D1Types.ts',
@@ -46,53 +97,8 @@ export default defineConfig({
         '**/dao/identity.ts',
         '**/dao/router.ts',
       ],
-      thresholds: {
-        // `apps/web` joined `include` in this change, and it is the whole reason
-        // the floor moved. The previous 80/75/80/80 was measured against
-        // `apps/api` + `packages` only; the SPA sat outside the gate entirely
-        // (on a comment claiming a config in `apps/web` that never existed), so
-        // that number was never a statement about this repository as a whole.
-        //
-        // What is measured and covered today: `apps/web/src/lib` (94%) and
-        // `apps/web/src/services` (94%) — the href parser, the request-URL
-        // builder, and every API wrapper including the `?backend=` selector
-        // that four files each implement differently. That is the logic with
-        // real failure modes, and it is where the bug this change fixes lived.
-        //
-        // What is measured but uncovered: 44 presentational modules under
-        // `components/` and the `views/` tree, at 0%. They need jsdom,
-        // testing-library and react-router harnesses. They are listed rather
-        // than excluded so the gap is visible in the report instead of hidden.
-        //
-        // This floor is the honest measurement of the surface now in `include`,
-        // set slightly below it. Raise it as the SPA gains tests. Never lower
-        // it to excuse a regression in code that is already covered.
-        //
-        // Follow-up: split the SPA into its own Vitest project with its own
-        // floor, so component tests can ratchet up independently instead of
-        // moving a global number shared with the worker and the packages.
-        statements: 64,
-        branches: 62,
-        functions: 63,
-        lines: 65,
-      },
+      // Measured 89.72 / 82.06 / 89.79 / 92.22 on this commit.
+      thresholds: { statements: 88, branches: 80, functions: 88, lines: 91 },
     },
-  },
-  resolve: {
-    alias: [
-      { find: /^@durable-dav-router\/backend-data$/, replacement: `${backendDataSrcPath}/index.ts` },
-      { find: /^@durable-dav-router\/backend-errors$/, replacement: `${backendErrorsSrcPath}/index.ts` },
-      { find: /^@durable-dav-router\/backend-runtime$/, replacement: `${backendRuntimeSrcPath}/index.ts` },
-      { find: /^@durable-dav-router\/backend-services$/, replacement: `${backendServicesSrcPath}/index.ts` },
-      { find: /^@durable-dav-router\/webdav$/, replacement: `${webdavSrcPath}/index.ts` },
-      { find: /^@durable-dav-router\/shared$/, replacement: `${sharedSrcPath}/index.ts` },
-      { find: '@durable-dav-router/backend-data', replacement: backendDataSrcPath },
-      { find: '@durable-dav-router/backend-errors', replacement: backendErrorsSrcPath },
-      { find: '@durable-dav-router/backend-runtime', replacement: backendRuntimeSrcPath },
-      { find: '@durable-dav-router/backend-services', replacement: backendServicesSrcPath },
-      { find: '@durable-dav-router/webdav', replacement: webdavSrcPath },
-      { find: '@durable-dav-router/shared', replacement: sharedSrcPath },
-      { find: /^@\//, replacement: `${apiSrcPath}/` },
-    ],
   },
 });

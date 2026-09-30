@@ -18,12 +18,58 @@ function isParsableTeamDomain(value: string): boolean {
 }
 
 /**
+ * One `AppConfiguration` per env object.
+ *
+ * A Worker's `env` is the same object for every request in an isolate, and five
+ * call sites read a setting from it on the request path: `BackendService`, the two
+ * `AccessAuthService` strategies, `getProxyTimeoutMs` and
+ * `getRouteCacheTtlSeconds`. Each was building its own instance — and each
+ * instance builds two section objects — so a single proxied WebDAV request
+ * constructed four configurations to read two numbers.
+ *
+ * Memoising on the env object is what makes that one instance, and it is what a
+ * `Tokens.AppConfig` binding would have bought for the injectable case. It is
+ * *not* used for that case: `getProxyTimeoutMs` and `getRouteCacheTtlSeconds` are
+ * free functions over an arbitrary `env` — they are called from fail-soft paths
+ * that receive a bare object from a test double and have no container to resolve
+ * from. A token could not reach them; a `WeakMap` can, and reaches every site.
+ *
+ * Weak, so a caller passing a fresh object per call does not leak; a fresh object
+ * per call also means a fresh configuration, which is the correct reading of "this
+ * is not the env I was given before".
+ */
+const INSTANCES = new WeakMap<object, AppConfiguration>();
+
+/**
+ * A shared instance for a nullish or non-object env.
+ *
+ * Every reader on this facade is total over a missing env — `EnvParser.readString`
+ * returns `undefined` and each getter falls back to its default — which is
+ * deliberate: these paths are reached with a partial or absent env from tests and
+ * from `getProxyTimeoutMs`, where a `TypeError` would replace a default with a 500.
+ */
+/**
+ * Memo for a nullish env, held in an object so the lazily-initialised assignment
+ * inside the function below is not a write to a top-level binding.
+ *
+ * Lazy because a module-level `new AppConfiguration` above the class is a
+ * use-before-declaration; a function is hoisted, and the object is populated long
+ * before any call can reach it.
+ */
+const EMPTY_MEMO: { instance?: AppConfiguration } = {};
+
+function emptyConfiguration(): AppConfiguration {
+  EMPTY_MEMO.instance ??= new AppConfiguration(null);
+  return EMPTY_MEMO.instance;
+}
+
+/**
  * Injectable instance view over Durable-DAV-Router environment configuration.
  *
  * Composed of focused section objects (`RouterLimits`, `AuthConfig`) so the
- * facade stays thin. `ConfigurationManager` statics delegate here for
- * backward compatibility. New code should accept `AppConfiguration` via
- * constructor injection so env parsing is stubbable.
+ * facade stays thin. A service that takes configuration injects it through its
+ * `deps` seam; the free functions that read a single setting off an arbitrary
+ * `env` go through `fromEnv`, which hands back the same instance for the same env.
  */
 class AppConfiguration {
   private readonly router: RouterLimits;
@@ -35,7 +81,12 @@ class AppConfiguration {
   }
 
   public static fromEnv(env: unknown): AppConfiguration {
-    return new AppConfiguration(env);
+    if (env === null || typeof env !== 'object') return emptyConfiguration();
+    const existing = INSTANCES.get(env);
+    if (existing) return existing;
+    const created = new AppConfiguration(env);
+    INSTANCES.set(env, created);
+    return created;
   }
 
   public get routerLimits(): RouterLimits {

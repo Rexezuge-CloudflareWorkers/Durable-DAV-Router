@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { VolumeDetail } from '../../types';
 import { toLocalizedErrorMessage } from '../../lib/backendErrors';
+import { useAsyncLoad } from '../../hooks/useAsyncLoad';
 import { loadVolume, updateVolume, deleteVolume } from '../../services/volumeService';
 import { Button } from '../ui/Button';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
@@ -27,42 +28,44 @@ export function VolumeSettingsTab({
   backend?: string | null;
 }) {
   const { t } = useTranslation();
-  const [detail, setDetail] = useState<VolumeDetail | null>(null);
   const [description, setDescription] = useState('');
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [confirmingVisibility, setConfirmingVisibility] = useState(false);
   const [savingVisibility, setSavingVisibility] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const loaded = await loadVolume(owner, volume, backend);
-        if (cancelled) return;
-        setDetail(loaded);
-        setDescription(loaded.description ?? '');
-        onUpdated(loaded);
-      } catch (error) {
-        if (cancelled) return;
-        showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadVolumes', 'Failed To Load Volumes.'));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [owner, volume, backend, showNotice, t, onUpdated]);
+  /**
+   * The parent's breadcrumb is kept in step with what this tab loads.
+   *
+   * `onUpdated` is called from inside the loader rather than from a second effect:
+   * a parent that passes an inline arrow re-renders on every state change, and
+   * when `onUpdated` was an effect dependency that re-fetched the bucket on each
+   * of those. `useAsyncLoad` reads its loader as an effect event, so closing over
+   * `onUpdated` costs no extra request and needs no ref to hold it.
+   */
+  const {
+    data: detail,
+    loading,
+    patch: patchDetail,
+    reload,
+  } = useAsyncLoad(async () => {
+    const loaded = await loadVolume(owner, volume, backend);
+    onUpdated(loaded);
+    return loaded;
+  }, {
+    reloadKey: `${owner}\u{0}${volume}\u{0}${backend ?? ''}`,
+    onError: (error) => showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadVolumes', 'Failed To Load Volumes.')),
+  });
 
-  const dirty = detail !== null && description.trim() !== (detail.description ?? '');
+  const dirty = detail !== undefined && description.trim() !== (detail.description ?? '');
 
+  /**
+  Discard local edits, and re-read in case the stored value moved underneath us.
+  */
   const reset = () => {
-    if (!detail) return;
-    setDescription(detail.description ?? '');
+    setDescription(detail?.description ?? '');
+    reload();
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -77,7 +80,10 @@ export function VolumeSettingsTab({
         },
         backend,
       );
-      setDetail(updated);
+      // Patch the loaded value rather than re-reading: `updateVolume` returns the
+      // authoritative row, so a second GET would only add a round trip and a
+      // window in which the form shows stale text.
+      patchDetail(() => updated);
       onUpdated(updated);
       showNotice('success', t('volumes.settingsUpdated', 'Bucket Settings Updated.'));
     } catch (error) {
@@ -94,7 +100,7 @@ export function VolumeSettingsTab({
     setSavingVisibility(true);
     try {
       const updated = await updateVolume(owner, volume, { isPrivate: !detail.isPrivate }, backend);
-      setDetail(updated);
+      patchDetail(() => updated);
       onUpdated(updated);
       showNotice('success', t('volumes.visibilityUpdated', 'Bucket Visibility Updated.'));
     } catch (error) {

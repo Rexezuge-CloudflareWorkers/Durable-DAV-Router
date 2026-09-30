@@ -9,12 +9,12 @@
     "checks:all": "pnpm run checks && pnpm run test:coverage",
     "prettier": "prettier --write .",
     "typecheck": "pnpm -r typecheck",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test": "vitest run && vitest run --config vitest.web.config.mts",
+    "test:coverage": "vitest run --coverage && vitest run --config vitest.web.config.mts --coverage",
     "test:integration": "vitest run --config test/integration/vitest.config.mts",
     "test:coverage:integration": "vitest run --coverage --config test/integration/vitest.config.mts",
     "lint": "NODE_OPTIONS=--max-old-space-size=8192 eslint --fix --quiet .",
-    "validate:locales": "node scripts/validate_locales.mjs",
+    "validate:locales": "node scripts/validate_locales.ts",
     "change-email": "tsx scripts/change-email.ts",
     "typegen": "wrangler types --config ./apps/api/wrangler.template.jsonc --env-interface CloudflareEnv"
   },
@@ -53,5 +53,6 @@
   "packageManager": "pnpm@11.2.2",
   "dependencies": {
     "@xmldom/xmldom": "^0.9.12"
-  }
+  },
+  "type": "module"
 }

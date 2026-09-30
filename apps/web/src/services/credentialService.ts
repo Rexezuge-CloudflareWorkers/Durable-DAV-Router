@@ -1,15 +1,10 @@
 import type { BucketCredential, CreatedBucketCredential } from '../types';
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api';
+import { withBackendSelector } from '../lib/backendSelector';
 
 function credentialBase(owner: string, volume: string, backend?: string | null): string {
   const base = `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}/credentials`;
-  return backend ? `${base}?backend=${encodeURIComponent(backend)}` : base;
-}
-
-function withBackendQuery(base: string, backend?: string | null): string {
-  if (!backend) return base;
-  const sep = base.includes('?') ? '&' : '?';
-  return `${base}${sep}backend=${encodeURIComponent(backend)}`;
+  return withBackendSelector(base, backend);
 }
 
 export async function listBucketCredentials(owner: string, volume: string, backend?: string | null): Promise<BucketCredential[]> {
@@ -50,10 +45,10 @@ export async function setBucketCredentialReadOnly(
   backend?: string | null,
 ): Promise<void> {
   const base = `${credentialBase(owner, volume)}/${encodeURIComponent(credentialId)}`;
-  await apiPatch<{ credentialId: string; readOnly: boolean }>(withBackendQuery(base, backend), { readOnly });
+  await apiPatch<{ credentialId: string; readOnly: boolean }>(withBackendSelector(base, backend), { readOnly });
 }
 
 export async function revokeBucketCredential(owner: string, volume: string, credentialId: string, backend?: string | null): Promise<void> {
   const base = `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}/credentials/${encodeURIComponent(credentialId)}`;
-  await apiDelete<{ ok: boolean }>(withBackendQuery(base, backend));
+  await apiDelete<{ ok: boolean }>(withBackendSelector(base, backend));
 }

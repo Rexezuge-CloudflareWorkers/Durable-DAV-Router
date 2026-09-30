@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { AuthConfig } from '@durable-dav-router/backend-runtime/config';
 import { RouterLimits } from '@durable-dav-router/backend-runtime/config';
@@ -252,5 +254,113 @@ describe('AppConfiguration facade', () => {
     // `AppConfiguration.fromEnv(env)` is called from fail-soft paths where env
     // may not be shaped as expected; it must not throw there.
     expect(() => config(null).validate()).not.toThrow();
+  });
+});
+
+/**
+ * The environment declarations are a contract, so it is asserted rather than
+ * maintained.
+ *
+ * `ServiceEnv` claimed "every variable `AppConfiguration` reads must appear
+ * here" and then omitted one — `ALLOW_PRIVATE_BACKEND_HOSTS`, the flag that
+ * decides whether users may register private and loopback backend origins.
+ * `EnvParser` accepts any string as its `env`, so nothing failed: the setting
+ * worked, and the type an operator or a maintainer reads to see what the router
+ * understands did not mention it.
+ *
+ * Extracted statically rather than by calling every getter, because the failure
+ * mode is a *new* key: someone adds a reader for `FOO`, nothing complains, and
+ * `FOO` is absent from both declarations.
+ */
+describe('environment declarations', () => {
+  const backendRuntimeSrc = path.join(import.meta.dirname, '..', 'packages', 'backend-runtime', 'src');
+
+  /**
+  Every key the config layer reads through `EnvParser`.
+  */
+  function keysReadInConfigLayer(): Set<string> {
+    const source = ['config/AppConfiguration.ts', 'config/EnvParser.ts', 'config/sections/AuthConfig.ts', 'config/sections/RouterLimits.ts']
+      .map((file) => readFileSync(path.join(backendRuntimeSrc, file), 'utf8'))
+      .join('\n');
+    const keys = new Set<string>();
+    for (const line of source.split('\n')) {
+      const match = /EnvParser\.\w+\([^)]*?'([A-Z][A-Z_]*)'/.exec(line);
+      if (match?.[1]) keys.add(match[1]);
+    }
+    return keys;
+  }
+
+  function declaredIn(file: string, iface: string): Set<string> {
+    const source = readFileSync(path.join(backendRuntimeSrc, file), 'utf8');
+    const body = source.slice(source.indexOf(`interface ${iface} {`));
+    // Scanned line by line rather than with a global regex: `[^)]*?` followed by
+    // another pattern backtracks quadratically on a long body, and this file is
+    // read on every test run.
+    const keys = new Set<string>();
+    for (const line of body.split('\n')) {
+      const match = /^\s*([A-Z][A-Z_]*)\??:/.exec(line);
+      if (match?.[1]) keys.add(match[1]);
+    }
+    return keys;
+  }
+
+  it('ServiceEnv declares every key the config layer reads', () => {
+    const declared = declaredIn('config/ServiceEnv.ts', 'ServiceEnv');
+    expect([...keysReadInConfigLayer()].filter((key) => !declared.has(key)).sort()).toEqual([]);
+  });
+
+  it('the global Env agrees with ServiceEnv on the variables they share', () => {
+    // `env.d.ts` is what `apps/` typechecks against and `ServiceEnv` is what
+    // `backend-runtime` documents; a variable in one and not the other means one
+    // layer can read something the other believes does not exist.
+    const globalEnv = declaredIn('env.d.ts', 'Env');
+    const serviceEnv = declaredIn('config/ServiceEnv.ts', 'ServiceEnv');
+    expect([...serviceEnv].filter((key) => !globalEnv.has(key)).sort()).toEqual([]);
+  });
+
+  it('declares the private-backend-host flag, which decides the SSRF surface', () => {
+    // Called out separately because it is the one whose absence was a *security*
+    // documentation gap rather than a tidiness one, and because it is tri-state:
+    // unset means "follow the environment", so it can never be a boolean.
+    expect(declaredIn('config/ServiceEnv.ts', 'ServiceEnv').has('ALLOW_PRIVATE_BACKEND_HOSTS')).toBe(true);
+    expect(EnvParser.optionalBoolean({ ALLOW_PRIVATE_BACKEND_HOSTS: 'true' }, 'ALLOW_PRIVATE_BACKEND_HOSTS')).toBe(true);
+    expect(EnvParser.optionalBoolean({}, 'ALLOW_PRIVATE_BACKEND_HOSTS')).toBeNull();
+  });
+});
+
+describe('AppConfiguration.fromEnv', () => {
+  it('returns the same instance for the same env', () => {
+    // Five call sites read a setting off the request's `env` on the request path,
+    // and each used to build its own instance — plus two section objects inside
+    // it — to read one number. Identity is what makes that one object.
+    const env = { ENVIRONMENT: 'development' };
+    expect(AppConfiguration.fromEnv(env)).toBe(AppConfiguration.fromEnv(env));
+  });
+
+  it('returns a distinct instance for a distinct env', () => {
+    // Two different envs are two different configurations; sharing one would let a
+    // test's stub leak into the next.
+    expect(AppConfiguration.fromEnv({ ENVIRONMENT: 'development' })).not.toBe(AppConfiguration.fromEnv({ ENVIRONMENT: 'production' }));
+  });
+
+  it('is total over a missing env', () => {
+    // Reached from `getProxyTimeoutMs`, which is called from fail-soft paths that
+    // can receive anything at all. A `TypeError` here replaces a default with a
+    // 500, so every reader has to survive a nullish env.
+    for (const env of [null, undefined, 0, '', 'nonsense', []]) {
+      const config = AppConfiguration.fromEnv(env);
+      expect(config.getBackendFetchTimeoutMs()).toBe(8000);
+      expect(config.getRouteCacheTtlSeconds()).toBe(86_400);
+      expect(config.getAllowPrivateBackendHosts()).toBeNull();
+      expect(config.getEnvironment()).toBe('production');
+    }
+  });
+
+  it('does not hold a reference to an env it was not given', () => {
+    // The memo is weak, so a caller building a fresh env per call — a test double
+    // factory — does not accumulate instances for the isolate's lifetime.
+    const envs = Array.from({ length: 1000 }, (_, i) => ({ MAX_BACKENDS_PER_USER: String(i + 1) }));
+    expect(envs).toHaveLength(1000);
+    expect(AppConfiguration.fromEnv(envs[999]).getMaxBackendsPerUser()).toBe(1000);
   });
 });

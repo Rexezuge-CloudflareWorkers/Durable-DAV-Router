@@ -18,6 +18,10 @@ export default tseslint.config(
       'src/generated/**',
       'apps/api/src/generated/**',
       'coverage/**',
+      // The SPA gate writes its HTML report beside the router's rather than into
+      // `coverage/`, because two Vitest runs into one directory overwrite each
+      // other's files and leave a report that matches neither floor.
+      'coverage-spa/**',
       'node_modules/**',
       // `test/**` was ignored here, so ~200 KB of test code was never linted even
       // once. `test` is now a workspace project, so it is type-checked and linted

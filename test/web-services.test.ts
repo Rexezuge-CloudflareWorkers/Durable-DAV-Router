@@ -13,12 +13,13 @@ import { deleteVolume, listMyVolumes, loadVolume, updateVolume } from '../apps/w
  * The API service layer, and specifically the `?backend=` selector.
  *
  * The router fronts several backends, so every one of these calls carries an
- * optional upstream selector. That is implemented four separate ways across
- * these files — a `withBackend` param map, a `withBackendQuery` string helper,
- * a `credentialBase` that inlines the query, and a bare template literal in
- * `updateVolume`/`deleteVolume`. Four implementations of one rule is four
- * chances to drift, and a dropped selector silently targets the wrong backend
- * (or none), so each shape is pinned here.
+ * optional upstream selector. That was implemented five ways across four files — a
+ * `withBackend` param map, a `withBackendQuery` string helper, a `credentialBase`
+ * that inlined the query, a bare template literal in `updateVolume`/`deleteVolume`,
+ * and `davClient`'s own — which is now one `lib/backendSelector`. Each service is
+ * still asserted individually, because the property that matters is not "one
+ * helper exists" but "every service puts the selector on every request": a
+ * dropped selector silently targets the wrong backend, or none.
  */
 
 interface Call {
@@ -245,5 +246,66 @@ describe('userService', () => {
     await withFetch('{"email":"a@b.c"}', () => loadCurrentUser());
     const second = await withFetch('{"email":"a@b.c"}', () => loadCurrentUser());
     expect(second.calls).toHaveLength(1);
+  });
+});
+
+describe('the ?backend= selector, as a contract rather than as five shapes', () => {
+  /**
+   * One rule, asserted through every service that carries it.
+   *
+   * Previously each service's *particular* string-building shape was pinned, which
+   * meant unifying them was a test-rewrite rather than a change with a stated
+   * invariant. These assert the invariant instead: the selector is present exactly
+   * once, correctly encoded, and absent — not empty, not `?backend=` — when the
+   * caller named no backend.
+   */
+  const SLUG = 'my backend/v2';
+
+  function selectorsOf(url: string): string[] {
+    return [...new URL(url, 'https://router.example.com').searchParams.getAll('backend')];
+  }
+
+  it('every service emits exactly one correctly-encoded selector', async () => {
+    const services: Array<[string, () => Promise<unknown>]> = [
+      ['listMyVolumes', () => listMyVolumes(SLUG)],
+      ['loadVolume', () => loadVolume('test', 'photos', SLUG)],
+      ['updateVolume', () => updateVolume('test', 'photos', { description: 'x' }, SLUG)],
+      ['deleteVolume', () => deleteVolume('test', 'photos', SLUG)],
+      ['listBucketCredentials', () => listBucketCredentials('test', 'photos', SLUG)],
+      ['createBucketCredential', () => createBucketCredential('test', 'photos', 'c', 30, true, SLUG)],
+      ['setBucketCredentialReadOnly', () => setBucketCredentialReadOnly('test', 'photos', 'cred 1', true, SLUG)],
+      ['revokeBucketCredential', () => revokeBucketCredential('test', 'photos', 'cred 1', SLUG)],
+    ];
+    for (const [name, call] of services) {
+      const { calls } = await withFetch('{"ok":true,"credentials":[],"volumes":[],"backends":[]}', call);
+      expect(selectorsOf(only(calls).url), name).toEqual([SLUG]);
+    }
+  });
+
+  it('emits no query at all when no backend was named', async () => {
+    // `?backend=` with an empty value is not the same as no selector: it resolves
+    // to no backend and 404s the request, which reads to the user as a missing
+    // bucket rather than as a wrong argument.
+    const services: Array<[string, () => Promise<unknown>]> = [
+      ['listMyVolumes', () => listMyVolumes()],
+      ['loadVolume', () => loadVolume('test', 'photos')],
+      ['updateVolume', () => updateVolume('test', 'photos', { description: 'x' })],
+      ['deleteVolume', () => deleteVolume('test', 'photos')],
+      ['listBucketCredentials', () => listBucketCredentials('test', 'photos')],
+      ['createBucketCredential', () => createBucketCredential('test', 'photos', 'c')],
+      ['setBucketCredentialReadOnly', () => setBucketCredentialReadOnly('test', 'photos', 'c', false)],
+      ['revokeBucketCredential', () => revokeBucketCredential('test', 'photos', 'c')],
+    ];
+    for (const [name, call] of services) {
+      const { calls } = await withFetch('{"ok":true,"credentials":[],"volumes":[],"backends":[]}', call);
+      expect(new URL(only(calls).url, 'https://router.example.com').search, name).toBe('');
+    }
+  });
+
+  it('treats an empty or absent selector identically', async () => {
+    for (const value of ['', null, undefined]) {
+      const { calls } = await withFetch('{"ok":true}', () => deleteVolume('test', 'photos', value));
+      expect(new URL(only(calls).url, 'https://router.example.com').search).toBe('');
+    }
   });
 });

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KeyRound } from 'lucide-react';
 import type { BucketCredential } from '../../types';
+import { useAsyncLoad } from '../../hooks/useAsyncLoad';
 import { createBucketCredential, listBucketCredentials, revokeBucketCredential, setBucketCredentialReadOnly } from '../../services/credentialService';
 import { formatExpiryTimestamp } from '../../lib/format';
 import { toLocalizedErrorMessage } from '../../lib/backendErrors';
@@ -25,8 +26,6 @@ export function VolumeCredentialsCard({
   backend?: string | null;
 }) {
   const { t } = useTranslation();
-  const [credentials, setCredentials] = useState<BucketCredential[]>([]);
-  const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('');
   const [readOnly, setReadOnly] = useState(false);
@@ -34,32 +33,21 @@ export function VolumeCredentialsCard({
   const [lastCreated, setLastCreated] = useState<{ username: string; password: string; readOnly: boolean } | null>(null);
   const [revoking, setRevoking] = useState<BucketCredential | null>(null);
   const [flipping, setFlipping] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const rows = await listBucketCredentials(owner, volume, backend);
-        if (cancelled) return;
-        setCredentials(rows);
-      } catch (error) {
-        if (cancelled) return;
-        showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadCredentials', 'Failed To Load Credentials.'));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [owner, volume, reloadKey, showNotice, t]);
-
-  const refresh = () => {
-    setLoading(true);
-    setReloadKey((k) => k + 1);
-  };
+  // The identity is a closure over `owner`/`volume`/`backend`, so it is read
+  // through a ref by `useAsyncLoad` rather than being a dependency: a fresh
+  // arrow on every render would re-fire the request on every render.
+  const { data: credentials, loading, reload, patch: patchCredentials } = useAsyncLoad(
+    () => listBucketCredentials(owner, volume, backend),
+    {
+      reloadKey: `${owner}\u{0}${volume}\u{0}${backend ?? ''}`,
+      onError: (error) => showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadCredentials', 'Failed To Load Credentials.')),
+    },
+  );
+  const refresh = reload;
+  // `undefined` is "not loaded yet", which renders exactly as an empty list did;
+  // naming it once keeps every `credentials?.` out of the markup.
+  const rows = credentials ?? [];
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,8 +64,7 @@ export function VolumeCredentialsCard({
       setExpiresInDays('');
       setReadOnly(false);
       showNotice('success', t('credentials.created', 'Credential Created. Copy The Password Now — It Will Not Be Shown Again.'));
-      setLoading(true);
-      setReloadKey((k) => k + 1);
+      reload();
     } catch (error) {
       showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToCreateCredential', 'Failed To Create Credential.'));
     } finally {
@@ -97,12 +84,21 @@ the next request the client makes.
 const toggleReadOnly = async (cred: BucketCredential) => {
     const next = !cred.readOnly;
     setFlipping(cred.credentialId);
-    setCredentials((rows) => rows.map((row) => (row.credentialId === cred.credentialId ? { ...row, readOnly: next } : row)));
+    // Optimistic: the row is patched first so the badge does not lag a network
+    // round trip, and reverted from the server's answer on failure. The
+    // credential is a bearer secret the client has already cached, so the backend
+    // cannot make the client forget it — this is a policy statement that takes
+    // effect on the next request the client makes, and showing the user's own
+    // intent immediately is the honest rendering of that.
+    const flip = (readOnly: boolean): void => {
+      patchCredentials((rows) => rows.map((row) => (row.credentialId === cred.credentialId ? { ...row, readOnly } : row)));
+    };
+    flip(next);
     try {
       await setBucketCredentialReadOnly(owner, volume, cred.credentialId, next, backend);
       showNotice('success', next ? t('credentials.nowReadOnly', 'Credential Is Now Read-Only.') : t('credentials.nowReadWrite', 'Credential Can Now Write.'));
     } catch (error) {
-      setCredentials((rows) => rows.map((row) => (row.credentialId === cred.credentialId ? { ...row, readOnly: cred.readOnly } : row)));
+      flip(cred.readOnly);
       showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToUpdateCredential', 'Failed To Update Credential.'));
     } finally {
       setFlipping(null);
@@ -114,8 +110,7 @@ const toggleReadOnly = async (cred: BucketCredential) => {
     try {
       await revokeBucketCredential(owner, volume, revoking.credentialId, backend);
       showNotice('success', t('credentials.revoked', 'Credential Revoked.'));
-      setLoading(true);
-      setReloadKey((k) => k + 1);
+      reload();
     } catch (error) {
       showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToRevokeCredential', 'Failed To Revoke Credential.'));
     } finally {
@@ -171,7 +166,7 @@ const toggleReadOnly = async (cred: BucketCredential) => {
         </div>
       )}
       <ul className="mt-4 divide-y divide-[var(--color-border)]">
-        {credentials.map((cred) => (
+        {rows.map((cred) => (
           <li key={cred.credentialId} className="py-3 flex items-center justify-between gap-3 first:pt-0 last:pb-0">
             <div className="min-w-0">
               <p className="font-medium text-[var(--color-text-primary)] truncate">
@@ -196,7 +191,7 @@ const toggleReadOnly = async (cred: BucketCredential) => {
           </li>
         ))}
       </ul>
-      {credentials.length === 0 && !loading && (
+      {(credentials?.length ?? 0) === 0 && !loading && (
         <p className="text-sm text-[var(--color-text-muted)] mt-4">{t('credentials.empty', 'No Credentials Yet.')}</p>
       )}
       {revoking && (

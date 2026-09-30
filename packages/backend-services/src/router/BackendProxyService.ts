@@ -1,4 +1,5 @@
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
+import { stripTrailingSlashes } from '@durable-dav-router/shared/utils';
 
 // Request headers forwarded verbatim to the backend. `content-length` is
 // deliberately absent: the runtime recomputes it from the stream we hand it,
@@ -58,12 +59,6 @@ const PASSTHROUGH_RESPONSE_HEADERS = new Set([
   'x-dav-page-limit',
   'x-dav-page-count',
 ]);
-
-function stripTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === '/') end -= 1;
-  return value.slice(0, end);
-}
 
 function stripSlashes(value: string): string {
   let start = 0;
@@ -248,8 +243,10 @@ export {
   resolveBackend,
   fetchWithTimeout,
   getProxyTimeoutMs,
-  stripTrailingSlashes,
+  
   stripSlashes,
   safeUrl,
 };
 export type { BackendResolution, RoutableBackend };
+
+export {stripTrailingSlashes} from '@durable-dav-router/shared/utils';

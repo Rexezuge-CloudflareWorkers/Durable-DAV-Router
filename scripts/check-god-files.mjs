@@ -12,7 +12,10 @@ const ROOT = new URL('..', import.meta.url).pathname;
 const SOFT = 300;
 const HARD = 400;
 const EXCLUDE_DIRS = new Set(['node_modules', 'dist', '.wrangler', 'coverage', 'coverage-integration', '.git']);
-const EXCLUDE_SUFFIX = ['.test.ts', '.spec.ts', '.int.test.ts', '.d.ts'];
+// `.test.tsx` was missing until a React test suite crossed the limit: the guard
+// excludes tests because they grow with coverage rather than with complexity, and
+// that reasoning does not stop at the file extension.
+const EXCLUDE_SUFFIX = ['.test.ts', '.test.tsx', '.spec.ts', '.spec.tsx', '.int.test.ts', '.d.ts'];
 
 function shouldSkip(path) {
   if (path.includes('/locales/') || path.includes('/generated/') || path.includes('/__tests__/') || path.includes('/__mocks__/'))

@@ -1,3 +1,5 @@
+import { EnvParser } from './config/EnvParser';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const LOG_LEVELS: Record<LogLevel, number> = {
@@ -11,13 +13,24 @@ function isLogLevel(level: string): level is LogLevel {
   return (['debug', 'info', 'warn', 'error'] as const).includes(level as LogLevel);
 }
 
+/**
+ * Where the level comes from.
+ *
+ * Workers have no `process.env`, so the injected `env` is the real source and the
+ * Node fallback exists only for local tooling. `EnvParser` owns the read, as it
+ * owns every other one: this reached for `process.env.LOG_LEVEL` itself, which
+ * meant two definitions of what a log level is, and a setting declared in
+ * `ServiceEnv` that nothing else could see.
+ *
+ * An unrecognised value falls back to `info` rather than throwing, and the Node
+ * fallback is consulted first only when the injected env says nothing — a logger
+ * that refuses to construct is a logger that takes the request down with it.
+ */
 function resolveLogLevel(env?: unknown): LogLevel {
-  // Workers have no `process.env`: prefer an injected env object (config
-  // separation) and fall back to Node `process.env` only for local tooling.
-  const fromInjected = env !== null && typeof env === 'object' ? (env as Record<string, string | undefined>)['LOG_LEVEL'] : undefined;
-  const fromEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.LOG_LEVEL;
-  const level = fromInjected ?? fromEnv ?? 'info';
-  return isLogLevel(level) ? level : 'info';
+  const configured = EnvParser.string(env, 'LOG_LEVEL', '').trim().toLowerCase();
+  if (isLogLevel(configured)) return configured;
+  const fromProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.LOG_LEVEL?.trim().toLowerCase();
+  return fromProcess && isLogLevel(fromProcess) ? fromProcess : 'info';
 }
 
 export function createLogger(namespace?: string, fullRepoName?: string, env?: unknown) {

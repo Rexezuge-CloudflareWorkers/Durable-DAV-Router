@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { FolderArchive, Plus, Server } from 'lucide-react';
-import type { AggregatedVolume, BackendHealth, RouterBackend } from '../types';
+import type { AggregatedVolume, RouterBackend } from '../types';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
+import { useAsyncLoad } from '../hooks/useAsyncLoad';
 import { listMyVolumes } from '../services/volumeService';
 import { listBackends, probeBackend } from '../services/backendService';
 import { Button } from '../components/ui/Button';
@@ -18,55 +19,54 @@ import { RefreshButton } from '../components/shared/RefreshButton';
 export function DashboardView({ showNotice }: { showNotice: (type: 'success' | 'error', text: string) => void }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [volumes, setVolumes] = useState<AggregatedVolume[]>([]);
-  const [backends, setBackends] = useState<RouterBackend[]>([]);
-  const [health, setHealth] = useState<BackendHealth[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [reloadKey, setReloadKey] = useState(0);
   const [probing, setProbing] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Without this guard two loads can overlap — StrictMode double-invokes
-    // mount effects, and a slow request overlapping a refresh does the same in
-    // production — and whichever `Promise.all` settles *last* wins. A superseded
-    // response therefore overwrote newer data, leaving the dashboard showing
-    // pre-refresh buckets with no spinner and no error to explain them. It also
-    // kept running the rest of the effect after unmount, where `showNotice`
-    // raises an error on whatever page the user has since navigated to.
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const [volRes, backendRows] = await Promise.all([listMyVolumes(), listBackends().catch(() => [])]);
-        if (cancelled) return;
-        setVolumes(volRes.volumes);
-        setHealth(volRes.backends);
-        setBackends(backendRows);
-      } catch (error) {
-        if (cancelled) return;
-        showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadVolumes', 'Failed To Load Volumes.'));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [showNotice, reloadKey, t]);
+  /**
+   * Volumes and backends in one request pair.
+   *
+   * The backend list is allowed to fail on its own: a router that can reach D1
+   * but not `/user/backends` should still show its buckets, and the backend
+   * section already has an empty state. A failure there is not the same as an
+   * empty registry, so it must not blank the volumes.
+   *
+   * This effect had no cancellation flag for its whole life, which made it the
+   * one load effect of seven without one: StrictMode's double-invoked mount
+   * effects, and any refresh overlapping a slow request, left the *superseded*
+   * response winning — the dashboard showing pre-refresh buckets with no spinner
+   * and no error. `useAsyncLoad` carries the guard.
+   */
+  const { data, loading, reload } = useAsyncLoad(async () => {
+    const [volRes, backendRows] = await Promise.all([listMyVolumes(), listBackends().catch(() => [] as RouterBackend[])]);
+    return { volumes: volRes.volumes, health: volRes.backends, backends: backendRows };
+  }, {
+    onError: (error) => showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadVolumes', 'Failed To Load Volumes.')),
+  });
 
-  const refresh = () => {
-    setLoading(true);
-    setReloadKey((k) => k + 1);
-  };
+  const volumes = data?.volumes ?? [];
+  const health = data?.health ?? [];
+  const backends = data?.backends ?? [];
+  const refresh = reload;
 
-  // eslint-disable-next-line unicorn/prefer-group-by -- target ES2021 has no Map.groupBy.
-  const grouped = volumes.reduce((acc, v) => {
-    const key = v.backend ?? 'unknown';
-    const list = acc.get(key) ?? [];
-    list.push(v);
-    acc.set(key, list);
-    return acc;
-  }, new Map<string, AggregatedVolume[]>());
+  /**
+   * Volumes bucketed by the backend that holds them.
+   *
+   * Memoised because it is a pure derivation of `volumes`: without it, an
+   * unrelated re-render — a notice appearing, a probe finishing — rebuilds the
+   * map and hands every row a new array, re-rendering the whole dashboard for no
+   * change in what it shows.
+   */
+  const grouped = useMemo(
+    () =>
+      // eslint-disable-next-line unicorn/prefer-group-by -- target ES2021 has no Map.groupBy.
+      volumes.reduce((acc, v) => {
+        const key = v.backend ?? 'unknown';
+        const list = acc.get(key) ?? [];
+        list.push(v);
+        acc.set(key, list);
+        return acc;
+      }, new Map<string, AggregatedVolume[]>()),
+    [volumes],
+  );
 
   return (
     <AppPage>
