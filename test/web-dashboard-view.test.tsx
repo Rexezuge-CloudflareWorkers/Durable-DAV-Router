@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -34,10 +34,14 @@ vi.mock('../apps/web/src/services/backendService', () => backendService);
 import { DashboardView } from '../apps/web/src/views/DashboardView';
 
 /**
-A volume shape the dashboard renders a card for.
+A volume row the dashboard renders.
+
+The dashboard links `v.fullName` and groups rows by `v.backend`, so both must be
+present for a row to appear at all — a partial fixture renders an empty list and
+the assertion below fails for the wrong reason.
 */
 function volume(name: string): Record<string, unknown> {
-  return { owner: 'alice', name, href: `/alice/${name}`, isPrivate: false };
+  return { owner: 'alice', name, fullName: `alice/${name}`, href: `/alice/${name}`, isPrivate: false, backend: 'office' };
 }
 
 function renderDashboard(showNotice = vi.fn()) {
@@ -86,6 +90,11 @@ describe('DashboardView load races', () => {
     // StrictMode is not decoration here: React double-invokes mount effects, so
     // this overlap is the state every developer sees locally, and the same
     // shape occurs in production whenever a slow request overlaps a refresh.
+    //
+    // The resolutions are deliberately *not* wrapped in `act`: React's act scope
+    // waits on every thenable the effects under it started, and one of these
+    // promises is still in flight by design. `waitFor` drives the assertion
+    // instead, which is the same mechanism React state updates go through here.
     const first = deferred<{ volumes: unknown[]; backends: unknown[] }>();
     const second = deferred<{ volumes: unknown[]; backends: unknown[] }>();
     volumeService.listMyVolumes.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
@@ -101,20 +110,15 @@ describe('DashboardView load races', () => {
     expect(volumeService.listMyVolumes).toHaveBeenCalledTimes(2);
 
     // The newer load answers first...
-    await act(async () => {
-      second.resolve({ volumes: [volume('fresh')], backends: [] });
-      await second.promise;
-    });
-    await waitFor(() => expect(screen.getByText('fresh')).toBeTruthy());
+    second.resolve({ volumes: [volume('fresh')], backends: [] });
+    await waitFor(() => expect(screen.getByText('alice/fresh')).toBeTruthy());
 
     // ...and only then does the one it replaced.
-    await act(async () => {
-      first.resolve({ volumes: [volume('stale')], backends: [] });
-      await first.promise;
-    });
+    first.resolve({ volumes: [volume('stale')], backends: [] });
+    await first.promise;
+    await waitFor(() => expect(screen.getByText('alice/fresh')).toBeTruthy());
 
-    expect(screen.getByText('fresh')).toBeTruthy();
-    expect(screen.queryByText('stale')).toBeNull();
+    expect(screen.queryByText('alice/stale')).toBeNull();
   });
 
   it('does not raise an error notice from a view that has unmounted', async () => {
@@ -129,10 +133,11 @@ describe('DashboardView load races', () => {
     const { unmount } = renderDashboard(showNotice);
     unmount();
 
-    await act(async () => {
-      pending.reject(new Error('backend list failed'));
-      await pending.promise.catch(() => undefined);
-    });
+    pending.reject(new Error('backend list failed'));
+    await expect(pending.promise).rejects.toThrow('backend list failed');
+    // One turn of the microtask queue, which is where the effect's `catch`
+    // would have called `showNotice`.
+    await Promise.resolve();
 
     expect(showNotice).not.toHaveBeenCalled();
   });

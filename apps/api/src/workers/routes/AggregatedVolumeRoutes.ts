@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import {
+  bodylessMethods,
   buildProxiedHeaders,
   describeBackendFailure,
   explicitBackendSlug,
@@ -15,10 +16,21 @@ import {
 } from '@durable-dav-router/backend-services/router';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { NotFoundError } from '@durable-dav-router/backend-errors';
+import { SUPPORT_METHODS } from '@durable-dav-router/webdav';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 import type { AuthenticatedAccount, RouterEnv } from '@/requestContext';
 
 type App = Hono<RouterEnv>;
+
+/**
+ * Non-DAV verbs this plane accepts in addition to `SUPPORT_METHODS`.
+ *
+ * `/credentials/*` under the browser plane is JSON management, not RFC 4918, so
+ * these two belong to this route only. Kept as a named delta rather than folded
+ * into the DAV list, which is what made the old hand-written list read as 14
+ * DAV verbs when it was 12 plus 2.
+ */
+const BROWSER_PLANE_EXTRA_METHODS = ['POST', 'PATCH'];
 
 function kvOf(scope: { get: (token: never) => KvCache }): KvCache | null {
   try {
@@ -55,8 +67,13 @@ function authForwardHeaders(request: Request): Headers {
 
 /**
 Methods that never carry a request body.
+
+The DAV plane's rule rather than a second copy of it: this file's `['GET','HEAD']`
+omitted `OPTIONS` while `forwardDavRequest` included it, so the two planes had
+already disagreed about one question. Two implementations of one rule is how
+that happens, and nothing about it is visible in a status code.
 */
-const BODYLESS_METHODS = new Set(['GET', 'HEAD']);
+const BODYLESS_METHODS = bodylessMethods();
 
 /**
  * Forward a management request to a backend and pass the response through.
@@ -329,23 +346,18 @@ function registerAggregatedVolumeRoutes(app: App): void {
   app.patch('/user/volumes/:owner/:volume', async (c) => proxyOne(c as never));
   app.delete('/user/volumes/:owner/:volume', async (c) => proxyOne(c as never));
 
+  // Derived from `SUPPORT_METHODS` rather than restated. The hand-written list
+  // this replaced had already drifted from the shared constant — `POST` and
+  // `PATCH` had been added by hand, in a different order — and the only symptom
+  // of that class of drift is a verb falling through to a 404, which is exactly
+  // what a genuinely missing path returns too.
+  //
+  // `POST`/`PATCH` are the browser plane's own addition: the `/credentials/*`
+  // subpaths this wildcard also carries are JSON management calls, not DAV
+  // verbs, so they are added explicitly and visibly rather than folded into the
+  // DAV list where they would look like RFC 4918 members.
   app.on(
-    [
-      'GET',
-      'POST',
-      'PATCH',
-      'PUT',
-      'DELETE',
-      'PROPFIND',
-      'PROPPATCH',
-      'MKCOL',
-      'COPY',
-      'MOVE',
-      'LOCK',
-      'UNLOCK',
-      'HEAD',
-      'OPTIONS',
-    ] as never[],
+    [...SUPPORT_METHODS, ...BROWSER_PLANE_EXTRA_METHODS] as never[],
     '/user/volumes/:owner/:volume/*',
     async (c) => proxySubpath(c as never),
   );

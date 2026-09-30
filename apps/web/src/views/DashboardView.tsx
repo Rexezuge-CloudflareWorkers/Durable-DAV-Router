@@ -26,19 +26,32 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
   const [probing, setProbing] = useState<string | null>(null);
 
   useEffect(() => {
+    // Without this guard two loads can overlap — StrictMode double-invokes
+    // mount effects, and a slow request overlapping a refresh does the same in
+    // production — and whichever `Promise.all` settles *last* wins. A superseded
+    // response therefore overwrote newer data, leaving the dashboard showing
+    // pre-refresh buckets with no spinner and no error to explain them. It also
+    // kept running the rest of the effect after unmount, where `showNotice`
+    // raises an error on whatever page the user has since navigated to.
+    let cancelled = false;
     const run = async () => {
       try {
         const [volRes, backendRows] = await Promise.all([listMyVolumes(), listBackends().catch(() => [])]);
+        if (cancelled) return;
         setVolumes(volRes.volumes);
         setHealth(volRes.backends);
         setBackends(backendRows);
       } catch (error) {
+        if (cancelled) return;
         showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadVolumes', 'Failed To Load Volumes.'));
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     void run();
+    return () => {
+      cancelled = true;
+    };
   }, [showNotice, reloadKey, t]);
 
   const refresh = () => {

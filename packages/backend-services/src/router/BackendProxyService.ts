@@ -203,11 +203,23 @@ function describeBackendFailure(status: number, bodySnippet: string): string {
  * plane pins the router's marker so a backend can still tell a proxied request
  * from a direct one.
  */
+/**
+ * Methods that never carry a request body.
+ *
+ * One definition for both proxy planes. `OPTIONS` belongs here because it is a
+ * `SUPPORT_METHODS` member and a capability probe — the JSON management forwarder
+ * in `apps/api` carried a two-element copy of this set that omitted it, and two
+ * implementations of one question is how the copies drift.
+ */
+const BODYLESS_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+function bodylessMethods(): ReadonlySet<string> {
+  return BODYLESS_METHODS;
+}
+
 async function forwardDavRequest(request: Request, target: string, headers: Headers, timeoutMs: number): Promise<Response> {
   const method = request.method;
-  // `OPTIONS` is a `SUPPORT_METHODS` member and a capability probe, so it never
-  // carries a body either.
-  const hasBody = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  const hasBody = !BODYLESS_METHODS.has(method);
   let upstream: Response;
   try {
     upstream = await fetchWithTimeout(
@@ -251,6 +263,8 @@ function safeUrl(target: string): { origin: string; pathname: string } {
 }
 
 export {
+  BODYLESS_METHODS,
+  bodylessMethods,
   PASSTHROUGH_REQUEST_HEADERS,
   PASSTHROUGH_RESPONSE_HEADERS,
   joinBackendUrl,

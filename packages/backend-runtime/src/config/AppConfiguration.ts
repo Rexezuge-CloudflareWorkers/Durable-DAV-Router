@@ -78,8 +78,10 @@ class AppConfiguration {
    * report a contradictory setting at startup.
    */
   public getAllowPrivateBackendHosts(): boolean | null {
-    const raw = EnvParser.string(this.env, 'ALLOW_PRIVATE_BACKEND_HOSTS', '');
-    return raw.trim().length === 0 ? null : raw.trim().toLowerCase() === 'true';
+    // Tri-state, not boolean-with-default: `BackendService` distinguishes an
+    // unset value ("follow the environment") from an explicit one, so coercing
+    // a typo to `false` here would report a setting the deployment never made.
+    return EnvParser.optionalBoolean(this.env, 'ALLOW_PRIVATE_BACKEND_HOSTS');
   }
 
   public isDemoMode(): boolean {
@@ -155,13 +157,18 @@ class AppConfiguration {
     // A production deployment that allows private backend origins has re-opened
     // the SSRF surface that the default exists to close, so make it loud rather
     // than leaving it as a silent opt-in nobody notices is active.
-    if (!this.isBypassAllowed() && this.getAllowPrivateBackendHosts() === true) {
+    const allowPrivate = this.getAllowPrivateBackendHosts();
+    if (allowPrivate === true && !this.isBypassAllowed()) {
       warnings.push(
         `Security: ALLOW_PRIVATE_BACKEND_HOSTS=true while ENVIRONMENT=${this.getEnvironment()}. ` +
           `Users can register loopback and private-network origins, which turns the router into a proxy into its own network.`,
       );
     }
-    const allowPrivate = this.getAllowPrivateBackendHosts();
+    // A value that is neither `true` nor `false` is worse than either: it reads
+    // as configured, enforces nothing, and is invisible in the warning above.
+    if (allowPrivate === null && EnvParser.string(this.env, 'ALLOW_PRIVATE_BACKEND_HOSTS', '').trim().length > 0) {
+      warnings.push(`Invalid configuration: ALLOW_PRIVATE_BACKEND_HOSTS must be true or false`);
+    }
     if (allowPrivate === true && this.isBypassAllowed()) {
       warnings.push(
         `Note: ALLOW_PRIVATE_BACKEND_HOSTS=true has no effect while ENVIRONMENT=${this.getEnvironment()} (private hosts are already allowed).`,

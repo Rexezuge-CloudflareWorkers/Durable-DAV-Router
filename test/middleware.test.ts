@@ -255,18 +255,26 @@ describe('rateLimit', () => {
     expect(calls).toBe(1);
   });
 
-  it('does not charge the bucket twice when downstream rejects', async () => {
-    // The same double-dispatch also incremented the counter on a path where the
-    // response never carried, so one caller could exhaust its own budget.
-    const middleware = rateLimit({ windowMs: 60_000, max: 1, keyPrefix: 'charge' });
+  it('charges exactly one request even when downstream rejects', async () => {
+    // The charge itself was always single — the defect was the dispatch, above —
+    // so this pins the budget arithmetic independently. One rejected request
+    // costs one unit, not two and not zero.
+    //
+    // Charging for it is deliberate: the limiter bounds how much work a caller
+    // can ask for, and a handler that threw still consumed the isolate. Refunding
+    // on failure would let a caller whose requests reliably crash a handler run
+    // the limiter's own cost budget down to nothing.
+    const middleware = rateLimit({ windowMs: 60_000, max: 2, keyPrefix: 'charge' });
     const ip = { 'CF-Connecting-IP': '203.0.113.7' };
-    await expect(
-      middleware(makeCtx('https://x/user/me', { headers: ip }) as never, async () => {
-        throw new Error('downstream blew up');
-      }),
-    ).rejects.toThrow();
-    const second = makeCtx('https://x/user/me', { headers: ip });
-    await expect(middleware(second as never, async () => undefined)).resolves.toBeUndefined();
+    const blowUp = async (): Promise<void> => {
+      throw new Error('downstream blew up');
+    };
+    await expect(middleware(makeCtx('https://x/user/me', { headers: ip }) as never, blowUp)).rejects.toThrow();
+    // Second of two: still allowed.
+    await expect(middleware(makeCtx('https://x/user/me', { headers: ip }) as never, async () => undefined)).resolves.toBeUndefined();
+    // Third: the budget is spent. A double charge would have refused here.
+    const third = makeCtx('https://x/user/me', { headers: ip });
+    expect(((await middleware(third as never, async () => undefined)) as Response).status).toBe(429);
   });
 
   it('bounds the bucket map so one isolate cannot grow without limit', () => {

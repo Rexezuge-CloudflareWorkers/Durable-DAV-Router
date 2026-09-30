@@ -1,11 +1,24 @@
 #!/usr/bin/env node
 /**
  * Validate web locale bundles: JSON-valid, key parity with en (no missing or
- * extra keys), `{{placeholder}}` parity, no empty values, and bundle-dir
- * parity with web `SUPPORTED_LANGUAGES` (parsed from `apps/web/src/i18n.ts`,
- * so a listed-but-unshipped language fails here instead of at runtime in
- * `loadLanguage`). Key order drift vs en is warn-only (keeps diffs reviewable
- * without failing the run).
+ * extra keys), `{{placeholder}}` parity, no empty values, bundle-dir parity with
+ * web `SUPPORTED_LANGUAGES` (parsed from `apps/web/src/i18n.ts`, so a
+ * listed-but-unshipped language fails here instead of at runtime in
+ * `loadLanguage`), and **code↔bundle key coverage in both directions**. Key
+ * order drift vs en is warn-only (keeps diffs reviewable without failing the
+ * run).
+ *
+ * The coverage check is the one that catches the failure this script originally
+ * could not see. Parity against `en` answers "are these translations
+ * consistent?"; it never asks "do the keys exist?". Every `t('…')` call passes
+ * an English default as its second argument, so a key missing from `en` renders
+ * as that default — correct-looking English, forever, with a translator opening
+ * the bundle to find nothing there. And a key in the bundle with no caller looks
+ * maintained while being unreachable, so a fix to it can never ship.
+ *
+ * `test/i18n.test.ts` asserts the same invariants so they run under `pnpm test`;
+ * this script is the CI-facing half, which also covers a locale added without
+ * its tests.
  *
  * Usage: `pnpm run validate:locales` from the repo root.
  */
@@ -13,9 +26,17 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'web', 'src', 'locales');
-const WEB_I18N_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'web', 'src', 'i18n.ts');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const WEB_SRC = join(ROOT, 'apps', 'web', 'src');
+const LOCALES_DIR = join(WEB_SRC, 'locales');
+const WEB_I18N_FILE = join(WEB_SRC, 'i18n.ts');
 const PLACEHOLDER = /\{\{[^}]+\}\}/g;
+
+/**
+ * Namespaces the SPA uses. Anything outside them in a string literal is prose,
+ * not a translation key, and must not be mistaken for one.
+ */
+const KEY_NAMESPACE = '(?:header|common|landing|dashboard|volumes|credentials|files|settings|unauthorized|errors|backends)';
 
 function flatten(node, prefix, out) {
   for (const [key, value] of Object.entries(node)) {
@@ -98,6 +119,60 @@ const enKeys = enEntries.map(([key]) => key);
 const enSet = new Set(enKeys);
 const enByKey = new Map(enEntries);
 if (enKeys.length === 0) fail('en bundle is empty or unreadable');
+
+/**
+ * Keys the SPA asks for, and where each is asked for.
+ *
+ * Three literal call shapes, all of which have to be recognised or the check
+ * reports false coverage:
+ *
+ *   t('ns.key') / t('ns.key', 'Default')
+ *   toLocalizedErrorMessage(t, error, 'ns.key', 'Default')  — the fallback key
+ *   BACKEND_TYPE_TO_I18N_KEY's value map                    — resolved at runtime,
+ *                                                            so never in a t()
+ *
+ * A computed key (`t(\`${ns}.${x}\`)`) would need this list maintained by hand;
+ * there is none, and `fail` below is what would report it if one appeared.
+ */
+function referencedKeys() {
+  const found = new Map();
+  const add = (key, where) => {
+    if (!found.has(key)) found.set(key, where);
+  };
+  const sources = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name)) sources.push(full);
+    }
+  };
+  walk(WEB_SRC);
+  const patterns = [
+    new RegExp(`\\bt\\(\\s*'(${KEY_NAMESPACE}\\.[^']+)'`, 'g'),
+    new RegExp(`toLocalizedErrorMessage\\(\\s*\\w+\\s*,\\s*\\w+\\s*,\\s*'(${KEY_NAMESPACE}\\.[^']+)'`, 'g'),
+    new RegExp(`:\\s*'(${KEY_NAMESPACE}\\.[^']+)'`, 'g'),
+  ];
+  for (const file of sources) {
+    const source = readFileSync(file, 'utf8');
+    for (const pattern of patterns) {
+      for (const match of source.matchAll(pattern)) add(match[1], file.replace(`${WEB_SRC}/`, ''));
+    }
+    // A computed key defeats static extraction; say so rather than pass quietly.
+    if (/[^.\w]t\(\s*`/.test(source)) fail(`${file.replace(`${WEB_SRC}/`, '')}: computed t() key — teach this script its shape`);
+  }
+  return found;
+}
+
+const referenced = referencedKeys();
+const missingFromBundle = [...referenced.keys()].filter((key) => !enSet.has(key)).sort();
+for (const key of missingFromBundle.slice(0, 20)) fail(`no such key in en bundle: ${key} (used by ${referenced.get(key)})`);
+if (missingFromBundle.length > 20) fail(`…and ${missingFromBundle.length - 20} more keys used by the SPA but absent from en`);
+
+const unreachable = enKeys.filter((key) => !referenced.has(key)).sort();
+for (const key of unreachable.slice(0, 20)) fail(`unreachable bundle key (no caller): ${key}`);
+if (unreachable.length > 20) fail(`…and ${unreachable.length - 20} more unreachable bundle keys`);
+console.log(`coverage: ${referenced.size} keys referenced, ${missingFromBundle.length} missing, ${unreachable.length} unreachable`);
 
 for (const [tag, bundle] of bundles) {
   if (tag === 'en') continue;
