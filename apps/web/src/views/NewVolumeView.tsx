@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
-import type { RouterBackend } from '../types';
+import { useAsyncLoad } from '../hooks/useAsyncLoad';
 import { getBackendIdentity, listBackends } from '../services/backendService';
 import { apiPost } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -19,24 +19,31 @@ export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | '
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [isPrivate, setIsPrivate] = useState(true);
-  const [backend, setBackend] = useState('');
-  const [backends, setBackends] = useState<RouterBackend[]>([]);
+  const [chosen, setChosen] = useState<string | null>(null);
   const [ownerState, setOwnerState] = useState<OwnerState>({ status: 'idle' });
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    void listBackends()
-      .then((rows) => {
-        setBackends(rows);
-        if (!(rows.length === 1 && rows[0])) {
-          return;
-        }
+  /**
+   * The backend list, and with it a preselection when there is only one.
+   *
+   * A failure is silent by design: the page's whole purpose is to create a bucket
+   * on a backend, and with the list empty the form already says "select a backend
+   * first". An error banner on top of that would describe a problem the user
+   * cannot act on from this page.
+   */
+  const { data: backends } = useAsyncLoad(listBackends, { onError: () => undefined });
+  const rows = backends ?? [];
 
-        setBackend(rows[0].slug);
-        setOwnerState({ status: 'loading' });
-      })
-      .catch(() => undefined);
-  }, []);
+  /**
+   * The selected backend, derived rather than stored.
+   *
+   * Only auto-selected when the list resolves to exactly one — more than one and
+   * the choice is the user's, none and there is nothing to pick. Deriving it
+   * during render instead of pushing it into an effect keeps the selection and
+   * the list from ever disagreeing: an effect that fired on the list would also
+   * fire on the user's own choice and fight it.
+   */
+  const backend = chosen ?? (rows.length === 1 ? (rows[0]?.slug ?? '') : '');
 
   // Usernames live on backends (same email may own different handles per
   // backend). Auto-load the handle for the selected backend; the owner
@@ -61,7 +68,7 @@ export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | '
   }, [backend]);
 
   const handleBackendChange = (slug: string) => {
-    setBackend(slug);
+    setChosen(slug);
     setOwnerState({ status: slug.trim() ? 'loading' : 'idle' });
   };
 
@@ -124,7 +131,7 @@ export function NewVolumeView({ showNotice }: { showNotice: (type: 'success' | '
                 className="w-full rounded border px-2 py-1.5 text-sm"
               >
                 <option value="">{t('volumes.chooseBackend', 'Choose A Backend')}</option>
-                {backends.map((b) => (
+                {(backends ?? []).map((b) => (
                   <option key={b.slug} value={b.slug}>
                     {b.displayName ? `${b.displayName} (${b.slug})` : b.slug}
                   </option>

@@ -20,23 +20,25 @@
  * this script is the CI-facing half, which also covers a locale added without
  * its tests.
  *
+ * TypeScript rather than `.mjs` because it shares the key extractor with
+ * `test/i18n.test.ts`, and Node runs it directly (Node ≥ 22.6 strips types).
+ * Two implementations of that extractor drift, and a key that has drifted out of
+ * one is reported as reachable while the other reports it as an orphan.
+ *
  * Usage: `pnpm run validate:locales` from the repo root.
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import fs from 'node:fs';
+const { readdirSync, readFileSync } = fs;
+import path from 'node:path';
+const { dirname, join } = path;
 import { fileURLToPath } from 'node:url';
+import { computedKeySites, referencedKeys } from './i18n-coverage.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_SRC = join(ROOT, 'apps', 'web', 'src');
 const LOCALES_DIR = join(WEB_SRC, 'locales');
 const WEB_I18N_FILE = join(WEB_SRC, 'i18n.ts');
 const PLACEHOLDER = /\{\{[^}]+\}\}/g;
-
-/**
- * Namespaces the SPA uses. Anything outside them in a string literal is prose,
- * not a translation key, and must not be mistaken for one.
- */
-const KEY_NAMESPACE = '(?:header|common|landing|dashboard|volumes|credentials|files|settings|unauthorized|errors|backends)';
 
 function flatten(node, prefix, out) {
   for (const [key, value] of Object.entries(node)) {
@@ -120,51 +122,12 @@ const enSet = new Set(enKeys);
 const enByKey = new Map(enEntries);
 if (enKeys.length === 0) fail('en bundle is empty or unreadable');
 
-/**
- * Keys the SPA asks for, and where each is asked for.
- *
- * Three literal call shapes, all of which have to be recognised or the check
- * reports false coverage:
- *
- *   t('ns.key') / t('ns.key', 'Default')
- *   toLocalizedErrorMessage(t, error, 'ns.key', 'Default')  — the fallback key
- *   BACKEND_TYPE_TO_I18N_KEY's value map                    — resolved at runtime,
- *                                                            so never in a t()
- *
- * A computed key (`t(\`${ns}.${x}\`)`) would need this list maintained by hand;
- * there is none, and `fail` below is what would report it if one appeared.
- */
-function referencedKeys() {
-  const found = new Map();
-  const add = (key, where) => {
-    if (!found.has(key)) found.set(key, where);
-  };
-  const sources = [];
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (/\.tsx?$/.test(entry.name)) sources.push(full);
-    }
-  };
-  walk(WEB_SRC);
-  const patterns = [
-    new RegExp(`\\bt\\(\\s*'(${KEY_NAMESPACE}\\.[^']+)'`, 'g'),
-    new RegExp(`toLocalizedErrorMessage\\(\\s*\\w+\\s*,\\s*\\w+\\s*,\\s*'(${KEY_NAMESPACE}\\.[^']+)'`, 'g'),
-    new RegExp(`:\\s*'(${KEY_NAMESPACE}\\.[^']+)'`, 'g'),
-  ];
-  for (const file of sources) {
-    const source = readFileSync(file, 'utf8');
-    for (const pattern of patterns) {
-      for (const match of source.matchAll(pattern)) add(match[1], file.replace(`${WEB_SRC}/`, ''));
-    }
-    // A computed key defeats static extraction; say so rather than pass quietly.
-    if (/[^.\w]t\(\s*`/.test(source)) fail(`${file.replace(`${WEB_SRC}/`, '')}: computed t() key — teach this script its shape`);
-  }
-  return found;
-}
-
-const referenced = referencedKeys();
+// The extractor lives in `i18n-coverage.mjs` because `test/i18n.test.ts` asserts
+// the same two invariants. Two copies of a namespace list drift, and a key that
+// has drifted out of one is reported as reachable while the other reports it as
+// an orphan.
+const referenced = referencedKeys(WEB_SRC);
+for (const site of computedKeySites(WEB_SRC)) fail(`${site}: computed t() key — teach i18n-coverage.mjs its shape`);
 const missingFromBundle = [...referenced.keys()].filter((key) => !enSet.has(key)).sort();
 for (const key of missingFromBundle.slice(0, 20)) fail(`no such key in en bundle: ${key} (used by ${referenced.get(key)})`);
 if (missingFromBundle.length > 20) fail(`…and ${missingFromBundle.length - 20} more keys used by the SPA but absent from en`);

@@ -5,9 +5,39 @@ import { toLocalizedErrorMessage } from '../../lib/backendErrors';
 import { listDirectory } from '../../services/davClient';
 import { pageCountFor } from '../../lib/davPage';
 
-// Data-fetching slice for the file browser (why: `VolumeView` mixed routing,
-// fetching, and mutations; isolating the query keeps the view a thin
-// composition root like `SpaApp`).
+/**
+ * Server-authoritative paging state. `total` is null when the backend does not
+ * page, which is what leaves the view showing the full unpaged listing.
+ */
+interface Paging {
+  page: number;
+  pageCount: number;
+  total: number | null;
+  paged: boolean;
+}
+
+const UNPAGED: Paging = { page: 1, pageCount: 1, total: null, paged: false };
+
+type Status = 'loading' | 'ready' | 'missing';
+
+/**
+ * Data-fetching slice for the file browser.
+ *
+ * `VolumeView` mixed routing, fetching and mutations; isolating the query keeps
+ * the view a thin composition root like `SpaApp`.
+ *
+ * The reset-to-loading on every fetch is deliberate and was a bug once: navigating
+ * to another folder re-ran the effect while `status` was still `ready`, so the
+ * *previous* folder's rows stayed on screen until the new PROPFIND resolved. The
+ * rows are cleared too, not just the status — `VolumeFileList` gates its
+ * not-found state on `entries.length === 0`, so a *failed* PROPFIND used to leave
+ * `status: 'missing'` alongside the old rows and render them under the new
+ * breadcrumb, as though they lived in the folder that had just failed to load.
+ *
+ * `authorized` is deliberately not a dependency: it is not read here, and
+ * including it fired the effect twice per cold load — once speculatively while
+ * auth was resolving and once after — for an identical request.
+ */
 function useVolumeFiles(
   owner: string,
   volume: string,
@@ -19,32 +49,17 @@ function useVolumeFiles(
 ) {
   const { t } = useTranslation();
   const [entries, setEntries] = useState<DavEntry[]>([]);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading');
+  const [status, setStatus] = useState<Status>('loading');
   const [reloadKey, setReloadKey] = useState(0);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  // Server-authoritative paging. `total` is null when the backend does not page,
-  // which is what leaves the view showing the full unpaged listing.
-  const [paging, setPaging] = useState<{ page: number; pageCount: number; total: number | null; paged: boolean }>({
-    page: 1,
-    pageCount: 1,
-    total: null,
-    paged: false,
-  });
+  const [paging, setPaging] = useState<Paging>(UNPAGED);
 
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      // Reset to loading on every fetch, not just on an explicit `refresh()`.
-      // Navigating to another folder re-ran this effect while `status` was
-      // still `ready`, so the *previous* folder's rows stayed on screen until
-      // the new PROPFIND resolved.
       setStatus('loading');
-      // Drop the previous folder's rows too, not just the status.
-      // `VolumeFileList` gates its not-found state on `entries.length === 0`, so
-      // a *failed* PROPFIND left `status: 'missing'` alongside the old rows and
-      // rendered them under the new breadcrumb — the previous folder's files
-      // displayed as if they lived in the folder that just failed to load.
       setEntries([]);
+      setPaging(UNPAGED);
       try {
         const rows = await listDirectory(owner, volume, path, backend, { page: requestedPage, limit: pageSize });
         if (cancelled) return;
@@ -66,15 +81,11 @@ function useVolumeFiles(
     return () => {
       cancelled = true;
     };
-    // `authorized` is deliberately not a dependency: it is not read here, and
-    // including it made the effect fire twice per cold load (once
-    // speculatively while auth was still resolving, once after) for an
-    // identical request.
   }, [owner, volume, path, requestedPage, pageSize, reloadKey, backend, t]);
 
   const refresh = useCallback(() => {
     setStatus('loading');
-    setReloadKey((k) => k + 1);
+    setReloadKey((key) => key + 1);
   }, []);
 
   // Stable identity: a fresh arrow on every render made the caller's effect
@@ -88,3 +99,4 @@ function useVolumeFiles(
 }
 
 export { useVolumeFiles };
+export type { Paging, Status };

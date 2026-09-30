@@ -1,9 +1,6 @@
 import type { AggregatedVolume, BackendHealth, DavHrefPrefixMode, VolumeDetail } from '../types';
 import { apiDelete, apiGet, apiPatch } from '../lib/api';
-
-function withBackend(params: Record<string, string | undefined>, backend?: string | null): Record<string, string | undefined> {
-  return backend ? { ...params, backend } : params;
-}
+import { withBackendParam, withBackendSelector } from '../lib/backendSelector';
 
 /**
  * The backend's volume JSON, verbatim.
@@ -35,14 +32,14 @@ function toVolumeDetail(data: VolumeJson): VolumeDetail {
 }
 
 export async function listMyVolumes(backend?: string | null): Promise<{ volumes: AggregatedVolume[]; backends: BackendHealth[] }> {
-  const data = await apiGet<{ volumes?: AggregatedVolume[]; backends?: BackendHealth[] }>('/user/volumes', withBackend({}, backend));
+  const data = await apiGet<{ volumes?: AggregatedVolume[]; backends?: BackendHealth[] }>('/user/volumes', withBackendParam({}, backend));
   return { volumes: data.volumes ?? [], backends: data.backends ?? [] };
 }
 
 export async function loadVolume(owner: string, volume: string, backend?: string | null): Promise<VolumeDetail> {
   const data = await apiGet<VolumeJson>(
     `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`,
-    withBackend({}, backend),
+    withBackendParam({}, backend),
   );
   return toVolumeDetail(data);
 }
@@ -53,14 +50,11 @@ export async function updateVolume(
   patch: { description?: string | null; isPrivate?: boolean; hrefPrefixMode?: DavHrefPrefixMode },
   backend?: string | null,
 ): Promise<VolumeDetail> {
-  const data = await apiPatch<VolumeJson>(
-    `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}${backend ? `?backend=${encodeURIComponent(backend)}` : ''}`,
-    patch,
-  );
-  return toVolumeDetail(data);
+  const url = withBackendSelector(`/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`, backend);
+  return toVolumeDetail(await apiPatch<VolumeJson>(url, patch));
 }
 
 export async function deleteVolume(owner: string, volume: string, backend?: string | null): Promise<{ ok: boolean }> {
-  const qs = backend ? `?backend=${encodeURIComponent(backend)}` : '';
-  return apiDelete<{ ok: boolean }>(`/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}${qs}`);
+  const url = withBackendSelector(`/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`, backend);
+  return apiDelete<{ ok: boolean }>(url);
 }

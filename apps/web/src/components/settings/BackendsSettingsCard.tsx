@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Server } from 'lucide-react';
-import type { RouterBackend } from '../../types';
 import { toLocalizedErrorMessage } from '../../lib/backendErrors';
+import { useAsyncLoad } from '../../hooks/useAsyncLoad';
 import { deleteBackend, listBackends, updateBackend } from '../../services/backendService';
 import { Button } from '../ui/Button';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
@@ -10,57 +10,43 @@ import { Input } from '../ui/Input';
 
 export function BackendsSettingsCard({ showNotice }: { showNotice: (type: 'success' | 'error', text: string) => void }) {
   const { t } = useTranslation();
-  const [backends, setBackends] = useState<RouterBackend[]>([]);
-  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Record<string, string>>({});
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      setBackends(await listBackends());
-    } catch (error) {
-      showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadBackends', 'Failed To Load Backends.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [showNotice, t]);
+  const { data: backends, loading, reload } = useAsyncLoad(listBackends, {
+    onError: (error) => showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadBackends', 'Failed To Load Backends.')),
+  });
+  const rows = backends ?? [];
 
-  useEffect(() => {
-    let cancelled = false;
-    void listBackends()
-      .then((rows) => {
-        if (!cancelled) setBackends(rows);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadBackends', 'Failed To Load Backends.'));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [showNotice, t]);
+  /**
+   * Apply a change, then re-read.
+   *
+   * The re-read is what keeps the health badge and the display name consistent
+   * with what the backend stored; `updateBackend` returns the row, but a
+   * concurrent change from another tab would be missed.
+   */
+  const change = useCallback(
+    async (action: () => Promise<unknown>, messages: { doneKey: string; doneDefault: string; failedKey: string; failedDefault: string }) => {
+      try {
+        await action();
+        showNotice('success', t(messages.doneKey, messages.doneDefault));
+        reload();
+      } catch (error) {
+        showNotice('error', toLocalizedErrorMessage(t, error, messages.failedKey, messages.failedDefault));
+      }
+    },
+    [reload, showNotice, t],
+  );
 
-  const saveDisplayName = async (slug: string) => {
-    try {
-      await updateBackend(slug, { displayName: editing[slug]?.trim() ? editing[slug].trim() : null });
-      showNotice('success', t('backends.updated', 'Backend Updated.'));
-      await reload();
-    } catch (error) {
-      showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToUpdateBackend', 'Failed To Update Backend.'));
-    }
-  };
+  const saveDisplayName = (slug: string) =>
+    change(() => updateBackend(slug, { displayName: editing[slug]?.trim() ? editing[slug].trim() : null }), {
+      doneKey: 'backends.updated',
+      doneDefault: 'Backend Updated.',
+      failedKey: 'errors.failedToUpdateBackend',
+      failedDefault: 'Failed To Update Backend.',
+    });
 
-  const remove = async (slug: string) => {
-    try {
-      await deleteBackend(slug);
-      showNotice('success', t('backends.deleted', 'Backend Removed.'));
-      await reload();
-    } catch (error) {
-      showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToDeleteBackend', 'Failed To Remove Backend.'));
-    }
-  };
+  const remove = (slug: string) =>
+    change(() => deleteBackend(slug), { doneKey: 'backends.deleted', doneDefault: 'Backend Removed.', failedKey: 'errors.failedToDeleteBackend', failedDefault: 'Failed To Remove Backend.' });
 
   return (
     <Card>
@@ -74,11 +60,11 @@ export function BackendsSettingsCard({ showNotice }: { showNotice: (type: 'succe
       </CardHeader>
       {loading ? (
         <p className="text-sm text-[var(--color-text-secondary)]">{t('common.loading', 'Loading')}</p>
-      ) : backends.length === 0 ? (
+      ) : rows.length === 0 ? (
         <p className="text-sm text-[var(--color-text-secondary)]">{t('backends.empty', 'No Backends Registered.')}</p>
       ) : (
         <ul className="space-y-3">
-          {backends.map((b) => (
+          {rows.map((b) => (
             <li key={b.slug} className="rounded border border-[var(--color-border)] p-3">
               <p className="text-sm font-medium">{b.displayName ? `${b.displayName} (${b.slug})` : b.slug}</p>
               <p className="text-xs text-[var(--color-text-muted)] break-all">{b.baseUrl}</p>

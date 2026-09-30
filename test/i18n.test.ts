@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+// The extractor is shared with `scripts/validate_locales.ts`. Two copies of the
+// namespace list drifted once already during this work, reporting the same key as
+// reachable in one place and as an orphan in the other.
+import { computedKeySites, referencedKeys } from '../scripts/i18n-coverage.js';
 import {
   BACKEND_STRINGS,
   SUPPORTED_BACKEND_LOCALES,
@@ -169,16 +173,9 @@ describe('formatBackendString', () => {
 describe('web locale key coverage', () => {
   const WEB_SRC = path.join(import.meta.dirname, '..', 'apps', 'web', 'src');
 
-  function webSources(dir: string, out: string[] = []): string[] {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) webSources(full, out);
-      else if (/\.tsx?$/.test(entry.name)) out.push(full);
-    }
-    return out;
-  }
-
+  /**
+  Every leaf in the bundle as a dotted key.
+  */
   function flatten(node: Record<string, unknown>, prefix = '', out: [string, unknown][] = []): [string, unknown][] {
     const entries = Object.entries(node);
     for (const [key, value] of entries) {
@@ -189,30 +186,8 @@ describe('web locale key coverage', () => {
     return out;
   }
 
-  /**
-   * Keys referenced from the SPA.
-   *
-   * Three call shapes, all literal: `t('ns.key')`, the fallback key argument of
-   * `toLocalizedErrorMessage(t, error, 'ns.key', 'Default')`, and the
-   * `BACKEND_TYPE_TO_I18N_KEY` value map, whose keys are resolved at runtime and
-   * therefore never appear in a `t(...)` literal.
-   */
-  function referencedKeys(): Map<string, string> {
-    const found = new Map<string, string>();
-    const add = (key: string, where: string): void => {
-      if (!found.has(key)) found.set(key, where.replace(`${WEB_SRC}/`, ''));
-    };
-    for (const file of webSources(WEB_SRC)) {
-      const source = readFileSync(file, 'utf8');
-      for (const match of source.matchAll(/\bt\(\s*'([^']+)'/g)) add(match[1], file);
-      for (const match of source.matchAll(/toLocalizedErrorMessage\(\s*\w+\s*,\s*\w+\s*,\s*'([^']+)'/g)) add(match[1], file);
-      for (const match of source.matchAll(/:\s*'((?:errors|common|volumes|dashboard|backends|settings)\.[^']+)'/g)) add(match[1], file);
-    }
-    return found;
-  }
-
   const enBundle = JSON.parse(readFileSync(path.join(WEB_SRC, 'locales', 'en', 'translation.json'), 'utf8')) as Record<string, unknown>;
-  const referenced = referencedKeys();
+  const referenced = referencedKeys(WEB_SRC);
   const bundleKeys = new Set(flatten(enBundle).map(([key]) => key));
 
   it('resolves every key the SPA asks for', () => {
@@ -228,6 +203,13 @@ describe('web locale key coverage', () => {
   it('has no unreachable keys in the bundle', () => {
     const orphans = [...bundleKeys].filter((key) => !referenced.has(key)).sort();
     expect(orphans).toEqual([]);
+  });
+
+  it('has no computed t() keys, which no static check can see', () => {
+    // `t(\`${ns}.${x}\`)` would make every key in the bundle unreferenceable by
+    // this check and every missing key undetectable, silently. There is none; a
+    // new one has to be reported rather than quietly disable the coverage.
+    expect(computedKeySites(WEB_SRC)).toEqual([]);
   });
 
   it('ships the same keys in every locale directory', () => {

@@ -1,5 +1,6 @@
 import type { DavEntry } from '../types';
 import { BackendError, readDav } from '../lib/api';
+import { appendQuery, withBackendSelector } from '../lib/backendSelector';
 import { parseMultistatus, stripSlashes } from '../lib/davXml';
 
 /**
@@ -13,12 +14,22 @@ function davBase(owner: string, volume: string): string {
   return `/${owner}/${volume}`;
 }
 
+/**
+ * Router browser plane: same path shape as the backend
+ * (`/user/volumes/:owner/:volume/files`), authed via the Access session.
+ *
+ * `entryUrl` built this string a second time inline; two copies of a request path
+ * is how a rename breaks downloads and not listings.
+ */
+function volumeBasePath(owner: string, volume: string): string {
+  return `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}/files`;
+}
+
+/**
+The browser-plane base plus its `?backend=` selector, if there is one.
+*/
 function volumeBase(owner: string, volume: string, backend?: string | null): string {
-  // Router browser plane: same path shape as the backend
-  // (`/user/volumes/:owner/:volume/files`), authed via the Access session.
-  // `?backend=` selects the upstream when several backends are registered.
-  const base = `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}/files`;
-  return backend ? `${base}?backend=${encodeURIComponent(backend)}` : base;
+  return withBackendSelector(volumeBasePath(owner, volume), backend);
 }
 
 /**
@@ -49,7 +60,7 @@ function entryUrl(owner: string, volume: string, innerPath: string, backend?: st
     .filter((segment) => segment !== '' && segment !== '.' && segment !== '..')
     .join('/');
   const suffix = clean === '' ? '/' : `/${clean.split('/').map(encodeURIComponent).join('/')}`;
-  const base = `/user/volumes/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}/files`;
+  const base = volumeBasePath(owner, volume);
   const url = `${base}${suffix}`;
   // Fail closed rather than emit a request outside the volume. The `?backend=`
   // selector is appended only after this check, so it cannot affect the
@@ -57,7 +68,7 @@ function entryUrl(owner: string, volume: string, innerPath: string, backend?: st
   if (!new URL(url, requestOrigin()).pathname.startsWith(`${base}/`)) {
     throw new Error('Refusing to build a DAV URL outside the volume base.');
   }
-  return backend ? `${url}${url.includes('?') ? '&' : '?'}backend=${encodeURIComponent(backend)}` : url;
+  return withBackendSelector(url, backend);
 }
 
 async function davFetch(url: string, init: RequestInit): Promise<Response> {
@@ -115,11 +126,10 @@ export async function listDirectory(
   page?: { page: number; limit: number },
 ): Promise<DavListing> {
   const base = entryUrl(owner, volume, innerPath, backend);
-  // `entryUrl` already appends `?backend=` when a selector is present, so the
-  // join has to respect an existing query. Two `?` would silently drop the
-  // paging parameters, and the symptom would be a pager stuck on page 1.
-  const paging = page === undefined ? '' : `&page=${encodeURIComponent(String(page.page))}&limit=${encodeURIComponent(String(page.limit))}`;
-  const url = paging === '' ? base : `${base}${base.includes('?') ? paging : `?${paging.slice(1)}`}`;
+  // `entryUrl` has already appended `?backend=` when a selector is present, so
+  // the paging parameters have to join with `&` rather than `?`.
+  const url =
+    page === undefined ? base : appendQuery(base, `page=${encodeURIComponent(String(page.page))}&limit=${encodeURIComponent(String(page.limit))}`);
   const body = `<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><allprop/></propfind>`;
   const response = await davFetch(url, {
     method: 'PROPFIND',
