@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronRight, Plus, Upload } from 'lucide-react';
 import type { VolumeDetail } from '../types';
 import { parentDavPath, stripSlashes } from '../lib/davXml';
+import { clampPage, readStoredPageSize, storePageSize } from '../lib/davPage';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 import { ContextBar } from '../components/layout/ContextBar';
@@ -15,6 +16,7 @@ import { useVolumeFiles } from './volume/useVolumeFiles';
 import { useVolumeMutations } from './volume/useVolumeMutations';
 import { VolumeFileList } from './volume/VolumeFileList';
 import { VolumeFileModals } from './volume/VolumeFileModals';
+import { VolumeFilePager } from './volume/VolumeFilePager';
 
 /**
  * Normalise a `?path=` query value into a safe volume-relative path.
@@ -54,10 +56,15 @@ function VolumeView({
   const path = cleanPath(params.get('path'));
   const backend = params.get('backend')?.trim() ? (params.get('backend') as string).trim() : null;
   const activeTab = params.get('tab') === 'settings' ? 'settings' : 'files';
+  // `?page=` is user-supplied like `?path=`, so it is clamped on read rather
+  // than trusted. Page 1 is omitted from the URL entirely, which keeps a plain
+  // folder link free of paging noise.
+  const page = clampPage(params.get('page'));
+  const [pageSize, setPageSizeState] = useState(readStoredPageSize);
   const [volumeDetail, setVolumeDetail] = useState<VolumeDetail | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const { entries, status, refresh, crumbs, notice, consumeNotice } = useVolumeFiles(owner, volume, path, authorized, backend);
+  const { entries, status, refresh, crumbs, notice, consumeNotice, paging } = useVolumeFiles(owner, volume, path, authorized, backend, page, pageSize);
   const mutations = useVolumeMutations(owner, volume, path, showNotice, refresh, backend);
 
   useEffect(() => {
@@ -69,12 +76,18 @@ function VolumeView({
     consumeNotice();
   }, [notice, showNotice, consumeNotice]);
 
+  // Both setters rebuild the whole query object from scratch rather than
+  // patching it, so `page` has to be threaded through both explicitly. A
+  // folder change resets to page 1: page 7 of the previous folder is not a
+  // meaningful position in the new one, and keeping it would show an empty list
+  // for a folder with more than one page.
   const setPath = useCallback(
-    (next: string) => {
+    (next: string, nextPage = 1) => {
       const nextParams: Record<string, string> = {};
       if (next !== '') nextParams['path'] = next;
       if (activeTab === 'settings') nextParams['tab'] = 'settings';
       if (backend) nextParams['backend'] = backend;
+      if (nextPage > 1) nextParams['page'] = String(nextPage);
       setParams(nextParams, { replace: false });
     },
     [setParams, activeTab, backend],
@@ -89,6 +102,41 @@ function VolumeView({
       setParams(nextParams, { replace: false });
     },
     [setParams, path, backend],
+  );
+
+  const setPage = useCallback(
+    (next: number) => {
+      const nextParams: Record<string, string> = {};
+      if (path !== '') nextParams['path'] = path;
+      if (activeTab === 'settings') nextParams['tab'] = 'settings';
+      if (backend) nextParams['backend'] = backend;
+      if (next > 1) nextParams['page'] = String(next);
+      // Correcting a stale link replaces rather than pushes, so the back button
+      // does not walk straight back into the page that needed correcting.
+      setParams(nextParams, { replace: next === 1 });
+    },
+    [setParams, path, activeTab, backend],
+  );
+
+  // The backend clamps an out-of-range `?page=` and echoes back the page it
+  // actually served, so a link that has gone stale (`?page=9` after the folder
+  // shrank) would otherwise leave the address bar disagreeing with the rows on
+  // screen. Put the served page in the URL once the rows have settled.
+  useEffect(() => {
+    if (status !== 'ready' || !paging.paged || paging.page === page) return;
+    setPage(paging.page);
+  }, [status, paging.paged, paging.page, page, setPage]);
+
+  // Changing the page size keeps the first row on screen: switching 100 -> 250
+  // while on page 3 should show rows 1-250, not 501-750 of a list the user was
+  // reading at rows 201-300.
+  const changePageSize = useCallback(
+    (next: number) => {
+      storePageSize(next);
+      setPageSizeState(next);
+      setPath(path, 1);
+    },
+    [path, setPath],
   );
 
   return (
@@ -197,6 +245,16 @@ function VolumeView({
               onDuplicate={(e) => void mutations.doDuplicate(e)}
               onDelete={(e) => mutations.setDeleting(e)}
             />
+            {activeTab === 'files' && (
+              <VolumeFilePager
+                page={paging.page}
+                limit={pageSize}
+                total={paging.total}
+                paged={paging.paged}
+                onPageChange={setPage}
+                onPageSizeChange={changePageSize}
+              />
+            )}
           </Card>
           <VolumeFileModals
             busy={mutations.busy}

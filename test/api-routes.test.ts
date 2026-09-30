@@ -887,6 +887,66 @@ describe('browser-plane subpath proxy', () => {
     expect(await res.text()).toBe(xml);
   });
 
+  it('forwards ?page= and ?limit= to the backend', async () => {
+    // A query parameter rather than a request header is what makes paging free
+    // at the proxy: `joinBackendUrlWithoutSelector` already preserves `search`
+    // and strips only `backend=`, so no new allowlist entry is needed on the
+    // request side.
+    stubs.fetch.mockImplementation(async () => new Response('<multistatus/>', { status: 207 }));
+    const { routes, env } = oneBackend();
+    await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'PROPFIND', env, url: `https://router.example.com${FILES}/dir_A?backend=office&page=3&limit=50`, headers: { Depth: '1' } }),
+    );
+    const sent = upstream().url;
+    expect(sent).toContain('page=3');
+    expect(sent).toContain('limit=50');
+    // The router's own selector must still never reach the backend.
+    expect(sent).not.toContain('backend=');
+  });
+
+  /**
+   * Load-bearing, not cosmetic. These three headers are how the SPA learns that
+   * a `207` body is one page rather than a whole directory. If the proxy drops
+   * them the client reads the response as *unpaged* and slices the truncated
+   * body itself — so paging fails silently, showing a permanently short listing
+   * with no pager, rather than visibly.
+   */
+  it('returns the paging headers a paged 207 carries', async () => {
+    stubs.fetch.mockImplementation(
+      async () =>
+        new Response('<multistatus/>', {
+          status: 207,
+          headers: { 'Content-Type': 'application/xml', 'X-Dav-Page-Count': '12431', 'X-Dav-Page': '3', 'X-Dav-Page-Limit': '50' },
+        }),
+    );
+    const { routes, env } = oneBackend();
+    const res = await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'PROPFIND', env, url: `https://router.example.com${FILES}?backend=office&page=3&limit=50`, headers: { Depth: '1' } }),
+    );
+    expect(res.status).toBe(207);
+    expect(res.headers.get('X-Dav-Page-Count')).toBe('12431');
+    expect(res.headers.get('X-Dav-Page')).toBe('3');
+    expect(res.headers.get('X-Dav-Page-Limit')).toBe('50');
+  });
+
+  it('passes through a 207 with no paging headers, so an older backend still works', async () => {
+    // The version-skew fallback: a backend that predates paging omits the
+    // headers, and the SPA then treats the full body as the whole listing.
+    stubs.fetch.mockImplementation(async () => new Response('<multistatus/>', { status: 207, headers: { 'Content-Type': 'application/xml' } }));
+    const { routes, env } = oneBackend();
+    const res = await call(
+      routes,
+      `ON /user/volumes/:owner/:volume/*`,
+      fakeContext({ method: 'PROPFIND', env, url: `https://router.example.com${FILES}?backend=office&page=2&limit=50`, headers: { Depth: '1' } }),
+    );
+    expect(res.status).toBe(207);
+    expect(res.headers.get('X-Dav-Page-Count')).toBeNull();
+  });
+
   it('forwards the Access assertion the backend authorises the browser plane with', async () => {
     // The browser plane authenticates with the session, not a bucket credential,
     // so losing the assertion turns every request into a 401.
