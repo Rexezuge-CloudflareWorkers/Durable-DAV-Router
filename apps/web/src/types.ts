@@ -74,6 +74,12 @@ export interface BucketCredential {
   createdAt: number;
   expiresAt: number;
   lastUsedAt: number | null;
+  /**
+   * Backend-enforced. The router stores no credentials of its own, so this is
+   * the backend's flag passed through verbatim; the router never decides what a
+   * credential may do. See `VolumeCredentialsCard` for the toggle.
+   */
+  readOnly: boolean;
 }
 
 export interface CreatedBucketCredential {
@@ -84,6 +90,12 @@ export interface CreatedBucketCredential {
   expiresAt: number;
   passwordPrefix: string;
   passwordLastFour: string;
+  /**
+   * Echoed back so the card can show the access level that was actually
+   * applied. The backend rejects a non-boolean rather than defaulting it, so a
+   * value here is always one the caller asked for.
+   */
+  readOnly: boolean;
 }
 
 export interface DavEntry {
