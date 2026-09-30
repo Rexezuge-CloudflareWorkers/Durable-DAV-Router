@@ -3,20 +3,23 @@
 // `wrangler types`); bindings are `any` here so `env.DB` is usable without
 // @cloudflare/workers-types. The router is stateless: D1 + KV lookaside, no DOs.
 declare global {
+  // Mirrors `ServiceEnv`. `ALLOW_PRIVATE_BACKEND_HOSTS` was missing from both
+  // this and `ServiceEnv`, which is the pair that decides whether a new setting
+  // has to be declared at all; `test/config.test.ts` asserts the two agree.
   interface Env {
     DB: any;
     CACHE?: any;
-    DEBUG_MODE?: string;
     ENVIRONMENT?: string;
     DEV_AUTH_EMAIL?: string;
     DEMO_MODE?: string;
     DEMO_USER_EMAIL?: string;
     POLICY_AUD?: string;
     TEAM_DOMAIN?: string;
-    SITE_URL?: string;
+    ALLOW_PRIVATE_BACKEND_HOSTS?: string;
     MAX_BACKENDS_PER_USER?: string;
     BACKEND_FETCH_TIMEOUT_MS?: string;
     ROUTE_CACHE_TTL_SECONDS?: string;
+    LOG_LEVEL?: string;
   }
 
   type CloudflareEnv = Env;

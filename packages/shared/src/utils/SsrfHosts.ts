@@ -36,10 +36,11 @@ function stripBrackets(host: string): string {
 }
 
 function stripTrailingDot(host: string): string {
+  // A fully-qualified name ends in a root label (`example.com.`), and
+  // `new URL` keeps it. RFC 4918 §9.1.2 clients vary on whether they send it, so
+  // the canonical form is compared.
   const unbracketed = stripBrackets(host);
-  let end = unbracketed.length;
-  while (end > 0 && unbracketed.charAt(end - 1) === '.') end -= 1;
-  return unbracketed.slice(0, end);
+  return unbracketed.endsWith('.') ? unbracketed.slice(0, -1) : unbracketed;
 }
 
 function isEncodedNumericHost(host: string): boolean {

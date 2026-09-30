@@ -2,7 +2,7 @@ import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { UnauthorizedError } from '@durable-dav-router/backend-errors';
 import { DEMO_USER_EMAIL } from '@durable-dav-router/shared/constants';
-import { isValidEmailFormat } from '@durable-dav-router/shared/utils';
+import { isValidEmailFormat, stripTrailingSlashes } from '@durable-dav-router/shared/utils';
 
 interface AccessAuthEnv {
   TEAM_DOMAIN?: string;
@@ -73,17 +73,11 @@ const DEFAULT_ACCESS_AUTH_STRATEGIES: readonly AccessAuthStrategy[] = [
   accessCtxStrategy,
 ];
 
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value.codePointAt(end - 1) === 47) end -= 1;
-  return value.slice(0, end);
-}
-
 class AccessAuthService {
   private static readonly jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
   private static jwksFor(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
-    const normalized = trimTrailingSlashes(teamDomain.trim().toLowerCase());
+    const normalized = stripTrailingSlashes(teamDomain.trim().toLowerCase());
     const cached = this.jwksCache.get(normalized);
     if (cached) {
       this.jwksCache.delete(normalized);
@@ -134,7 +128,7 @@ class AccessAuthService {
 
     // Single trailing-slash normalizer (Strategy/Policy reuse): domain casing
     // is normalized, audience stays case-sensitive per JWT spec.
-    const normalizedTeamDomain = trimTrailingSlashes(teamDomain.trim()).toLowerCase();
+    const normalizedTeamDomain = stripTrailingSlashes(teamDomain.trim()).toLowerCase();
     const normalizedPolicyAud: string = policyAud.trim();
     if (!normalizedPolicyAud) {
       throw new UnauthorizedError('Missing required JWT verification configuration.');
