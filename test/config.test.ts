@@ -34,6 +34,21 @@ describe('EnvParser', () => {
     expect(EnvParser.boolean({ B: '1' }, 'B', 'false')).toBe(false);
     expect(EnvParser.boolean({}, 'B', 'true')).toBe(true);
   });
+
+  it('accepts a boolean however it is spelled', () => {
+    // Configuration reaches this router from wrangler vars, a `.dev.vars` file
+    // and CI secrets, and every one of them is an operator typing by hand.
+    // `TRUE`, `True` and `" true "` are the same answer as `true` — an operator
+    // who wrote `DEMO_MODE=True` and watched it silently do nothing has no way
+    // to tell a typo from a feature, which is exactly the class of silent
+    // misconfiguration `validate()` exists to surface.
+    for (const value of ['true', 'TRUE', 'True', ' true ', '\ttrue\n']) {
+      expect(EnvParser.boolean({ B: value }, 'B', 'false')).toBe(true);
+    }
+    for (const value of ['false', 'FALSE', 'False', ' false ', '1', 'yes', 'on', '']) {
+      expect(EnvParser.boolean({ B: value }, 'B', 'true')).toBe(false);
+    }
+  });
 });
 
 describe('RouterLimits', () => {

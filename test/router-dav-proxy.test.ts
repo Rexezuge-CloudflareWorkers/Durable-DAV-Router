@@ -69,6 +69,58 @@ function fakeDb(opts: { backends: BackendSeed[] }) {
   };
 }
 
+/**
+ * D1 double that fails selected statement shapes.
+ *
+ * `d1Read` (and every other DAO read in the service layer) is built to
+ * distinguish a *missing schema* from a genuine fault: the first degrades to a
+ * fallback, the second raises `DatabaseError`. Only the second is the case this
+ * test suite is about, so the injected message is a real SQLite I/O error — it
+ * matches no `isMissingSchemaError` pattern and no `isD1ErrorRetryable` pattern,
+ * which keeps it non-retryable and the test fast.
+ */
+const D1_FAULT = 'D1_ERROR: disk I/O error';
+
+type D1FaultTarget = 'byId' | 'byUsernameCi';
+
+/**
+A D1 statement that fails every operation with `message`.
+*/
+interface FailingStatement {
+  bind: () => FailingStatement;
+  first: <T>() => Promise<T | null>;
+  all: <T>() => Promise<{ results: T[] }>;
+  run: () => Promise<{ success: boolean }>;
+}
+
+function failingStatement(message: string): FailingStatement {
+  const stmt: FailingStatement = {
+    bind: () => stmt,
+    first: async <T>(): Promise<T | null> => {
+      throw new Error(message);
+    },
+    all: async <T>(): Promise<{ results: T[] }> => {
+      throw new Error(message);
+    },
+    run: async (): Promise<{ success: boolean }> => {
+      throw new Error(message);
+    },
+  };
+  return stmt;
+}
+
+function faultyDb(opts: { backends: BackendSeed[]; fault: D1FaultTarget }) {
+  const inner = fakeDb(opts);
+  return {
+    prepare(query: string) {
+      const isFaulted =
+        (opts.fault === 'byId' && query.includes('FROM router_backends WHERE id = ?')) ||
+        (opts.fault === 'byUsernameCi' && query.includes('FROM router_backends WHERE backend_username_ci'));
+      return isFaulted ? failingStatement(D1_FAULT) : inner.prepare(query);
+    },
+  };
+}
+
 function stubApp() {
   const routes = new Map<string, (c: never) => Promise<Response>>();
   const app = {
@@ -557,6 +609,31 @@ async function repeatAcrossIsolates(count: number, run: () => Promise<Response>)
   return statuses;
 }
 
+/**
+ * Build a callable proxy request against `/:owner/:volume/*`.
+ *
+ * Hoisted to module scope because the write-budget and D1-fault suites below
+ * both need it, and the D1-fault suite's whole point is to assert the *cost* of
+ * a request as well as its status.
+ */
+function proxySubpathRequest(kv: unknown, db: unknown, url: string, method = 'GET') {
+  const { app, routes } = stubApp();
+  registerRouterDavProxyRoutes(app as never);
+  const handler = routes.get('ON /:owner/:volume/*')!;
+  const { pathname } = new URL(url);
+  const [, owner, volume] = pathname.split('/', 3);
+  return () =>
+    handler(
+      fakeContext({
+        method,
+        url,
+        env: { DB: db, CACHE: kv },
+        params: { owner, volume },
+        headers: { Authorization: 'Basic eA==' },
+      }) as never,
+    );
+}
+
 describe('RouterDavProxyRoutes KV write budget', () => {
   beforeEach(() => {
     clearRouteCacheL1();
@@ -571,21 +648,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
   ];
 
   function proxyFor(kv: unknown, db: unknown, url: string, method = 'GET') {
-    const { app, routes } = stubApp();
-    registerRouterDavProxyRoutes(app as never);
-    const handler = routes.get('ON /:owner/:volume/*')!;
-    const { pathname } = new URL(url);
-    const [, owner, volume] = pathname.split('/', 3);
-    return () =>
-      handler(
-        fakeContext({
-          method,
-          url,
-          env: { DB: db, CACHE: kv },
-          params: { owner, volume },
-          headers: { Authorization: 'Basic eA==' },
-        }) as never,
-      );
+    return proxySubpathRequest(kv, db, url, method);
   }
 
   it('spends one write total on a client that 404s on every inner path', async () => {
@@ -1242,3 +1305,113 @@ describe('RouterDavProxyRoutes root-anchored href passthrough', () => {
     expect(probeCount(calls)).toBe(afterFirst);
   });
 });
+
+/**
+ * A database that is *down* is not a database with no rows.
+ *
+ * `BackendService`'s `d1Read` already draws that line — a missing schema
+ * degrades to a fallback, anything else becomes a `DatabaseError` — and
+ * `isMissingSchemaError` exists so exactly one condition may be swallowed. The
+ * WebDAV proxy used to swallow *all* of them, which turned a transient D1
+ * fault into two separately-bad answers at once:
+ *
+ *   1. A `404` for a volume that exists. Owner routing asks
+ *      `listByBackendUsername`; a fault became `[]`, which is indistinguishable
+ *      from an unknown handle. A native client reads that as "your bucket is
+ *      gone" and, on a sync, that is the signal to delete the local copy.
+ *   2. A KV delete. A cached route whose revalidation *could not be performed*
+ *      was recorded as "D1 disagrees, the entry is proven wrong", and a proven
+ *      entry is evicted. So an outage spent deletes from the 1,000/day
+ *      allowance — the exact failure the write-budget suite above exists to
+ *      prevent, reached through a completely different door.
+ *
+ * Neither shows up in a status-only assertion about a *healthy* backend, which
+ * is why these tests assert the status *and* the operation counts.
+ */
+describe('RouterDavProxyRoutes D1 faults are not "not found"', () => {
+  beforeEach(() => {
+    clearRouteCacheL1();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearRouteCacheL1();
+  });
+
+  const SOLO: BackendSeed[] = [
+    { id: '1', owner_email: 'o@example.com', slug: 'solo', base_url: 'https://backend.example.com', backend_username: 'owner' },
+  ];
+
+  it('answers 500, not 404, when the owner lookup fails', async () => {
+    stubEverythingAnswers207();
+    const db = faultyDb({ backends: SOLO, fault: 'byUsernameCi' });
+    const request = proxySubpathRequest(countingKv(), db, 'https://router.example.com/owner/solovol/file.txt');
+    const res = await request();
+    expect(res.status).toBe(500);
+  });
+
+  it('spends no KV write or delete when the owner lookup fails', async () => {
+    // The outage must not look like a routing change, or every request during it
+    // pays a delete to invalidate a route that is still correct.
+    stubEverythingAnswers207();
+    const db = faultyDb({ backends: SOLO, fault: 'byUsernameCi' });
+    const kv = countingKv({
+      'davRoute:v1:owner:outage': JSON.stringify({ backendId: '1', slug: 'solo', baseUrl: 'https://backend.example.com' }),
+    });
+    const request = proxySubpathRequest(kv, db, 'https://router.example.com/owner/outage/file.txt');
+    await repeatAcrossIsolates(3, request);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.ops.delete).toBe(0);
+    expect(kv.store.size).toBe(1);
+  });
+
+  it('leaves a cached entry alone when its revalidation faults', async () => {
+    // `proven` means D1 *disagreed* with the entry. A revalidation that could
+    // not run has disagreed with nothing, so the entry is merely *suspect* —
+    // the same status the file already gives an unreachable origin, which is
+    // also left alone. The request still gets served by re-resolving through the
+    // owner lookup, which is the authoritative path; what must not happen is the
+    // unverifiable reading being promoted into a fact and spent as a delete.
+    stubEverythingAnswers207();
+    const db = faultyDb({ backends: SOLO, fault: 'byId' });
+    const kv = countingKv({
+      'davRoute:v1:owner:unprovable': JSON.stringify({ backendId: '99', slug: 'gone', baseUrl: 'https://gone.example.com' }),
+    });
+    const request = proxySubpathRequest(kv, db, 'https://router.example.com/owner/unprovable/file.txt');
+    const statuses = await repeatAcrossIsolates(3, request);
+    expect(statuses).toEqual([207, 207, 207]);
+    expect(kv.ops.put).toBe(0);
+    expect(kv.ops.delete).toBe(0);
+    expect(kv.store.size).toBe(1);
+  });
+
+  it('answers 500 when both the revalidation and the owner lookup fault', async () => {
+    // Two reads, one answer. With the authoritative lookup also down there is
+    // nothing left to route on, and the honest status is 5xx — a client that
+    // receives 404 here will delete local copies of a volume that is fine.
+    const db = { prepare: () => failingStatement(D1_FAULT) };
+    const res = await proxySubpathRequest(countingKv(), db, 'https://router.example.com/owner/solovol/file.txt')();
+    expect(res.status).toBe(500);
+  });
+
+  it('masks the D1 fault instead of echoing it', async () => {
+    // `ErrorMapper` masks every 5xx body because `DatabaseError` carries D1
+    // table and constraint text; a schema map is exactly what that protects.
+    stubEverythingAnswers207();
+    const db = faultyDb({ backends: SOLO, fault: 'byUsernameCi' });
+    const res = await proxySubpathRequest(countingKv(), db, 'https://router.example.com/owner/solovol/file.txt')();
+    const body = await res.text();
+    expect(body).not.toContain(D1_FAULT);
+    expect(body).not.toContain('router_backends');
+    expect(JSON.parse(body)).toMatchObject({ Exception: { Type: 'InternalServerError' } });
+  });
+
+  it('still degrades to 404 when the schema itself is missing', async () => {
+    // The one condition that legitimately reads as "nothing here". A database
+    // that has not run its migrations must not turn every WebDAV request into
+    // a 500, so this asserts the fix did not over-correct.
+    const db = { prepare: () => failingStatement('D1_ERROR: no such table: router_backends') };
+    const res = await proxySubpathRequest(countingKv(), db, 'https://router.example.com/owner/solovol/file.txt')();
+    expect(res.status).toBe(404);
+  });
+});
+

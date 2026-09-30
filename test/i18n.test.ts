@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   BACKEND_STRINGS,
   SUPPORTED_BACKEND_LOCALES,
@@ -14,8 +16,9 @@ import {
 // root) and a Vite `import.meta.glob` locale chunk map. Web-side
 // `normalizeLanguage`/`detectInitialLanguage` are therefore covered by
 // `pnpm run validate:locales` (key parity of all bundles + bundle-dir parity
-// with `SUPPORTED_LANGUAGES`) and by `test/web-i18n.test.ts` for the pure
-// helpers that have no web-only dependency.
+// with `SUPPORTED_LANGUAGES`, plus code-to-bundle key coverage) and by the
+// `web locale key coverage` suite below for the pure helpers that have no
+// web-only dependency.
 
 describe('backend strings (en)', () => {
   it('serves Title Case English strings', () => {
@@ -146,5 +149,96 @@ describe('formatBackendString', () => {
   it('ignores non-scalar variable values', () => {
     // A substituted `[object Object]` would reach a client verbatim.
     expect(formatBackendString('Value: {v}', { v: {} as unknown as string })).toBe('Value: {v}');
+  });
+});
+
+/**
+ * Web locale key coverage, in both directions.
+ *
+ * `validate_locales.mjs` compared every bundle against `en`, which answers "are
+ * the translations consistent?" and never "do the keys exist?" — so a `t('…')`
+ * naming a key absent from `en` passed every check and silently rendered
+ * i18next's own fallback. Every such call site passes an English default as its
+ * second argument, which is precisely why it is invisible: the UI looks correct,
+ * in English, forever, and the only evidence is that a translator opens the
+ * bundle and finds nothing there.
+ *
+ * A key in the bundle with no caller is the mirror problem — a translation that
+ * looks maintained but is unreachable, so a fix to it can never ship.
+ */
+describe('web locale key coverage', () => {
+  const WEB_SRC = path.join(import.meta.dirname, '..', 'apps', 'web', 'src');
+
+  function webSources(dir: string, out: string[] = []): string[] {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) webSources(full, out);
+      else if (/\.tsx?$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  function flatten(node: Record<string, unknown>, prefix = '', out: [string, unknown][] = []): [string, unknown][] {
+    const entries = Object.entries(node);
+    for (const [key, value] of entries) {
+      const dotted = prefix ? `${prefix}.${key}` : key;
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) flatten(value as Record<string, unknown>, dotted, out);
+      else out.push([dotted, value]);
+    }
+    return out;
+  }
+
+  /**
+   * Keys referenced from the SPA.
+   *
+   * Three call shapes, all literal: `t('ns.key')`, the fallback key argument of
+   * `toLocalizedErrorMessage(t, error, 'ns.key', 'Default')`, and the
+   * `BACKEND_TYPE_TO_I18N_KEY` value map, whose keys are resolved at runtime and
+   * therefore never appear in a `t(...)` literal.
+   */
+  function referencedKeys(): Map<string, string> {
+    const found = new Map<string, string>();
+    const add = (key: string, where: string): void => {
+      if (!found.has(key)) found.set(key, where.replace(`${WEB_SRC}/`, ''));
+    };
+    for (const file of webSources(WEB_SRC)) {
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/\bt\(\s*'([^']+)'/g)) add(match[1], file);
+      for (const match of source.matchAll(/toLocalizedErrorMessage\(\s*\w+\s*,\s*\w+\s*,\s*'([^']+)'/g)) add(match[1], file);
+      for (const match of source.matchAll(/:\s*'((?:errors|common|volumes|dashboard|backends|settings)\.[^']+)'/g)) add(match[1], file);
+    }
+    return found;
+  }
+
+  const enBundle = JSON.parse(readFileSync(path.join(WEB_SRC, 'locales', 'en', 'translation.json'), 'utf8')) as Record<string, unknown>;
+  const referenced = referencedKeys();
+  const bundleKeys = new Set(flatten(enBundle).map(([key]) => key));
+
+  it('resolves every key the SPA asks for', () => {
+    // A missing key renders i18next's raw key path in production, not the English
+    // default: the second argument to `t()` is a *default value*, honoured only
+    // when `returnEmptyString` and the key are both absent from the resource —
+    // which is a runtime detail no type system checks and no status-code test
+    // sees. Assert the resource exists.
+    const unresolved = [...referenced].filter(([key]) => !bundleKeys.has(key)).map(([key, where]) => `${key} (${where})`);
+    expect(unresolved).toEqual([]);
+  });
+
+  it('has no unreachable keys in the bundle', () => {
+    const orphans = [...bundleKeys].filter((key) => !referenced.has(key)).sort();
+    expect(orphans).toEqual([]);
+  });
+
+  it('ships the same keys in every locale directory', () => {
+    const localesDir = path.join(WEB_SRC, 'locales');
+    const tags = readdirSync(localesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+    expect(tags).toContain('en');
+    for (const tag of tags) {
+      const other = JSON.parse(readFileSync(path.join(localesDir, tag, 'translation.json'), 'utf8')) as Record<string, unknown>;
+      expect({ tag, keys: flatten(other).map(([key]) => key).sort() }).toEqual({ tag, keys: [...bundleKeys].sort() });
+    }
   });
 });

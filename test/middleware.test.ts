@@ -237,6 +237,38 @@ describe('rateLimit', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it('dispatches downstream exactly once when downstream rejects', async () => {
+    // The fail-open path must cover *the limiter's own* bookkeeping only. While
+    // `await next()` sat inside the `try`, a rejection from anything downstream
+    // — a middleware rather than a handler, since `app.onError` converts handler
+    // throws before they escape — landed in the `catch`, which called `next()`
+    // a second time. The request ran twice: for a mutating verb, twice.
+    const middleware = rateLimit({ windowMs: 60_000, max: 5, keyPrefix: 'reject' });
+    const c = makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.6' } });
+    let calls = 0;
+    const next = vi.fn(async () => {
+      calls += 1;
+      throw new Error('downstream blew up');
+    });
+    await expect(middleware(c as never, next)).rejects.toThrow('downstream blew up');
+    expect(next).toHaveBeenCalledOnce();
+    expect(calls).toBe(1);
+  });
+
+  it('does not charge the bucket twice when downstream rejects', async () => {
+    // The same double-dispatch also incremented the counter on a path where the
+    // response never carried, so one caller could exhaust its own budget.
+    const middleware = rateLimit({ windowMs: 60_000, max: 1, keyPrefix: 'charge' });
+    const ip = { 'CF-Connecting-IP': '203.0.113.7' };
+    await expect(
+      middleware(makeCtx('https://x/user/me', { headers: ip }) as never, async () => {
+        throw new Error('downstream blew up');
+      }),
+    ).rejects.toThrow();
+    const second = makeCtx('https://x/user/me', { headers: ip });
+    await expect(middleware(second as never, async () => undefined)).resolves.toBeUndefined();
+  });
+
   it('bounds the bucket map so one isolate cannot grow without limit', () => {
     // Drive far more distinct keys than the cap and confirm the map stays bounded.
     const middleware = rateLimit({ windowMs: 60_000, max: 1, keyPrefix: 'flood' });
