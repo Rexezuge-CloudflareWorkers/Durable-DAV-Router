@@ -17,4 +17,4 @@ function isValidEmailFormat(raw: string): boolean {
   return raw !== '' && raw.length <= MAX_EMAIL_LENGTH && EMAIL_FORMAT_RE.test(raw);
 }
 
-export { isValidEmailFormat, MAX_EMAIL_LENGTH };
+export { isValidEmailFormat };

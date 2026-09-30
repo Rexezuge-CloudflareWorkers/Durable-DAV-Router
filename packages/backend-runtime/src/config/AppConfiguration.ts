@@ -1,5 +1,4 @@
 import { EnvParser } from './EnvParser';
-import { DEFAULT_DEBUG_MODE, DEFAULT_SITE_URL } from './ConfigurationDefaults';
 
 import { AuthConfig } from './sections/AuthConfig';
 import { RouterLimits } from './sections/RouterLimits';
@@ -45,16 +44,6 @@ class AppConfiguration {
 
   public get authConfig(): AuthConfig {
     return this.auth;
-  }
-
-  public getDebugMode(): boolean {
-    return EnvParser.boolean(this.env, 'DEBUG_MODE', DEFAULT_DEBUG_MODE);
-  }
-
-  public getSiteUrl(): string {
-    let url = EnvParser.string(this.env, 'SITE_URL', DEFAULT_SITE_URL);
-    while (url.endsWith('/')) url = url.slice(0, -1);
-    return url;
   }
 
   public getMaxBackendsPerUser(): number {

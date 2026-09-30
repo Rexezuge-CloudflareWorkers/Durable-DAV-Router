@@ -88,14 +88,6 @@ class UserIdentityService {
   }
 
   /**
-   * Account id for a sign-in address, or null when unknown.
-   */
-  public async resolveUserId(email: string): Promise<string | null> {
-    const account = await this.resolveAccount(email);
-    return account?.id ?? null;
-  }
-
-  /**
    * Account behind an id. The inverse direction, for callers that already hold a
    * stable key and need the current address.
    */

@@ -5,7 +5,7 @@ import { isMissingSchemaError } from '@durable-dav-router/backend-data/utils';
 import { BadRequestError, ConflictError, DatabaseError, ForbiddenError, NotFoundError } from '@durable-dav-router/backend-errors';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { TimestampUtil, UUIDUtil } from '@durable-dav-router/shared/utils';
-import { isPrivateOrInternalHost } from '@durable-dav-router/shared/utils';
+import { MAX_URL_LENGTH, isPrivateOrInternalHost } from '@durable-dav-router/shared/utils';
 import type { AccountIdentity } from '../identity/UserIdentityService';
 import { stripTrailingSlashes } from './BackendProxyService';
 
@@ -70,6 +70,11 @@ function normalizeBaseUrl(raw: unknown, allowPrivateHosts = false): string {
   if (typeof raw !== 'string') throw new BadRequestError('baseUrl must be a string');
   const trimmed = stripTrailingSlashes(raw.trim());
   if (!trimmed) throw new BadRequestError('baseUrl is required');
+  // A bound rather than a validation: `new URL` accepts a megabyte-long origin,
+  // and this value is stored and then fetched on every proxied request. Anything
+  // longer than a real host:port is either a mistake or an attempt to spend the
+  // row's storage and every lookup on it.
+  if (trimmed.length > MAX_URL_LENGTH) throw new BadRequestError(`baseUrl is too long (max ${MAX_URL_LENGTH} characters)`);
   let url: URL;
   try {
     url = new URL(trimmed);

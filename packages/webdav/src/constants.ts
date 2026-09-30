@@ -1,5 +1,3 @@
-const DAV_CLASS = '1, 2';
-
 const SUPPORT_METHODS = ['OPTIONS', 'PROPFIND', 'PROPPATCH', 'MKCOL', 'GET', 'HEAD', 'PUT', 'DELETE', 'COPY', 'MOVE', 'LOCK', 'UNLOCK'];
 
 const CORS_ALLOW_HEADERS = [
@@ -28,23 +26,6 @@ const CORS_EXPOSE_HEADERS = [
   // distinguish "wrong password" from "volume does not exist".
   'www-authenticate',
 ].join(', ');
-
-/**
- * Origins permitted to drive cross-origin WebDAV traffic through the router.
- *
- * Previously any `Origin` was reflected verbatim. `Access-Control-Allow-
- * Credentials: false` blocks cross-origin *reads* of a credentialed response,
- * but it does nothing about writes: the preflight still succeeds, so a page on
- * any origin could issue `PUT`/`DELETE`/`MKCOL` against a bucket, and the
- * router forwards `Cookie` verbatim — a backend session cookie would be
- * replayed on those requests.
- *
- * An empty allow-list means "same-origin only": the SPA is served from this
- * same origin, so browsers never need a cross-origin grant to use it, and
- * WebDAV clients are not browsers. Deployments that genuinely need a
- * cross-origin Web UI must opt in explicitly.
- */
-const DEFAULT_CORS_ALLOWED_ORIGINS: readonly string[] = [];
 
 /**
 Cache of parsed allow-lists, keyed by the raw comma-separated env value.
@@ -76,14 +57,21 @@ function parseAllowedOrigins(raw = ''): ReadonlySet<string> {
  *
  * `allowListRaw` is `undefined` when no allow-list was configured at all, and
  * `null` when one was configured and the request origin is absent. The
- * distinction matters: the first falls back to the compile-time default, the
- * second has no origin to grant.
+ * distinction matters: the first is "same-origin only", the second has no
+ * origin to grant.
+ *
+ * Same-origin-only is a decision, not a default awaiting a wider one. Previously
+ * any `Origin` was reflected verbatim, and `Access-Control-Allow-Credentials:
+ * false` blocks cross-origin *reads* of a credentialed response while doing
+ * nothing about writes — so the preflight still succeeded and a page on any
+ * origin could issue `PUT`/`DELETE`/`MKCOL` against a bucket with the `Cookie`
+ * header forwarded verbatim. The shipped SPA is served from this origin, so it
+ * never needs a cross-origin grant, and WebDAV clients are not browsers. A
+ * deployment that genuinely needs a cross-origin Web UI passes an explicit list,
+ * or `*`.
  */
 function resolveAllowedOrigin(requestOrigin: string | null, allowListRaw?: string | null): string | null {
-  if (!requestOrigin || requestOrigin === 'null') return null;
-  if (allowListRaw === undefined) {
-    return DEFAULT_CORS_ALLOWED_ORIGINS.includes(requestOrigin.toLowerCase()) ? requestOrigin : null;
-  }
+  if (!requestOrigin || requestOrigin === 'null' || (allowListRaw === undefined)) return null;
   const allowed = parseAllowedOrigins(allowListRaw ?? '');
   if (!allowed.has('*')) {
     return allowed.has(requestOrigin.toLowerCase()) ? requestOrigin : null;
@@ -112,20 +100,4 @@ function applyCors(response: Response, request: Request, allowListRaw?: string |
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function createdResponse(resourceHref: string, body: BodyInit | null = '', headers: HeadersInit = {}): Response {
-  const responseHeaders = new Headers(headers);
-  responseHeaders.set('Location', resourceHref);
-  return new Response(body, { status: 201, headers: responseHeaders });
-}
-
-export {
-  DAV_CLASS,
-  SUPPORT_METHODS,
-  CORS_ALLOW_HEADERS,
-  CORS_EXPOSE_HEADERS,
-  DEFAULT_CORS_ALLOWED_ORIGINS,
-  applyCors,
-  createdResponse,
-  parseAllowedOrigins,
-  resolveAllowedOrigin,
-};
+export { SUPPORT_METHODS, applyCors };

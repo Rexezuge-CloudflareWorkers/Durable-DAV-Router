@@ -59,10 +59,6 @@ const svc = (seed: Array<{ email: string; id?: string }> = []) => {
       return 'claimed' as const;
     }),
     listByUserId: vi.fn(async (userId: string) => [...emails.values()].filter((e) => e.user_id === userId)),
-    revoke: vi.fn(async (email: string) => {
-      const row = emails.get(email.toLowerCase());
-      if (row) row.is_verified = 0;
-    }),
     revokeAllVerified: vi.fn(async (userId: string, exceptEmail: string) => {
       for (const row of emails.values()) {
         if (row.user_id === userId && row.email !== exceptEmail.toLowerCase()) row.is_verified = 0;

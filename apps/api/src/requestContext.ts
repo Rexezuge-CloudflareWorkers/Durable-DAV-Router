@@ -1,4 +1,3 @@
-import type { Context } from 'hono';
 import type { AccountIdentity } from '@durable-dav-router/backend-services/identity';
 
 /**
@@ -26,6 +25,4 @@ type AuthenticatedAccount = AccountIdentity;
  */
 type RouterEnv = { Bindings: Env; Variables: { AuthenticatedAccount: AuthenticatedAccount } };
 
-type RouterContext = Context<RouterEnv>;
-
-export type { AuthenticatedAccount, RouterContext, RouterEnv };
+export type { AuthenticatedAccount, RouterEnv };

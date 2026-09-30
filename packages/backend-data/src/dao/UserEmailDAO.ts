@@ -77,16 +77,6 @@ class UserEmailDAO extends BaseDAO {
   }
 
   /**
-   * Revoke an address for login while keeping it resolvable for attribution.
-   */
-  public async revoke(email: string): Promise<void> {
-    await this.withRetry(
-      () => this.database.prepare('UPDATE user_emails SET is_verified = 0 WHERE email = ?').bind(email.toLowerCase()).run(),
-      'revoke user email',
-    );
-  }
-
-  /**
    * Revoke every verified address for an account. Used when the sign-in address
    * changes, so only the new address can authenticate it.
    */

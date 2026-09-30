@@ -1,6 +1,5 @@
 import type { RouterBackendDAO, UserDAO, UserEmailDAO } from '@durable-dav-router/backend-data/dao';
 import type { Token } from '@durable-dav-router/backend-runtime/di';
-import type { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import type { AccessAuthService } from '../auth/AccessAuthService';
 import type { UserIdentityService } from '../identity/UserIdentityService';
@@ -25,9 +24,6 @@ const Tokens = {
   UserIdentityService: Symbol('UserIdentityService') as Token<UserIdentityService>,
   UserService: Symbol('UserService') as Token<UserService>,
   BackendService: Symbol('BackendService') as Token<BackendService>,
-  // `AppConfig` is bound for services that need injected configuration; it is
-  // not resolved by handlers (they receive a fully-built service instead).
-  AppConfig: Symbol('AppConfig') as Token<AppConfiguration>,
 } satisfies Record<string, Token<unknown>>;
 
 export { Tokens };
