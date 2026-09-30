@@ -97,10 +97,6 @@ function normalizeBaseUrl(raw: unknown, allowPrivateHosts = false): string {
   return url.origin;
 }
 
-function isTruthyFlag(raw: string | undefined): boolean {
-  return (raw ?? '').trim().toLowerCase() === 'true';
-}
-
 /**
  * Whether this deployment may register a private/loopback backend origin.
  *
@@ -112,10 +108,15 @@ function isTruthyFlag(raw: string | undefined): boolean {
  *  3. Production with nothing set → denied. Locked by default is the safe
  *     reading: the cost of being wrong in the other direction is an
  *     authenticated SSRF proxy into the deployment's own network.
+ *
+ * Read through `AppConfiguration` rather than through a local
+ * `trim().toLowerCase() === 'true'`, so this flag has one definition of "on".
+ * The three boolean readers in this repository disagreed about case and
+ * whitespace before, which meant the same variable could be honoured here and
+ * ignored two layers up.
  */
 function isPrivateBackendHostAllowed(env: BackendServiceEnv, config: AppConfiguration): boolean {
-  const raw = env.ALLOW_PRIVATE_BACKEND_HOSTS;
-  return typeof raw === 'string' && raw.trim().length > 0 ? isTruthyFlag(raw) : config.isBypassAllowed();
+  return config.getAllowPrivateBackendHosts() ?? config.isBypassAllowed();
 }
 
 /**

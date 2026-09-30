@@ -94,6 +94,17 @@ function rateLimit(opts: {
     throw new Error('Invalid rateLimit keyPrefix: must be a non-empty string');
   }
   return async (c: RateLimitContext, next: Next): Promise<Response | void> => {
+    // Decide first, dispatch once. `await next()` used to sit *inside* this
+    // `try`, so a rejection from anywhere downstream — a middleware rather than
+    // a handler, since `app.onError` converts handler throws into a response
+    // before they escape — was caught and answered with a second `next()` call.
+    // That ran the request twice and charged the bucket twice, on exactly the
+    // paths the limiter is supposed to be irrelevant to.
+    //
+    // Nothing that decides can await, so the guarded region and the dispatched
+    // region no longer overlap and fail-open means what it says: a bucket that
+    // cannot be tracked must not be the reason a legitimate request fails.
+    let limited: Response | null = null;
     try {
       const now = Date.now();
       cleanup(now);
@@ -110,24 +121,23 @@ function rateLimit(opts: {
       const existing = buckets.get(key);
       if (!existing || existing.resetAt <= now) {
         buckets.set(key, { count: 1, resetAt: now + opts.windowMs });
-        await next();
-        return;
-      }
-      if (existing.count >= opts.max) {
+      } else if (existing.count >= opts.max) {
         const retryAfter = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
         // Reuse the error type so the wire envelope cannot drift from the
         // canonical mapping: hand-building the JSON here is how this response
         // ended up bypassing `BaseRoute.toErrorResponse` entirely.
-        const limited = new RateLimitedError();
-        return c.json({ Exception: { Type: limited.getErrorType(), Message: limited.getErrorMessage() } }, 429, {
+        const error = new RateLimitedError();
+        limited = c.json({ Exception: { Type: error.getErrorType(), Message: error.getErrorMessage() } }, 429, {
           'Retry-After': String(retryAfter),
         });
+      } else {
+        existing.count += 1;
       }
-      existing.count += 1;
-      await next();
     } catch {
-      await next();
+      // Fail open: fall through and dispatch.
     }
+    if (limited) return limited;
+    await next();
   };
 }
 

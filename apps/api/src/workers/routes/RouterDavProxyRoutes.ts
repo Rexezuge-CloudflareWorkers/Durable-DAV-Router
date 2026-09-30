@@ -14,7 +14,9 @@ import {
   stripSlashes,
 } from '@durable-dav-router/backend-services/router';
 import type { BackendService } from '@durable-dav-router/backend-services/router';
+import type { CachedRoute } from '@durable-dav-router/backend-services/router';
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
+import { DatabaseError } from '@durable-dav-router/backend-errors';
 import { SUPPORT_METHODS, applyCors } from '@durable-dav-router/webdav';
 import { BaseRoute } from '@/endpoints/IBaseRoute';
 import type { RouterEnv } from '@/requestContext';
@@ -63,11 +65,50 @@ const STALE_CACHED_STATUSES = new Set([404, 410]);
 // twice — once to each of two different backends.
 const REPLAY_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PROPFIND']);
 
+/**
+ * Outcome of revalidating a cached owner→backend route against D1.
+ *
+ * Three answers, not two. `unknown` is the one this file previously lacked, and
+ * conflating it with `disproved` is what let a database outage spend KV deletes:
+ * `stale.proven` is the *only* flag that authorises an eviction, so "the read
+ * failed" has to stay distinguishable from "the read said no".
+ */
+type RevalidationVerdict = { kind: 'confirmed'; backend: { id: string; base_url: string } } | { kind: 'disproved' } | { kind: 'unknown' };
+
+async function revalidateCachedRoute(service: BackendService, cached: CachedRoute): Promise<RevalidationVerdict> {
+  try {
+    const current = await service.findBackendById(cached.backendId);
+    // A missing row and an edited `base_url` are both D1 speaking, not a fault,
+    // so both settle the entry.
+    return current && current.base_url === cached.baseUrl ? { kind: 'confirmed', backend: current } : { kind: 'disproved' };
+  } catch (error) {
+    // Only a genuine database fault is "unknown". `isMissingSchemaError` has
+    // already degraded to `null` inside `d1Read`, so reaching here at all means
+    // the read could not be completed.
+    if (error instanceof DatabaseError) return { kind: 'unknown' };
+    throw error;
+  }
+}
+
 async function handleProxy(c: ProxyContext, owner: string, volume: string, inner: string, trailingSlash: boolean): Promise<Response> {
   const method = c.req.raw.method;
   if (!SUPPORT_METHODS.includes(method)) {
     return applyCors(new Response('Method Not Allowed', { status: 405, headers: { Allow: SUPPORT_METHODS.join(', ') } }), c.req.raw);
   }
+  try {
+    return await routeProxy(c, owner, volume, inner, trailingSlash);
+  } catch (error) {
+    // This file was the one route module with no error mapping, so a throw
+    // reached `app.onError`'s hardcoded envelope — losing `ErrorMapper`'s 5xx
+    // masking (a `DatabaseError` carries D1 table and constraint text), the
+    // request's locale, and any `ConflictError.details`. Every other route
+    // module has had this epilogue since the mapper landed.
+    return BaseRoute.toErrorResponse(c as never, error);
+  }
+}
+
+async function routeProxy(c: ProxyContext, owner: string, volume: string, inner: string, trailingSlash: boolean): Promise<Response> {
+  const method = c.req.raw.method;
   const scope = BaseRoute.getScope(c as never);
   const kv = resolveKvCache(scope);
   const explicit = explicitBackendSlug(c.req.raw);
@@ -82,17 +123,26 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
   // writing the same value on the way out.
   let stale: StaleRoute | null = null;
   if (!explicit) {
-    const cached = await getCachedRoute(kv, owner, volume).catch(() => null);
+    const cached = await getCachedRoute(kv, owner, volume);
     if (cached) {
       // Revalidate against D1 before spending a forward on it. A cache entry can
       // name a deleted backend or a `base_url` that has since been edited, and
       // the first symptom of that is a request already sent to the wrong
       // origin. Self-healing after the forward instead meant replaying the
       // request — with a body that had already been consumed.
-      const current = await serviceOf(scope)
-        .findBackendById(cached.backendId)
-        .catch(() => null);
-      if (current && current.base_url === cached.baseUrl) {
+      //
+      // A revalidation that could not be *performed* is not one that
+      // *disproved* the entry, and the difference decides whether a delete is
+      // spent. Flattening a `DatabaseError` to `null` recorded `proven: true` —
+      // "D1 disagrees, the entry is wrong" — and a proven entry is evicted, so a
+      // database that was briefly unavailable spent a delete from the 1,000/day
+      // allowance on every request until it recovered. An unverifiable entry
+      // falls through to the owner lookup below instead, which is the
+      // authoritative path; if *that* is down too, there is nothing left to route
+      // on and the request fails as a 5xx rather than answering 404.
+      const verdict = await revalidateCachedRoute(serviceOf(scope), cached);
+      if (verdict.kind === 'confirmed') {
+        const current = verdict.backend;
         const res = await proxyToBackend(c, current, owner, volume, inner, trailingSlash, getProxyTimeoutMs(c.env));
         if (!STALE_CACHED_STATUSES.has(res.status)) {
           trackVolumeMutation(c, kv, owner, volume, inner, res.status);
@@ -118,7 +168,7 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
           return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
         }
         stale = { route: cached, proven: false };
-      } else {
+      } else if (verdict.kind === 'disproved') {
         // D1 disagrees, so the entry is wrong whatever the origin answers.
         stale = { route: cached, proven: true };
       }
@@ -133,20 +183,18 @@ async function handleProxy(c: ProxyContext, owner: string, volume: string, inner
   // `owner` below is not the router account and is never resolved against
   // `users`. The backend enforces public-vs-private itself with the
   // verbatim-proxied credentials.
-  let backends: Array<{ slug: string; base_url: string }> = [];
-  try {
-    backends = await scope
-      .get(Tokens.BackendService)
-      .listByBackendUsername(owner)
-      .catch(() => []);
-  } catch {
-    backends = [];
-  }
+  // Not wrapped in a `.catch`: an unreachable database is not the same answer as
+  // an unknown handle, and this route has no authenticated caller to soften the
+  // distinction. `[]` here answered `404` for volumes that exist — which a
+  // native client reads as "the bucket is gone", and a sync acts on — while
+  // `d1Read` had already refused to make the same substitution one layer up.
+  // Only a missing schema degrades, and it degrades inside `d1Read`.
+  const backends = await serviceOf(scope).listByBackendUsername(owner);
   if (backends.length === 0) {
     evictStaleRoute(c, kv, stale, owner, volume, null);
     return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);
   }
-  const resolved = resolveBackend(backends as never, explicit);
+  const resolved = resolveBackend(backends, explicit);
   if (resolved.kind === 'not-found') {
     evictStaleRoute(c, kv, stale, owner, volume, null);
     return applyCors(new Response('Not Found', { status: 404 }), c.req.raw);

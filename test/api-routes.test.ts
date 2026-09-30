@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
+import { SUPPORT_METHODS } from '@durable-dav-router/webdav';
 import { registerBackendRoutes } from '../apps/api/src/workers/routes/BackendRoutes';
 import { registerAggregatedVolumeRoutes } from '../apps/api/src/workers/routes/AggregatedVolumeRoutes';
+import { registerRouterDavProxyRoutes } from '../apps/api/src/workers/routes/RouterDavProxyRoutes';
 import { registerUserProfileRoutes } from '../apps/api/src/workers/routes/UserRoutes';
 
 type Row = RouterBackendRow;
@@ -140,14 +142,22 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
 
 function stubApp() {
   const routes = new Map<string, Handler>();
+  // Methods passed to `app.on`, keyed by path. Recorded so a route's accepted
+  // verbs can be asserted as a set — a hardcoded list that has drifted from the
+  // shared one is invisible to a status-code assertion, since the only symptom
+  // is a method quietly falling through to a 404.
+  const methodSets = new Map<string, string[]>();
   const app = {
     get: (path: string, h: Handler) => routes.set(`GET ${path}`, h),
     post: (path: string, h: Handler) => routes.set(`POST ${path}`, h),
     patch: (path: string, h: Handler) => routes.set(`PATCH ${path}`, h),
     delete: (path: string, h: Handler) => routes.set(`DELETE ${path}`, h),
-    on: (_m: unknown, path: string, h: Handler) => routes.set(`ON ${path}`, h),
+    on: (m: unknown, path: string, h: Handler) => {
+      routes.set(`ON ${path}`, h);
+      methodSets.set(path, [...((m ?? []) as string[])]);
+    },
   };
-  return { app, routes };
+  return { app, routes, methodSets };
 }
 
 /**
@@ -1037,6 +1047,46 @@ describe('browser-plane subpath proxy', () => {
       fakeContext({ method: 'GET', env, url: `https://router.example.com${FILES}/a.txt?backend=office` }),
     );
     expect(res.status).toBe(502);
+  });
+});
+
+/**
+ * The two proxy planes must accept the same DAV verbs.
+ *
+ * The browser plane used to carry a hand-written copy of the method list, which
+ * had already drifted from `SUPPORT_METHODS` (it added `POST`/`PATCH` and
+ * reordered the rest). The symptom of that drift is invisible to every existing
+ * assertion: a verb the route forgot falls through to Hono's default 404, which
+ * is exactly what a genuinely-missing path returns too, and a client reads it as
+ * "no such resource". Asserting the registered *set* against the shared constant
+ * is the only place the divergence is observable.
+ */
+describe('proxy planes register the same DAV methods', () => {
+  const BROWSER_PLANE = '/user/volumes/:owner/:volume/*';
+
+  it('the browser plane registers SUPPORT_METHODS plus POST and PATCH', () => {
+    const { app, methodSets } = stubApp();
+    registerAggregatedVolumeRoutes(app as never);
+    expect([...(methodSets.get(BROWSER_PLANE) ?? [])].sort()).toEqual([...new Set([...SUPPORT_METHODS, 'POST', 'PATCH'])].sort());
+  });
+
+  it('the WebDAV plane registers SUPPORT_METHODS and nothing else', () => {
+    const davRoutes = new Map<string, Handler>();
+    const davMethodSets = new Map<string, string[]>();
+    const davApp = {
+      on: (m: unknown, path: string, h: Handler) => {
+        davRoutes.set(`ON ${path}`, h);
+        davMethodSets.set(path, [...((m ?? []) as string[])]);
+      },
+      all: (path: string, h: Handler) => davRoutes.set(`ALL ${path}`, h),
+    };
+    registerRouterDavProxyRoutes(davApp as never);
+    for (const [path, methods] of davMethodSets) {
+      expect({ path, methods: [...methods].sort() }).toEqual({ path, methods: [...SUPPORT_METHODS].sort() });
+    }
+    // Both the volume root and its subpaths are DAV surfaces; a method accepted
+    // on one and not the other is the same drift one level up.
+    expect(davMethodSets.size).toBeGreaterThanOrEqual(2);
   });
 });
 

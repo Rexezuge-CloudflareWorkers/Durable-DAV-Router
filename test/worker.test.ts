@@ -7,8 +7,28 @@ type Fetchable = { fetch: (request: Request, env: unknown, ctx: unknown) => Prom
 
 const worker = (): Fetchable => new DurableDavRouterWorker() as unknown as Fetchable;
 
+/**
+ * A D1 binding with no rows.
+ *
+ * This was `{}`, which is not a database: reaching it produced
+ * `this.database.prepare is not a function`, and the WebDAV proxy swallowed that
+ * `TypeError` into an empty result set — so the "no backend for this owner"
+ * answer these tests assert was, in the fixture, actually an *unavailable
+ * database* reading as "not found". Now that a fault propagates, a faithful
+ * empty result is modelled instead, which is what the assertions mean.
+ */
+const emptyDb = {
+  prepare: () => ({
+    bind: () => ({
+      first: async () => null,
+      all: async () => ({ results: [] }),
+      run: async () => ({ success: true, meta: { changes: 0 } }),
+    }),
+  }),
+};
+
 const ENV = {
-  DB: {},
+  DB: emptyDb,
   ENVIRONMENT: 'development',
   DEV_AUTH_EMAIL: 'test@example.com',
   TEAM_DOMAIN: '',
@@ -213,10 +233,10 @@ describe('CORS preflight', () => {
 
   it('answers a DAV OPTIONS that is not a preflight with the proxy 404, not 204', async () => {
     // A DAV capability probe carries no `Access-Control-Request-Method`, so it
-    // must reach the DAV proxy rather than the preflight shortcut. `DB: {}` has
-    // no backend for this owner, which is the same 404 a PROPFIND gets. A bare
-    // 204 here is the regression: RFC 4918 §9.1 clients read the missing `DAV:`
-    // header as "not a DAV server" and abort with "No Content".
+    // must reach the DAV proxy rather than the preflight shortcut. The empty
+    // database has no backend for this owner, which is the same 404 a PROPFIND
+    // gets. A bare 204 here is the regression: RFC 4918 §9.1 clients read the
+    // missing `DAV:` header as "not a DAV server" and abort with "No Content".
     const res = await call(worker(), '/owner/volume', { method: 'OPTIONS' });
     expect(res.status).toBe(404);
   });

@@ -16,6 +16,8 @@ export {
   getProxyTimeoutMs,
   stripTrailingSlashes,
   stripSlashes,
+  bodylessMethods,
+  BODYLESS_METHODS,
   PASSTHROUGH_REQUEST_HEADERS,
   PASSTHROUGH_RESPONSE_HEADERS,
 } from './BackendProxyService';

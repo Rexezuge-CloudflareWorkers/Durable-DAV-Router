@@ -28,11 +28,31 @@ describe('EnvParser', () => {
     expect(EnvParser.isValidPositiveInt({ N: 'nope' }, 'N')).toBe(false);
   });
 
-  it('treats only the exact string "true" as a boolean', () => {
+  it('accepts a boolean however it is spelled, and nothing else', () => {
+    // Case and surrounding whitespace are formatting, not meaning: `TRUE` and
+    // `" true "` are the same answer as `true`. Everything that is not `true`
+    // or `false` is *not a boolean*, and falls through to the caller's default
+    // rather than being silently read as an opt-out.
     expect(EnvParser.boolean({ B: 'true' }, 'B', 'false')).toBe(true);
-    expect(EnvParser.boolean({ B: 'TRUE' }, 'B', 'false')).toBe(false);
+    expect(EnvParser.boolean({ B: 'TRUE' }, 'B', 'false')).toBe(true);
     expect(EnvParser.boolean({ B: '1' }, 'B', 'false')).toBe(false);
+    expect(EnvParser.boolean({ B: 'yes' }, 'B', 'false')).toBe(false);
+    expect(EnvParser.boolean({ B: 'on' }, 'B', 'false')).toBe(false);
+    expect(EnvParser.boolean({ B: '' }, 'B', 'true')).toBe(true);
     expect(EnvParser.boolean({}, 'B', 'true')).toBe(true);
+    expect(EnvParser.boolean({}, 'B', 'false')).toBe(false);
+  });
+
+  it('tells a flag apart from an unrecognised value', () => {
+    // `optionalBoolean` is the tri-state reader that lets a caller distinguish
+    // "explicitly off" from "not a boolean at all" — the distinction
+    // `ALLOW_PRIVATE_BACKEND_HOSTS` needs, since its unset case means "follow the
+    // environment" rather than "denied".
+    expect(EnvParser.optionalBoolean({ B: 'true' }, 'B')).toBe(true);
+    expect(EnvParser.optionalBoolean({ B: ' FALSE ' }, 'B')).toBe(false);
+    expect(EnvParser.optionalBoolean({ B: 'banana' }, 'B')).toBeNull();
+    expect(EnvParser.optionalBoolean({ B: ' '.repeat(3) }, 'B')).toBeNull();
+    expect(EnvParser.optionalBoolean({}, 'B')).toBeNull();
   });
 });
 
@@ -196,7 +216,17 @@ describe('AppConfiguration private-host override', () => {
     expect(config({ ALLOW_PRIVATE_BACKEND_HOSTS: 'true' }).getAllowPrivateBackendHosts()).toBe(true);
     expect(config({ ALLOW_PRIVATE_BACKEND_HOSTS: ' TRUE ' }).getAllowPrivateBackendHosts()).toBe(true);
     expect(config({ ALLOW_PRIVATE_BACKEND_HOSTS: 'false' }).getAllowPrivateBackendHosts()).toBe(false);
-    expect(config({ ALLOW_PRIVATE_BACKEND_HOSTS: 'yes' }).getAllowPrivateBackendHosts()).toBe(false);
+  });
+
+  it('reports an unrecognised value as unconfigured, not as a decision', () => {
+    // `null` is "unset", and `BackendService` reads unset as "follow the
+    // environment". Coercing `yes` to `false` here would report an explicit
+    // opt-out the deployment never made — and for the opposite input, an
+    // opt-in. `validate()` now reports this at startup instead, which is the
+    // only place a typo can be seen by the operator who made it.
+    expect(config({ ALLOW_PRIVATE_BACKEND_HOSTS: 'yes' }).getAllowPrivateBackendHosts()).toBeNull();
+    expect(config({ ALLOW_PRIVATE_BACKEND_HOSTS: '1' }).getAllowPrivateBackendHosts()).toBeNull();
+    expect(config({ ALLOW_PRIVATE_BACKEND_HOSTS: 'on' }).getAllowPrivateBackendHosts()).toBeNull();
   });
 });
 

@@ -237,6 +237,46 @@ describe('rateLimit', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it('dispatches downstream exactly once when downstream rejects', async () => {
+    // The fail-open path must cover *the limiter's own* bookkeeping only. While
+    // `await next()` sat inside the `try`, a rejection from anything downstream
+    // — a middleware rather than a handler, since `app.onError` converts handler
+    // throws before they escape — landed in the `catch`, which called `next()`
+    // a second time. The request ran twice: for a mutating verb, twice.
+    const middleware = rateLimit({ windowMs: 60_000, max: 5, keyPrefix: 'reject' });
+    const c = makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.6' } });
+    let calls = 0;
+    const next = vi.fn(async () => {
+      calls += 1;
+      throw new Error('downstream blew up');
+    });
+    await expect(middleware(c as never, next)).rejects.toThrow('downstream blew up');
+    expect(next).toHaveBeenCalledOnce();
+    expect(calls).toBe(1);
+  });
+
+  it('charges exactly one request even when downstream rejects', async () => {
+    // The charge itself was always single — the defect was the dispatch, above —
+    // so this pins the budget arithmetic independently. One rejected request
+    // costs one unit, not two and not zero.
+    //
+    // Charging for it is deliberate: the limiter bounds how much work a caller
+    // can ask for, and a handler that threw still consumed the isolate. Refunding
+    // on failure would let a caller whose requests reliably crash a handler run
+    // the limiter's own cost budget down to nothing.
+    const middleware = rateLimit({ windowMs: 60_000, max: 2, keyPrefix: 'charge' });
+    const ip = { 'CF-Connecting-IP': '203.0.113.7' };
+    const blowUp = async (): Promise<void> => {
+      throw new Error('downstream blew up');
+    };
+    await expect(middleware(makeCtx('https://x/user/me', { headers: ip }) as never, blowUp)).rejects.toThrow();
+    // Second of two: still allowed.
+    await expect(middleware(makeCtx('https://x/user/me', { headers: ip }) as never, async () => undefined)).resolves.toBeUndefined();
+    // Third: the budget is spent. A double charge would have refused here.
+    const third = makeCtx('https://x/user/me', { headers: ip });
+    expect(((await middleware(third as never, async () => undefined)) as Response).status).toBe(429);
+  });
+
   it('bounds the bucket map so one isolate cannot grow without limit', () => {
     // Drive far more distinct keys than the cap and confirm the map stays bounded.
     const middleware = rateLimit({ windowMs: 60_000, max: 1, keyPrefix: 'flood' });
