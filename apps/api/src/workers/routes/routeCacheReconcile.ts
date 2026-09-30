@@ -11,8 +11,16 @@
 import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
 import { invalidateCachedRoute, putCachedRoute, sameRoute } from '@durable-dav-router/backend-services/router';
 import type { CachedRoute } from '@durable-dav-router/backend-services/router';
+import type { RouteContext } from '@/requestContext';
 
-type ProxyContext = { req: { raw: Request }; env: Env; executionCtx?: unknown };
+/**
+ * What a background cache write needs from the request.
+ *
+ * `RouteContext` minus the variable readers, since none of the three writers
+ * below touch a context variable — the DAV plane has no Access identity at all,
+ * and a write that read one would be a policy change.
+ */
+type ProxyContext = Pick<RouteContext, 'req' | 'env'> & { executionCtx?: unknown };
 
 type BackendRoute = { id?: unknown; slug: string; base_url: string };
 

@@ -1,6 +1,6 @@
 import { ConflictError, NotFoundError } from '@durable-dav-router/backend-errors';
 import { resolveBackend } from './BackendProxyService';
-import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
+import type { RoutableBackend } from './BackendProxyService';
 
 /**
  * Resolve which backend a management request targets.
@@ -15,7 +15,7 @@ import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
  * repeated at five call sites and had already drifted from the canonical
  * `Exception.Type` strings.
  */
-function selectBackend(backends: RouterBackendRow[], explicitSlug: string | null, what = 'backend'): RouterBackendRow {
+function selectBackend(backends: RoutableBackend[], explicitSlug: string | null, what = 'backend'): RoutableBackend {
   const resolved = resolveBackend(backends, explicitSlug);
   if (resolved.kind === 'not-found') {
     // Distinct from "ambiguous": the caller named a backend that is not theirs,
