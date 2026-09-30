@@ -24,4 +24,4 @@ function buildSetClause(assignments: SetAssignment[]): SetClause {
 }
 
 export { buildSetClause };
-export type { SetAssignment, SetClause };
+export type { SetAssignment };

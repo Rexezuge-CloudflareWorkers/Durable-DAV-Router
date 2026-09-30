@@ -157,7 +157,8 @@ describe('executeD1WithRetry', () => {
 
   it('backs off between attempts rather than hammering immediately', async () => {
     // A zero base delay keeps the suite fast while still proving the delay is
-    // applied; `sleep` itself is not exported.
+    // applied; `sleep` is exported but stubbed here so the wall clock does not
+    // dominate the suite.
     const started = Date.now();
     let calls = 0;
     await executeD1WithRetry(

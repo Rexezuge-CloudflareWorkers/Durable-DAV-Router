@@ -53,7 +53,7 @@ pnpm exec wrangler dev --config ./wrangler.jsonc
 No committed `wrangler.jsonc` secrets. God-file guard 300/400 warn-only.
 `test` is a workspace project (`test/package.json`), so `pnpm -r typecheck` and `pnpm run lint` both reach it — it sat outside the workspace while holding ~200 KB of test code, and `eslint.config.mjs` ignored `test/**` outright.
 `pnpm run build` is the **only** build (just `apps/web`); re-run it after any `apps/web` change and before `wrangler deploy`. The worker serves the last local build via the gitignored `apps/api/src/generated/spa-shell.ts`, so a frontend fix is inert until the bundle is regenerated. `scripts/verify-spa-shell.mjs` runs in `checks` and rejects a missing, stubbed, or half-refreshed artifact.
-Coverage floor is **64/62/63/65** (measured 65/63/64/66) — raise it, never lower it to make CI pass. It was 80/75/80/80 until `apps/web` joined the coverage `include` list, on a comment claiming a config in `apps/web` that never existed; the SPA is 44 presentational modules at ~0% needing jsdom/testing-library harnesses. Margins are ~1pp, so **new SPA code needs a test in the same change** or the gate fails. Reasoning lives in `vitest.config.mts`.
+Coverage floor is **70/68/69/72** (measured 71/68/69/72) — raise it, never lower it to make CI pass. It was 80/75/80/80 until `apps/web` joined the coverage `include` list, on a comment claiming a config in `apps/web` that never existed; the SPA is 44 presentational modules that needed jsdom/testing-library harnesses. Margins are ~1pp, so **new SPA code needs a test in the same change** or the gate fails. Reasoning lives in `vitest.config.mts`.
 
 ## Layers
 

@@ -2,7 +2,9 @@
 
 Scope: unit + integration tests. Parent index: `../../../AGENTS.md`.
 
-Current thresholds (`vitest.config.mts`): **statements 80 / branches 75 / functions 80 / lines 80** (enforced floor; measured 87/79/89/90). Never lower a threshold to make CI pass — raise it as coverage grows.
+Current thresholds (`vitest.config.mts`): **statements 70 / branches 68 / functions 69 / lines 72** (enforced floor; measured 71/68/69/72). Never lower a threshold to make CI pass — raise it as coverage grows.
+
+This number is a whole-repository one. `apps/web` joined the `include` list in the change that added the SPA to the gate, and it is 44 presentational modules whose first tests arrived later; `vitest.config.mts` records that history and names splitting the SPA into its own project as the follow-up.
 
 Exclusions: `**/*.test.{ts,tsx}`, `**/*.d.ts`, `**/index.ts`, `**/types.d.ts`, `**/model/**`, plus the build-generated `apps/api/src/generated/**` blob, type-only modules (`D1Types`, `ServiceEnv`, `env.d.ts`), and re-export barrels (`dao/identity.ts`, `dao/router.ts`) — none of which have runtime behavior to exercise.
 

@@ -179,34 +179,27 @@ async function proxyOne(c: ProxyOneContext): Promise<Response> {
  * backend as the DAV client it is, and stream the answer back untouched.
  *
  * The bucket browser is a WebDAV client, so this plane cannot use the JSON
- * management forwarder above — three separate failures came from that:
+ * management forwarder above. Three headers carry meaning here and none of them
+ * is `Accept`: `Depth` (RFC 4918 §9.1 makes an absent one `infinity`, so a
+ * folder listing arrives holding the whole subtree), `Destination` (rewritten
+ * onto the backend origin, since the SPA builds it from the router's own and the
+ * backend answers `502` for a cross-origin one), and `Overwrite`. The body is
+ * file bytes, so it is streamed rather than read — `res.text()` decodes them as
+ * UTF-8 and corrupts every binary download.
  *
- * - **`Depth` carries the listing.** RFC 4918 §9.1 makes a PROPFIND with no
- *   `Depth` header a `Depth: infinity` request, which is exactly how the backend
- *   reads it (`request.headers.get('Depth') ?? 'infinity'`, then `listRecursive`).
- *   `authForwardHeaders` forwarded no DAV-shaped header at all, so every folder
- *   listing came back holding the *entire subtree* and the UI rendered `dir_A`,
- *   `dir_B`, and `A.txt` as siblings instead of `dir_A` alone.
- * - **`Destination` carries COPY/MOVE**, and it has to be rewritten onto the
- *   backend origin: the SPA builds it from the router's own origin, and the
- *   backend answers `502` for a cross-origin destination (§10.3). Dropped
- *   outright it left the DO with no destination and a bare `400`, so rename and
- *   duplicate failed. `buildProxiedHeaders` does the rewrite and strips the
- *   router's `?backend=` selector, which the backend must never see.
- * - **The body is file bytes.** `await res.text()` decodes them as UTF-8 and
- *   re-encodes, so every binary download arrived corrupt, and a large file had to
- *   fit in memory twice.
- *
- * So: the WebDAV plane's header helpers and forwarder, with the one header the
- * two planes deliberately disagree on pinned below.
+ * `apps/api/AGENTS.md` records the three separate user-visible failures this
+ * split fixed; `test/api-routes.test.ts` → *browser-plane subpath proxy* asserts
+ * each header and a byte-exact body, because a status-code assertion passes on a
+ * request whose meaning was stripped.
  */
 async function forwardDavToBackend(request: Request, target: string, env: Env, backendBaseUrl: string): Promise<Response> {
   const headers = buildProxiedHeaders(request, new URL(request.url).origin, backendBaseUrl);
-  // Keep this plane's router marker (documented in `authForwardHeaders`): the
-  // WebDAV plane forwards the caller's own `User-Agent`, and silently dropping
-  // the signal a backend may already branch on is not ours to make. The shared
-  // forwarder takes headers rather than building them, precisely so the two
-  // planes can differ here without duplicating the fetch.
+  // The one header the two planes deliberately disagree on. The WebDAV plane
+  // forwards the caller's own `User-Agent`; the browser plane pins the router's
+  // marker, because a backend may already branch on it and silently dropping a
+  // signal a deployment depends on is not ours to make. `forwardDavRequest`
+  // takes headers rather than building them precisely so this can differ without
+  // duplicating the fetch.
   headers.set('User-Agent', 'durable-dav-router');
   return forwardDavRequest(request, target, headers, getProxyTimeoutMs(env));
 }

@@ -1,15 +1,9 @@
-// Minimal Workers-compatible context types so backend-runtime (Layer 1)
+// Minimal Workers-compatible context type so backend-runtime (Layer 1)
 // typechecks without @cloudflare/workers-types. Apps pass the real
-// ExecutionContext / ScheduledController which satisfy these structurally.
+// ExecutionContext, which satisfies this structurally.
 interface WorkerExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
-}
-
-interface WorkerScheduledController {
-  cron: string;
-  scheduledTime: number;
-  noRetry(): void;
 }
 
 abstract class AbstractEntrypointWorker {
@@ -26,4 +20,4 @@ abstract class AbstractEntrypointWorker {
 }
 
 export { AbstractEntrypointWorker };
-export type { WorkerExecutionContext, WorkerScheduledController };
+export type { WorkerExecutionContext };

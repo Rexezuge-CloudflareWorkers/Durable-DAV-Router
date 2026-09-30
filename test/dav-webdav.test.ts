@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DAV_CLASS, SUPPORT_METHODS, applyCors, resolveAllowedOrigin, parseAllowedOrigins } from '@durable-dav-router/webdav';
+import { SUPPORT_METHODS, applyCors } from '@durable-dav-router/webdav';
 
 describe('DuraDAV protocol surface', () => {
-  it('advertises Class 1, 2', () => {
-    expect(DAV_CLASS).toBe('1, 2');
-  });
-
   it('supports all required methods', () => {
     for (const method of ['OPTIONS', 'PROPFIND', 'PROPPATCH', 'MKCOL', 'GET', 'HEAD', 'PUT', 'DELETE', 'COPY', 'MOVE', 'LOCK', 'UNLOCK']) {
       expect(SUPPORT_METHODS).toContain(method);
@@ -105,25 +101,36 @@ describe('CORS origin policy', () => {
   });
 
   describe('allow-list parsing', () => {
+    /**
+     * Every case here is asserted through `applyCors` rather than through the
+     * parser it calls. The parser is an implementation detail of one exported
+     * function, and a test on it passes just as happily if the function stops
+     * calling it — which is the failure mode a white-box test of a private
+     * helper cannot catch and a header on a real response always can.
+     */
+    const granted = (origin: string, allowList?: string): string | null =>
+      applyCors(new Response('ok'), request(origin), allowList).headers.get('Access-Control-Allow-Origin');
+
     it('ignores empty entries and normalizes case', () => {
-      const parsed = parseAllowedOrigins('https://A.example.com, ,https://b.example.com,');
-      expect([...parsed].sort()).toEqual(['https://a.example.com', 'https://b.example.com']);
+      expect(granted('https://b.example.com', 'https://A.example.com, ,https://b.example.com,')).toBe('https://b.example.com');
+      expect(granted('https://c.example.com', 'https://A.example.com, ,https://b.example.com,')).toBeNull();
     });
 
     it('treats an empty string as an empty allow-list, not a wildcard', () => {
       // `*` must be an explicit choice; an unset or blank variable must never
       // accidentally widen access.
-      expect(resolveAllowedOrigin('https://any.example', '')).toBeNull();
-      expect(resolveAllowedOrigin('https://any.example', '  ')).toBeNull();
+      expect(granted('https://any.example', '')).toBeNull();
+      expect(granted('https://any.example', '  ')).toBeNull();
     });
 
     it('falls back to the compile-time default when no list is configured', () => {
-      expect(resolveAllowedOrigin('https://any.example')).toBeNull();
+      expect(granted('https://any.example')).toBeNull();
     });
 
-    it('returns null when there is no request origin to grant', () => {
-      expect(resolveAllowedOrigin(null, '*')).toBeNull();
-      expect(resolveAllowedOrigin('', 'https://a.example.com')).toBeNull();
+    it('grants nothing when the request carries no origin', () => {
+      // No `Origin` header at all, and an empty one. Neither is a grant.
+      expect(applyCors(new Response('ok'), request(), '*').headers.get('Access-Control-Allow-Origin')).toBeNull();
+      expect(granted('', 'https://a.example.com')).toBeNull();
     });
   });
 });

@@ -12,9 +12,17 @@ const baseResources = {
   en: { translation: en },
 } as const;
 
+/**
+ * The one canonicalizer for BCP 47-ish tags (`en_us` → `en-US`).
+ *
+ * Deliberately a local copy of `@durable-dav-router/shared/utils`'s
+ * `canonicalizeLanguageTag`, which is byte-identical: the SPA ships with no
+ * `@durable-dav-router/*` runtime dependency, and `shared` is a Workers package
+ * that pulls Node types in with it. `test/web-lib.test.ts` and
+ * `packages/shared`'s own suite pin both, and `AGENTS.md` names this pair as a
+ * duplication to keep in step — a change to one has to change the other.
+ */
 function canonicalizeTag(tag: string): string {
-  // Same BCP 47-ish normalization as `../Git` (web ships with 0
-  // `@durable-dav-router/*` runtime deps, so the body is intentionally local).
   const normalized = tag.trim().replaceAll('_', '-');
   const parts = normalized.split('-').filter(Boolean);
   if (parts.length === 0) return 'en';
@@ -22,12 +30,6 @@ function canonicalizeTag(tag: string): string {
   if (parts.length === 1) return language;
   const rest = parts.slice(1).map((part: string) => (part.length === 2 ? part.toUpperCase() : part.toLowerCase()));
   return [language, ...rest].join('-');
-}
-
-// Single canonicalizer for BCP 47-ish tags (`en_us` → `en-US`).
-// `lib/locale.ts` delegates here so normalization lives in one place.
-export function canonicalizeLanguageTag(tag: string): string {
-  return canonicalizeTag(tag);
 }
 
 export function normalizeLanguage(tag: string | null | undefined): SupportedLanguage {

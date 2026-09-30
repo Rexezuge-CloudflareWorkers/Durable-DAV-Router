@@ -104,14 +104,4 @@ function isPrivateOrInternalHost(hostname: string): boolean {
   return PRIVATE_IPV4_RANGES.some((range) => range.test(host));
 }
 
-export {
-  MAX_URL_LENGTH,
-  PRIVATE_IPV4_RANGES,
-  stripBrackets,
-  stripTrailingDot,
-  isEncodedNumericHost,
-  isBlockedIpv6Host,
-  isLoopbackHost,
-  isLocalhostName,
-  isPrivateOrInternalHost,
-};
+export { isPrivateOrInternalHost, MAX_URL_LENGTH };

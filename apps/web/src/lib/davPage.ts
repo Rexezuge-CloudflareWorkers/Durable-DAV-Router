@@ -95,4 +95,12 @@ function hasNextPage(page: number, pageCount: number): boolean {
   return page < pageCount;
 }
 
-export { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, PAGE_SIZE_OPTIONS, PAGE_SIZE_STORAGE_KEY, clampPage, clampPageSize, hasNextPage, pageCountFor, readStoredPageSize, storePageSize };
+export {
+  PAGE_SIZE_OPTIONS,
+  clampPage,
+  clampPageSize,
+  hasNextPage,
+  pageCountFor,
+  readStoredPageSize,
+  storePageSize,
+};

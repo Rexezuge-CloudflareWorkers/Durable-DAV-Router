@@ -26,17 +26,6 @@ export interface UserRow {
   updated_at?: number | null;
 }
 
-/**
- * Address a row signs in with, preferring the mutable one over the anchor.
- *
- * Used wherever an account's *address* is wanted and the anchor is not — the
- * `/user/me` response, the ops script's reporting, and the login-email
- * resolution path.
- */
-function loginEmailOf(row: UserRow | null): string | null {
-  return row ? (row.current_email ?? row.email).toLowerCase() : null;
-}
-
 function randomHex(bytes: number): string {
   return [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -150,37 +139,29 @@ class UserDAO extends BaseDAO {
   }
 
   public async getByEmails(emails: string[]): Promise<UserRow[]> {
-    const deduped = new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean));
-    const keys = [...deduped];
-    if (keys.length === 0) return [];
-    const out: UserRow[] = [];
-    for (let i = 0; i < keys.length; i += 50) {
-      const chunk = keys.slice(i, i + 50);
-      // Plain `?` placeholders: `lower(?)` here would still be index-safe, but
-      // normalizing once up front keeps this consistent with `getByEmail`.
-      const placeholders = chunk.map(() => '?').join(', ');
-      const result = await this.database
-        .prepare(`SELECT * FROM users WHERE email IN (${placeholders})`)
-        .bind(...chunk)
-        .all<UserRow>();
-      const rows = result.results ?? [];
-      for (const row of rows) out.push(row);
-    }
-    return out;
+    const normalized = emails.map((e) => e.trim().toLowerCase()).filter(Boolean);
+    // Plain `?` placeholders: `lower(?)` here would still be index-safe, but
+    // normalizing once up front keeps this consistent with `getByEmail`.
+    return this.selectByIn('email', normalized);
   }
 
-  public async getByIds(ids: string[]): Promise<UserRow[]> {
-    const deduped = new Set(ids.map((i) => i.trim()).filter(Boolean));
+  /**
+   * `WHERE <column> IN (…)` in chunks of `SQLITE_MAX_VARIABLE_NUMBER`.
+   *
+   * D1 caps bound parameters per statement, so a bulk lookup has to page. The
+   * chunk size is the documented cap rather than a tuned number: a lookup is
+   * never a hot path here (`getByEmails` seeds integration fixtures and
+   * `resolveOrRegister` resolves one address), so exceeding it costs nothing and
+   * raising it would cost a redeploy the first time an account had 1000 emails.
+   */
+  private async selectByIn(column: 'email' | 'id', values: string[]): Promise<UserRow[]> {
+    const deduped = new Set(values);
     const keys = [...deduped];
-    if (keys.length === 0) return [];
     const out: UserRow[] = [];
     for (let i = 0; i < keys.length; i += 50) {
       const chunk = keys.slice(i, i + 50);
       const placeholders = chunk.map(() => '?').join(', ');
-      const result = await this.database
-        .prepare(`SELECT * FROM users WHERE id IN (${placeholders})`)
-        .bind(...chunk)
-        .all<UserRow>();
+      const result = await this.database.prepare(`SELECT * FROM users WHERE ${column} IN (${placeholders})`).bind(...chunk).all<UserRow>();
       const rows = result.results ?? [];
       for (const row of rows) out.push(row);
     }
@@ -188,4 +169,4 @@ class UserDAO extends BaseDAO {
   }
 }
 
-export { UserDAO, loginEmailOf };
+export { UserDAO };
