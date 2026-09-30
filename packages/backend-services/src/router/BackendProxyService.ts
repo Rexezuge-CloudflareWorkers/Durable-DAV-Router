@@ -304,6 +304,68 @@ function describeBackendFailure(status: number, bodySnippet: string): string {
     : `backend responded ${status}${snippet}`;
 }
 
+/**
+ * Forward a DAV-semantics request to a backend and stream the answer back.
+ *
+ * Shared by both DAV-carrying planes (`/:owner/:volume/*` and the browser plane's
+ * `/user/volumes/:owner/:volume/*`) so they cannot drift on the parts that are
+ * load-bearing: the streamed request body, the streamed response body, and the
+ * timeout → 504 vs unreachable → 502 distinction. `forwardToBackend` in
+ * `apps/api` still exists for the JSON management paths, which buffer
+ * `res.text()` by design and must not be routed here.
+ *
+ * `headers` is the caller's to build, because the two planes disagree on
+ * `User-Agent`: the WebDAV plane forwards the client's own, while the browser
+ * plane pins the router's marker so a backend can still tell a proxied request
+ * from a direct one.
+ */
+async function forwardDavRequest(request: Request, target: string, headers: Headers, timeoutMs: number): Promise<Response> {
+  const method = request.method;
+  // `OPTIONS` is a `SUPPORT_METHODS` member and a capability probe, so it never
+  // carries a body either.
+  const hasBody = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  let upstream: Response;
+  try {
+    upstream = await fetchWithTimeout(
+      new Request(target),
+      {
+        method,
+        headers,
+        redirect: 'manual',
+        body: hasBody ? request.body : undefined,
+        ...(hasBody && { duplex: 'half' }),
+      },
+      timeoutMs,
+    );
+  } catch (error) {
+    // A timeout is a 504, not a 502: the origin did not answer within the
+    // budget, which is a distinct condition clients retry differently. Log the
+    // cause — a silent catch here is the only signal an unreachable backend
+    // produces.
+    const isTimeout = error instanceof Error && (error.name === 'AbortError' || /aborted|timeout/i.test(error.message));
+    const targetUrl = safeUrl(target);
+    console.warn(
+      `backend ${targetUrl.origin} ${isTimeout ? `timed out after ${timeoutMs}ms` : 'unreachable'} for ${method} ${targetUrl.pathname}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return new Response(isTimeout ? 'Backend timed out' : 'Backend unreachable', { status: isTimeout ? 504 : 502 });
+  }
+  return new Response(upstream.body, { status: upstream.status, headers: filterProxiedResponseHeaders(upstream.headers) });
+}
+
+/**
+`new URL` for log output, where a malformed base must not throw.
+*/
+function safeUrl(target: string): { origin: string; pathname: string } {
+  try {
+    const parsed = new URL(target);
+    return { origin: parsed.origin, pathname: parsed.pathname };
+  } catch {
+    return { origin: 'unknown', pathname: target };
+  }
+}
+
 export {
   PASSTHROUGH_REQUEST_HEADERS,
   PASSTHROUGH_RESPONSE_HEADERS,
@@ -318,6 +380,7 @@ export {
   buildProxiedHeaders,
   buildProbeHeaders,
   filterProxiedResponseHeaders,
+  forwardDavRequest,
   resolveBackend,
   fetchWithTimeout,
   getProxyTimeoutMs,

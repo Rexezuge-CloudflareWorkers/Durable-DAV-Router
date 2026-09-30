@@ -185,6 +185,7 @@ function VolumeView({
             <VolumeFileList
               owner={owner}
               volume={volume}
+              backend={backend}
               entries={entries}
               status={status}
               busy={mutations.busy}

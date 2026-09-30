@@ -2,8 +2,7 @@ import type { Hono } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import {
   buildProxiedHeaders,
-  fetchWithTimeout,
-  filterProxiedResponseHeaders,
+  forwardDavRequest,
   getCachedRoute,
   getProxyTimeoutMs,
   invalidateCachedRoute,
@@ -269,45 +268,18 @@ async function proxyToBackend(
   trailingSlash: boolean,
   timeoutMs: number,
 ): Promise<Response> {
-  const method = c.req.raw.method;
   const incomingUrl = new URL(c.req.raw.url);
   const encodedBase = `/${encodeURIComponent(owner)}/${encodeURIComponent(volume)}`;
   let suffix = inner ? `/${inner}` : '';
   if (trailingSlash) suffix = suffix ? `${suffix}/` : '/';
   // Never leak the router `?backend=` selector to the backend.
   const target = joinBackendUrlWithoutSelector(backend.base_url, `${encodedBase}${suffix}`, incomingUrl.search);
-  const routerOrigin = incomingUrl.origin;
-  const headers = buildProxiedHeaders(c.req.raw, routerOrigin, backend.base_url);
-  const hasBody = !['GET', 'HEAD', 'OPTIONS'].includes(method);
-  let upstream: Response;
-  try {
-    upstream = await fetchWithTimeout(
-      new Request(target),
-      {
-        method,
-        headers,
-        redirect: 'manual',
-        body: hasBody ? c.req.raw.body : undefined,
-        ...(hasBody && { duplex: 'half' }),
-      },
-      timeoutMs,
-    );
-  } catch (error) {
-    // A timeout is a 504, not a 502: the origin did not answer within the
-    // budget, which is a distinct condition clients retry differently. Log the
-    // cause — a silent catch here is the only signal an unreachable backend
-    // produces.
-    const isTimeout = error instanceof Error && (error.name === 'AbortError' || /aborted|timeout/i.test(error.message));
-    console.warn(
-      `backend ${backend.base_url} ${isTimeout ? `timed out after ${timeoutMs}ms` : 'unreachable'} for ${method} ${encodedBase}${suffix}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    const message = isTimeout ? 'Backend timed out' : 'Backend unreachable';
-    return applyCors(new Response(message, { status: isTimeout ? 504 : 502 }), c.req.raw);
-  }
-  const outHeaders = filterProxiedResponseHeaders(upstream.headers);
-  return applyCors(new Response(upstream.body, { status: upstream.status, headers: outHeaders }), c.req.raw);
+  // The caller's own `User-Agent` is forwarded here (the browser plane pins the
+  // router's marker instead), which is why the shared forwarder takes headers
+  // rather than building them.
+  const headers = buildProxiedHeaders(c.req.raw, incomingUrl.origin, backend.base_url);
+  const res = await forwardDavRequest(c.req.raw, target, headers, timeoutMs);
+  return applyCors(res, c.req.raw);
 }
 
 function registerRouterDavProxyRoutes(app: App): void {

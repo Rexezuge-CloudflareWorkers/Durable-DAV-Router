@@ -1,9 +1,11 @@
 import type { Hono } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import {
+  buildProxiedHeaders,
   describeBackendFailure,
   explicitBackendSlug,
   fetchWithTimeout,
+  forwardDavRequest,
   getProxyTimeoutMs,
   invalidateCachedRoute,
   joinBackendUrl,
@@ -27,12 +29,16 @@ function kvOf(scope: { get: (token: never) => KvCache }): KvCache | null {
 }
 
 /**
- * Headers for a management-plane proxy to a backend.
+ * Headers for a **JSON** management-plane proxy to a backend.
  *
  * The caller's Cloudflare Access credentials are forwarded verbatim: the
  * backend enforces its own access, and the router stores no credentials of its
  * own. `Accept`/`User-Agent` identify the router so a backend can tell a proxied
  * request from a direct one.
+ *
+ * Deliberately *not* used for the `/user/volumes/:owner/:volume/*` wildcard: that
+ * path also carries the bucket browser, which is a DAV client whose `Depth` and
+ * `Destination` headers are load-bearing. See `forwardDavToBackend`.
  */
 function authForwardHeaders(request: Request): Headers {
   const out = new Headers();
@@ -151,15 +157,55 @@ async function proxyOne(c: ProxyOneContext): Promise<Response> {
   }
 }
 
+/**
+ * Forward a browser-plane request (`/user/volumes/:owner/:volume/files/*`) to a
+ * backend as the DAV client it is, and stream the answer back untouched.
+ *
+ * The bucket browser is a WebDAV client, so this plane cannot use the JSON
+ * management forwarder above — three separate failures came from that:
+ *
+ * - **`Depth` carries the listing.** RFC 4918 §9.1 makes a PROPFIND with no
+ *   `Depth` header a `Depth: infinity` request, which is exactly how the backend
+ *   reads it (`request.headers.get('Depth') ?? 'infinity'`, then `listRecursive`).
+ *   `authForwardHeaders` forwarded no DAV-shaped header at all, so every folder
+ *   listing came back holding the *entire subtree* and the UI rendered `dir_A`,
+ *   `dir_B`, and `A.txt` as siblings instead of `dir_A` alone.
+ * - **`Destination` carries COPY/MOVE**, and it has to be rewritten onto the
+ *   backend origin: the SPA builds it from the router's own origin, and the
+ *   backend answers `502` for a cross-origin destination (§10.3). Dropped
+ *   outright it left the DO with no destination and a bare `400`, so rename and
+ *   duplicate failed. `buildProxiedHeaders` does the rewrite and strips the
+ *   router's `?backend=` selector, which the backend must never see.
+ * - **The body is file bytes.** `await res.text()` decodes them as UTF-8 and
+ *   re-encodes, so every binary download arrived corrupt, and a large file had to
+ *   fit in memory twice.
+ *
+ * So: the WebDAV plane's header helpers and forwarder, with the one header the
+ * two planes deliberately disagree on pinned below.
+ */
+async function forwardDavToBackend(request: Request, target: string, env: Env, backendBaseUrl: string): Promise<Response> {
+  const headers = buildProxiedHeaders(request, new URL(request.url).origin, backendBaseUrl);
+  // Keep this plane's router marker (documented in `authForwardHeaders`): the
+  // WebDAV plane forwards the caller's own `User-Agent`, and silently dropping
+  // the signal a backend may already branch on is not ours to make. The shared
+  // forwarder takes headers rather than building them, precisely so the two
+  // planes can differ here without duplicating the fetch.
+  headers.set('User-Agent', 'durable-dav-router');
+  return forwardDavRequest(request, target, headers, getProxyTimeoutMs(env));
+}
+
 interface ProxySubpathContext {
   req: { raw: Request; param: (n: string) => string | undefined };
   env: Env;
   json: (data: unknown, status?: number) => Response;
 }
 
-// Browser-plane + credential subpaths (`/files/*`, `/credentials/*`, …)
-// proxy verbatim to the owning backend so the uniform WebUI manages each
-// backend through one shape.
+// Browser-plane + credential subpaths (`/files/*`, `/credentials/*`, …) proxy
+// verbatim to the owning backend so the uniform WebUI manages each backend
+// through one shape. `/files/*` is a DAV client and goes through the DAV
+// forwarder; the credential subpaths ride the same faithful path, which costs
+// them nothing (a JSON body is just another body) and keeps the two planes from
+// disagreeing about which headers carry meaning.
 async function proxySubpath(c: ProxySubpathContext): Promise<Response> {
   const scope = BaseRoute.getScope(c as never);
   const account = authenticatedAccount(c);
@@ -178,11 +224,11 @@ async function proxySubpath(c: ProxySubpathContext): Promise<Response> {
     const incomingUrl = new URL(raw.url);
     // The full path is preserved so the backend sees the same resource shape the
     // caller asked for; only the router's own selector is stripped.
-    return forwardToBackend(
+    return forwardDavToBackend(
       raw,
       joinBackendUrlWithoutSelector(backend.base_url, incomingUrl.pathname, incomingUrl.search),
       c.env,
-      raw.body,
+      backend.base_url,
     );
   } catch (error) {
     return BaseRoute.toErrorResponse(c as never, error);
