@@ -1,5 +1,4 @@
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
-import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
 
 // Request headers forwarded verbatim to the backend. `content-length` is
 // deliberately absent: the runtime recomputes it from the stream we hand it,
@@ -114,10 +113,29 @@ function filterProxiedResponseHeaders(incoming: Headers): Headers {
   return out;
 }
 
-type BackendResolution =
-  { kind: 'single'; backend: RouterBackendRow } | { kind: 'not-found' } | { kind: 'ambiguous'; backends: RouterBackendRow[] };
+/**
+ * The three fields routing needs from a backend.
+ *
+ * Not `RouterBackendRow`. Routing reads nothing else, and typing these helpers as
+ * the full row meant every caller that only had the shape it actually needed had
+ * to assert it was the whole thing — which is a promise the type system then
+ * cannot check and no reader can believe.
+ */
+interface RoutableBackend {
+  /**
+  Absent only on a row written before identities existed; the slug stands in.
+  */
+  id?: string;
+  slug: string;
+  base_url: string;
+}
 
-function resolveBackend(backends: RouterBackendRow[], explicitSlug?: string | null): BackendResolution {
+type BackendResolution =
+  | { kind: 'single'; backend: RoutableBackend }
+  | { kind: 'not-found' }
+  | { kind: 'ambiguous'; backends: RoutableBackend[] };
+
+function resolveBackend(backends: RoutableBackend[], explicitSlug?: string | null): BackendResolution {
   // Trim before testing for presence: a whitespace-only selector is an absent
   // one, and treating it as a slug would answer 404 for a request that should
   // have been resolved by probing.
@@ -163,6 +181,20 @@ function joinBackendUrlWithoutSelector(baseUrl: string, pathname: string, search
   return joinBackendUrl(baseUrl, `${pathname}${stripBackendSelector(search)}`);
 }
 
+/**
+ * Methods that never carry a request body.
+ *
+ * One definition for both proxy planes. `OPTIONS` belongs here because it is a
+ * `SUPPORT_METHODS` member and a capability probe — the JSON management forwarder
+ * in `apps/api` carried a two-element copy of this set that omitted it, and two
+ * implementations of one question is how the copies drift.
+ */
+const BODYLESS_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+function bodylessMethods(): ReadonlySet<string> {
+  return BODYLESS_METHODS;
+}
+
 function truncateSnippet(value: string, max = 200): string {
   const flat = value.replaceAll(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
@@ -186,68 +218,6 @@ function describeBackendFailure(status: number, bodySnippet: string): string {
     ? `backend responded ${status} (backend rejected router credentials; ` +
         `check Access JWT audience and forwarded Authorization/Cookie)${snippet}`
     : `backend responded ${status}${snippet}`;
-}
-
-/**
- * Forward a DAV-semantics request to a backend and stream the answer back.
- *
- * Shared by both DAV-carrying planes (`/:owner/:volume/*` and the browser plane's
- * `/user/volumes/:owner/:volume/*`) so they cannot drift on the parts that are
- * load-bearing: the streamed request body, the streamed response body, and the
- * timeout → 504 vs unreachable → 502 distinction. `forwardToBackend` in
- * `apps/api` still exists for the JSON management paths, which buffer
- * `res.text()` by design and must not be routed here.
- *
- * `headers` is the caller's to build, because the two planes disagree on
- * `User-Agent`: the WebDAV plane forwards the client's own, while the browser
- * plane pins the router's marker so a backend can still tell a proxied request
- * from a direct one.
- */
-/**
- * Methods that never carry a request body.
- *
- * One definition for both proxy planes. `OPTIONS` belongs here because it is a
- * `SUPPORT_METHODS` member and a capability probe — the JSON management forwarder
- * in `apps/api` carried a two-element copy of this set that omitted it, and two
- * implementations of one question is how the copies drift.
- */
-const BODYLESS_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
-
-function bodylessMethods(): ReadonlySet<string> {
-  return BODYLESS_METHODS;
-}
-
-async function forwardDavRequest(request: Request, target: string, headers: Headers, timeoutMs: number): Promise<Response> {
-  const method = request.method;
-  const hasBody = !BODYLESS_METHODS.has(method);
-  let upstream: Response;
-  try {
-    upstream = await fetchWithTimeout(
-      new Request(target),
-      {
-        method,
-        headers,
-        redirect: 'manual',
-        body: hasBody ? request.body : undefined,
-        ...(hasBody && { duplex: 'half' }),
-      },
-      timeoutMs,
-    );
-  } catch (error) {
-    // A timeout is a 504, not a 502: the origin did not answer within the
-    // budget, which is a distinct condition clients retry differently. Log the
-    // cause — a silent catch here is the only signal an unreachable backend
-    // produces.
-    const isTimeout = error instanceof Error && (error.name === 'AbortError' || /aborted|timeout/i.test(error.message));
-    const targetUrl = safeUrl(target);
-    console.warn(
-      `backend ${targetUrl.origin} ${isTimeout ? `timed out after ${timeoutMs}ms` : 'unreachable'} for ${method} ${targetUrl.pathname}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return new Response(isTimeout ? 'Backend timed out' : 'Backend unreachable', { status: isTimeout ? 504 : 502 });
-  }
-  return new Response(upstream.body, { status: upstream.status, headers: filterProxiedResponseHeaders(upstream.headers) });
 }
 
 /**
@@ -275,11 +245,11 @@ export {
   rewriteDestinationForBackend,
   buildProxiedHeaders,
   filterProxiedResponseHeaders,
-  forwardDavRequest,
   resolveBackend,
   fetchWithTimeout,
   getProxyTimeoutMs,
   stripTrailingSlashes,
   stripSlashes,
+  safeUrl,
 };
-export type { BackendResolution };
+export type { BackendResolution, RoutableBackend };

@@ -10,7 +10,6 @@ export {
   rewriteDestinationForBackend,
   buildProxiedHeaders,
   filterProxiedResponseHeaders,
-  forwardDavRequest,
   resolveBackend,
   fetchWithTimeout,
   getProxyTimeoutMs,
@@ -21,7 +20,11 @@ export {
   PASSTHROUGH_REQUEST_HEADERS,
   PASSTHROUGH_RESPONSE_HEADERS,
 } from './BackendProxyService';
-export type { BackendResolution } from './BackendProxyService';
+export type { BackendResolution, RoutableBackend } from './BackendProxyService';
+// The *send* half of the proxy: the shared forwarder both DAV-carrying planes use,
+// plus the Access-credential passthrough. Split from `BackendProxyService`, which
+// is the URL-and-header *shape* half.
+export { forwardDavRequest, forwardAuthHeaders, markAsRouterRequest, isTimeoutError, ROUTER_USER_AGENT } from './BackendProxyRequest';
 // Volume-existence probing, split out of `BackendProxyService` to keep that
 // file under the god-file guard. Re-exported here so callers keep one import.
 export {

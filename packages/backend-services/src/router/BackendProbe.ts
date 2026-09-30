@@ -1,4 +1,4 @@
-import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
+import type { RoutableBackend } from './BackendProxyService';
 import { buildProxiedHeaders, fetchWithTimeout, joinBackendUrl } from './BackendProxyService';
 
 /**
@@ -60,13 +60,13 @@ function classifyProbeStatus(status: number): ProbeSignal {
 }
 
 type AutoResolution =
-  | { kind: 'single'; backend: RouterBackendRow }
+  | { kind: 'single'; backend: RoutableBackend }
   | { kind: 'not-found' }
-  | { kind: 'ambiguous'; backends: RouterBackendRow[] }
+  | { kind: 'ambiguous'; backends: RoutableBackend[] }
   | { kind: 'unavailable' };
 
 interface ProbeCandidatesInput {
-  candidates: RouterBackendRow[];
+  candidates: RoutableBackend[];
   volumePath: string;
   incoming: Request;
   routerOrigin: string;
@@ -110,8 +110,8 @@ async function probeCandidateBackends(input: ProbeCandidatesInput): Promise<Auto
       return { backend, signal: classifyProbeStatus(res.status) };
     }),
   );
-  const hits: RouterBackendRow[] = [];
-  const authHits: RouterBackendRow[] = [];
+  const hits: RoutableBackend[] = [];
+  const authHits: RoutableBackend[] = [];
   let unknown = 0;
   const probed = settled.map((r) => (r.status === 'fulfilled' ? r.value : { backend: null, signal: 'unknown' as ProbeSignal }));
   for (const p of probed) {

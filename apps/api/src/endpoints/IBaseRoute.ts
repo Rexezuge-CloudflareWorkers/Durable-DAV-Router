@@ -4,7 +4,7 @@ import { ErrorSanitizationUtil, canonicalizeLanguageTag } from '@durable-dav-rou
 import { createRequestScope } from '@durable-dav-router/backend-services/composition';
 import { getRequestScope, asScopedContext } from '@durable-dav-router/backend-runtime/di';
 import { mapServiceError } from '@durable-dav-router/backend-services/errors';
-import type { RouterEnv } from '@/requestContext';
+import type { RouteContext, RouterEnv } from '@/requestContext';
 
 type HonoContext = Context<RouterEnv>;
 
@@ -15,6 +15,11 @@ type HonoContext = Context<RouterEnv>;
  * namespace of statics rather than a template-method base — the error mapping
  * and scope resolution still need exactly one implementation each, and that is
  * what this provides.
+ *
+ * The statics take `RouteContext`, not Hono's `Context`: the route helpers are
+ * called with narrowed structural contexts (the DAV proxy needs only
+ * `req.raw` and `env`), and declaring the parameter as the full context is what
+ * forced every one of those call sites to cast. See `requestContext.ts`.
  *
  * Backend `Message` stays English for domain errors; only the masked 5xx path
  * localizes, since a client seeing an opaque internal error gains nothing from
@@ -40,13 +45,13 @@ abstract class BaseRoute {
    * of collapsing to `{}` and surfacing a misleading `required` error — and
    * rejects an oversized body before it is buffered.
    */
-  public static async readJson<T>(
-    c: HonoContext | Context | { req: { json: () => Promise<unknown>; header?: (name: string) => string | undefined } },
-  ): Promise<{ malformed: boolean; oversized: boolean; body: T }> {
+  public static async readJson<T>(c: {
+    req: { json: () => Promise<unknown>; header?: (name: string) => string | undefined };
+  }): Promise<{ malformed: boolean; oversized: boolean; body: T }> {
     try {
       const contentLength = (() => {
         try {
-          const header = (c as { req?: { header?: (n: string) => string | undefined } }).req?.header;
+          const header = c.req.header;
           const raw = typeof header === 'function' ? header('content-length') : undefined;
           const n = raw === undefined ? NaN : Number(raw);
           return Number.isFinite(n) ? n : NaN;
@@ -57,7 +62,7 @@ abstract class BaseRoute {
       if (Number.isFinite(contentLength) && contentLength > MAX_JSON_BODY_BYTES) {
         return { malformed: false, oversized: true, body: {} as T };
       }
-      const body = (await (c as { req: { json: () => Promise<unknown> } }).req.json()) as T;
+      const body = (await c.req.json()) as T;
       return { malformed: false, oversized: false, body };
     } catch {
       return { malformed: true, oversized: false, body: {} as T };
@@ -85,12 +90,12 @@ abstract class BaseRoute {
     return this.ERROR_TYPE_REGISTRY[status] ?? 'InternalServerError';
   }
 
-  public static jsonError(c: HonoContext, message: string, status: number): Response;
-  public static jsonError(c: HonoContext, type: string, message: string, status: number): Response;
-  public static jsonError(c: HonoContext, typeOrMessage: string, messageOrStatus: string | number, status = 400): Response {
+  public static jsonError(c: RouteContext, message: string, status: number): Response;
+  public static jsonError(c: RouteContext, type: string, message: string, status: number): Response;
+  public static jsonError(c: RouteContext, typeOrMessage: string, messageOrStatus: string | number, status = 400): Response {
     return typeof messageOrStatus === 'number'
-      ? c.json({ Exception: { Type: this.toErrorType(messageOrStatus), Message: typeOrMessage } }, messageOrStatus as 400)
-      : c.json({ Exception: { Type: typeOrMessage, Message: messageOrStatus } }, status as 400);
+      ? c.json({ Exception: { Type: this.toErrorType(messageOrStatus), Message: typeOrMessage } }, messageOrStatus)
+      : c.json({ Exception: { Type: typeOrMessage, Message: messageOrStatus } }, status);
   }
 
   /**
@@ -100,7 +105,7 @@ abstract class BaseRoute {
    * every 5xx body and logs the cause, then adds the one thing the mapper
    * cannot know: this request's locale.
    */
-  public static toErrorResponse(c: HonoContext, error: unknown): Response {
+  public static toErrorResponse(c: RouteContext, error: unknown): Response {
     const { status, body } = mapServiceError(error, this.resolveLocale(c));
     if (status < 500) {
       const type = body.Exception?.Type ?? 'Error';
@@ -113,7 +118,7 @@ abstract class BaseRoute {
     return Response.json(details && Object.keys(details).length > 0 ? { ...body, ...details } : body, { status });
   }
 
-  private static resolveLocale(c: HonoContext): string {
+  private static resolveLocale(c: RouteContext): string {
     try {
       const header = c.req.header('Accept-Language');
       if (!header) return 'en';
@@ -136,5 +141,31 @@ abstract class BaseRoute {
  */
 const MAX_JSON_BODY_BYTES = 1_048_576;
 
-export { BaseRoute, MAX_JSON_BODY_BYTES };
+/**
+ * Give a route handler the error mapping every `/user/*` handler had to repeat.
+ *
+ * The epilogue this replaces — `catch (error) { return BaseRoute.toErrorResponse(c, error) }` —
+ * was written out eleven times, identically, and its absence from the DAV proxy
+ * was a real gap rather than a stylistic one: a throw from `handleProxy` reached
+ * `app.onError`'s hardcoded envelope and lost `ErrorMapper`'s 5xx masking, the
+ * request's locale, and `ConflictError.details`.
+ *
+ * Wrapping rather than a Hono `app.onError` because `onError` is the *last*
+ * resort: a handler that returns its own error — which the JSON management plane
+ * does for every upstream status — would bypass it, and then the two planes would
+ * render 5xx differently. One combinator keeps that decision with the handler.
+ */
+function handleRoute<Args extends unknown[]>(
+  handler: (c: RouteContext, ...args: Args) => Promise<Response> | Response,
+): (c: RouteContext, ...args: Args) => Promise<Response> {
+  return async (c, ...args) => {
+    try {
+      return await handler(c, ...args);
+    } catch (error) {
+      return BaseRoute.toErrorResponse(c, error);
+    }
+  };
+}
+
+export { BaseRoute, handleRoute, MAX_JSON_BODY_BYTES };
 export type { HonoContext };
