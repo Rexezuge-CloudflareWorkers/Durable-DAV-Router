@@ -34,17 +34,12 @@
     "webdavDescription": "Mount, Sync, And Edit With Any WebDAV Client."
   },
   "dashboard": {
-    "addBackend": "Add Backend",
-    "backends": "Backends",
     "connect": "Connect",
     "connectHelp": "Each Bucket Has Its Own Credentials. Open A Bucket, Go To Settings, Create A Credential, Then Connect With: {{example}}.",
     "empty": "No Buckets Yet. Create One To Get Started.",
+    "manageBackends": "Manage Backends",
     "mountAnyVolume": "Mount Any Bucket",
     "new": "New",
-    "noBackends": "No Backends Yet. Register A Durable-DAV Instance To Get Started.",
-    "probe": "Check",
-    "probeResult": "Probe {{slug}}: Health {{health}} Volumes {{volumes}}.",
-    "probing": "Checking…",
     "title": "Dashboard",
     "volumes": "Buckets"
   },
@@ -199,14 +194,20 @@
     "signInToManage": "Sign In To Manage Settings."
   },
   "backends": {
+    "add": "Add Backend",
     "baseUrl": "Base URL",
     "created": "Backend {{slug}} Registered.",
     "deleted": "Backend Removed.",
     "displayName": "Display Name (Optional)",
     "empty": "No Backends Registered.",
+    "lastSeen": "Last Seen {{when}}",
     "newBackend": "New Backend",
+    "probe": "Check",
+    "probeResult": "Probe {{slug}}: Health {{health}} Volumes {{volumes}}.",
+    "probing": "Checking…",
     "register": "Register Backend",
     "slug": "Slug",
+    "statusNeverProbed": "● Never Probed",
     "title": "Backends",
     "updated": "Backend Updated."
   }

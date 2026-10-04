@@ -23,13 +23,12 @@ vi.mock('react-i18next', () => ({
 const volumeService = vi.hoisted(() => ({
   listMyVolumes: vi.fn(async () => ({ volumes: [] as unknown[], backends: [] as unknown[] })),
 }));
-const backendService = vi.hoisted(() => ({
-  listBackends: vi.fn(async () => [] as unknown[]),
-  probeBackend: vi.fn(),
-}));
 
+// No `backendService` mock: the dashboard's Backends section moved to
+// `/settings`, so this view no longer reaches for the registry at all. A mock
+// left here would keep passing while the page quietly re-added the request the
+// move exists to stop making.
 vi.mock('../apps/web/src/services/volumeService', () => volumeService);
-vi.mock('../apps/web/src/services/backendService', () => backendService);
 
 import { DashboardView } from '../apps/web/src/views/DashboardView';
 
@@ -72,8 +71,7 @@ function deferred<T>(): Deferred<T> {
 describe('DashboardView load races', () => {
   beforeEach(() => {
     volumeService.listMyVolumes.mockReset();
-    backendService.listBackends.mockReset();
-    backendService.listBackends.mockResolvedValue([]);
+    volumeService.listMyVolumes.mockResolvedValue({ volumes: [], backends: [] });
   });
 
   afterEach(() => {
@@ -150,5 +148,34 @@ describe('DashboardView load races', () => {
     const showNotice = vi.fn();
     renderDashboard(showNotice);
     return waitFor(() => expect(showNotice).toHaveBeenCalledWith('error', expect.any(String)));
+  });
+
+  it('loads the buckets and nothing else', async () => {
+    // One request. The dashboard used to `Promise.all` the volume fan-out with
+    // `listBackends`, and every reload spent a second round trip to paint a
+    // registry it no longer owns. A page that silently grows the request back is
+    // invisible in a status assertion, so this counts the calls.
+    renderDashboard();
+    await waitFor(() => expect(volumeService.listMyVolumes).toHaveBeenCalledTimes(1));
+  });
+
+  it('links the empty buckets state at the backend registry', async () => {
+    // With the registry moved to `/settings`, a first-run user has no buckets
+    // *and* no backends. This is the only remaining path from the dashboard to
+    // registering one.
+    renderDashboard();
+    const link = await screen.findByRole('link', { name: 'Manage Backends' });
+    expect(link.getAttribute('href')).toBe('/settings');
+  });
+
+  it('renders no backend registry', async () => {
+    // The mirror of the test above. The dashboard carries Connect and Buckets
+    // only, so the section's own affordances must be gone from it — a lingering
+    // "Add Backend" would mean two registries again.
+    volumeService.listMyVolumes.mockResolvedValue({ volumes: [volume('alice-files')], backends: [] });
+    renderDashboard();
+    await screen.findByText('alice/alice-files');
+    expect(screen.queryByRole('button', { name: 'Add Backend' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Check' })).toBeNull();
   });
 });
