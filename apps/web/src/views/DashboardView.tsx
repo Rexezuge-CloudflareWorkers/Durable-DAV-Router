@@ -1,12 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FolderArchive, Plus, Server } from 'lucide-react';
-import type { AggregatedVolume, RouterBackend } from '../types';
+import { FolderArchive, Plus } from 'lucide-react';
+import type { AggregatedVolume } from '../types';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
 import { useAsyncLoad } from '../hooks/useAsyncLoad';
 import { listMyVolumes } from '../services/volumeService';
-import { listBackends, probeBackend } from '../services/backendService';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 import { AppPage } from '../components/layout/AppPage';
@@ -19,32 +18,27 @@ import { RefreshButton } from '../components/shared/RefreshButton';
 export function DashboardView({ showNotice }: { showNotice: (type: 'success' | 'error', text: string) => void }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [probing, setProbing] = useState<string | null>(null);
 
   /**
-   * Volumes and backends in one request pair.
+   * The buckets, grouped by the backend that holds them.
    *
-   * The backend list is allowed to fail on its own: a router that can reach D1
-   * but not `/user/backends` should still show its buckets, and the backend
-   * section already has an empty state. A failure there is not the same as an
-   * empty registry, so it must not blank the volumes.
+   * One request. The backend registry lives in `/settings`, so this is no
+   * longer a two-request pair with a fail-soft second half — the `.catch()`
+   * that kept a dead `/user/backends` from blanking the buckets has nothing
+   * left to guard, and the fan-out health badges that needed it moved with the
+   * registry.
    *
-   * This effect had no cancellation flag for its whole life, which made it the
-   * one load effect of seven without one: StrictMode's double-invoked mount
-   * effects, and any refresh overlapping a slow request, left the *superseded*
-   * response winning — the dashboard showing pre-refresh buckets with no spinner
-   * and no error. `useAsyncLoad` carries the guard.
+   * `useAsyncLoad` carries the cancellation guard. This effect had none for its
+   * whole life, which made it the one load effect of seven without one:
+   * StrictMode's double-invoked mount effects, and any refresh overlapping a
+   * slow request, left the *superseded* response winning — the dashboard
+   * showing pre-refresh buckets with no spinner and no error.
    */
-  const { data, loading, reload } = useAsyncLoad(async () => {
-    const [volRes, backendRows] = await Promise.all([listMyVolumes(), listBackends().catch(() => [] as RouterBackend[])]);
-    return { volumes: volRes.volumes, health: volRes.backends, backends: backendRows };
-  }, {
+  const { data, loading, reload } = useAsyncLoad(listMyVolumes, {
     onError: (error) => showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadVolumes', 'Failed To Load Volumes.')),
   });
 
   const volumes = data?.volumes ?? [];
-  const health = data?.health ?? [];
-  const backends = data?.backends ?? [];
   const refresh = reload;
 
   /**
@@ -107,83 +101,27 @@ export function DashboardView({ showNotice }: { showNotice: (type: 'success' | '
 
       <Card>
         <CardHeader>
-          <CardTitle>{t('dashboard.backends', 'Backends')}</CardTitle>
-          <span className="text-sm text-[var(--color-text-muted)]">{backends.length}</span>
-        </CardHeader>
-        {!loading && backends.length === 0 ? (
-          <EmptyState
-            icon={<Server className="h-6 w-6 text-[var(--color-text-muted)]" />}
-            message={t('dashboard.noBackends', 'No Backends Yet. Register A Durable-DAV Instance To Get Started.')}
-          />
-        ) : (
-          <ul className="divide-y divide-[var(--color-border)]">
-            {backends.map((b) => {
-              const h = health.find((x) => x.slug === b.slug);
-              const statusText = h
-                ? h.ok
-                  ? '● ok'
-                  : `● ${h.status ?? ''} ${h.error ?? 'unreachable'}`.trim()
-                : b.lastStatus
-                  ? `● ${b.lastStatus}`
-                  : '● unknown';
-              const showProbe = h && !h.ok;
-              return (
-                <li key={b.slug} className="py-3 flex items-start justify-between gap-3 first:pt-0 last:pb-0">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium truncate">{b.displayName ? `${b.displayName} (${b.slug})` : b.slug}</p>
-                    <p className="text-xs text-[var(--color-text-muted)] truncate">{b.baseUrl}</p>
-                    <p className="text-xs text-[var(--color-text-secondary)] break-words" title={statusText}>
-                      {statusText}
-                    </p>
-                  </div>
-                  {showProbe ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={probing === b.slug}
-                      onClick={() => {
-                        setProbing(b.slug);
-                        probeBackend(b.slug)
-                          .then((r) => {
-                            showNotice(
-                              'success',
-                              t('dashboard.probeResult', 'Probe {{slug}}: Health {{health}} Volumes {{volumes}}.', {
-                                slug: r.slug,
-                                health: r.health.status ?? r.health.error ?? '?',
-                                volumes: r.volumes.status ?? r.volumes.error ?? '?',
-                              }),
-                            );
-                          })
-                          .catch((error) => {
-                            showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToProbe', 'Failed To Probe Backend.'));
-                          })
-                          .finally(() => setProbing(null));
-                      }}
-                    >
-                      {probing === b.slug ? t('dashboard.probing', 'Checking…') : t('dashboard.probe', 'Check')}
-                    </Button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        <div className="mt-3">
-          <Button variant="secondary" size="sm" onClick={() => void navigate('/backends/new')}>
-            {t('dashboard.addBackend', 'Add Backend')}
-          </Button>
-        </div>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle>{t('dashboard.volumes', 'Volumes')}</CardTitle>
           <span className="text-sm text-[var(--color-text-muted)]">{volumes.length}</span>
         </CardHeader>
         {!loading && volumes.length === 0 ? (
           <EmptyState
             icon={<FolderArchive className="h-6 w-6 text-[var(--color-text-muted)]" />}
-            message={t('dashboard.empty', 'No Volumes Yet. Register A Backend First.')}
+            message={
+              <>
+                {t('dashboard.empty', 'No Volumes Yet. Register A Backend First.')}{' '}
+                {/*
+                 * The first-run path to a backend, now that the registry moved
+                 * to `/settings`. Unconditional rather than shown only when the
+                 * registry is empty: deciding that would need the backend list
+                 * back on this page, which is the request this move exists to
+                 * stop making.
+                 */}
+                <Link to="/settings" className="text-[var(--color-accent)] hover:underline">
+                  {t('dashboard.manageBackends', 'Manage Backends')}
+                </Link>
+              </>
+            }
           />
         ) : (
           <div className="space-y-4">
