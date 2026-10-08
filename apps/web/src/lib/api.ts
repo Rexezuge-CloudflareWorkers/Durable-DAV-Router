@@ -14,6 +14,21 @@ function getBackendErrorType(error: unknown): string | null {
   return error instanceof BackendError ? error.errorType : null;
 }
 
+/**
+The upstream HTTP status a failure carried, or null for anything else.
+
+Separate from `getBackendErrorType` because the two answer different questions and
+only one of them can distinguish *what went wrong* from *what was asked*. A
+replication read against a backend predating the feature and a read against a
+bucket that is not yours are both `404`; the type is the same `NotFound` in each
+case too. Only the status separates "this backend has no such endpoint" from "you
+do not have this bucket", so it has to be readable without reaching into the
+error's shape at the call site.
+*/
+function getBackendErrorStatus(error: unknown): number | null {
+  return error instanceof BackendError ? error.status : null;
+}
+
 function extractErrorMessage(payloadText: string, status: number): { message: string; type: string | null } {
   if (!payloadText) return { message: `HTTP ${status}`, type: null };
   const MAX_MESSAGE_CHARS = 500;
@@ -98,4 +113,4 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
 
 export { buildQuery, extractErrorMessage };
 
-export { BackendError, getBackendErrorType };
+export { BackendError, getBackendErrorType, getBackendErrorStatus };

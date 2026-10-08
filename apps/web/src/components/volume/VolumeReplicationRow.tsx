@@ -1,0 +1,142 @@
+import { useTranslation } from 'react-i18next';
+import type { BucketReplication } from '../../types';
+import { intervalLabel, targetLabel } from '../../services/replicationService';
+import { Button } from '../ui/Button';
+import { Badge } from '../ui/Badge';
+
+/**
+Literal key tables rather than a template-literal key.
+
+`scripts/i18n-coverage.ts` reports any interpolated key as invisible to its
+key-coverage check, and `pnpm run validate:locales` fails the build on one — so a
+computed key here would make every mode label look like an orphan forever. A
+`{ value: 'ns.key' }` map is picked up by the extractor instead.
+
+(That check is a plain regex over source text, comments included — which is why
+this note spells the offending shape out in prose rather than writing it.)
+*/
+const STATUS_VARIANTS: Record<string, 'success' | 'warning' | 'error' | 'neutral'> = {
+  ok: 'success',
+  partial: 'warning',
+  failed: 'error',
+};
+
+const STATUS_LABEL_KEYS = {
+  ok: 'replication.statusOk',
+  partial: 'replication.statusPartial',
+  failed: 'replication.statusFailed',
+  pending: 'replication.statusPending',
+} as const;
+
+const STATUS_LABEL_DEFAULTS = {
+  ok: 'Up To Date',
+  partial: 'Partially Synced',
+  failed: 'Failed',
+  pending: 'Not Synced Yet',
+} as const;
+
+const MODE_LABEL_KEYS: Record<BucketReplication['mode'], string> = {
+  'copy-only': 'replication.modeCopyOnly',
+  sync: 'replication.modeSync',
+  'keep-both': 'replication.modeKeepBoth',
+};
+
+/**
+The four renderable statuses.
+
+`pending` is not a status the backend reports — it is the absence of one, which is
+what a target that has never run looks like. Normalising it to a member of the
+same union is what lets one pair of key tables cover every row.
+*/
+type StatusKey = 'ok' | 'partial' | 'failed' | 'pending';
+
+function resolveStatus(status: BucketReplication['lastStatus'] | null = null): StatusKey {
+  return status ?? 'pending';
+}
+
+function statusVariant(status: StatusKey): 'success' | 'warning' | 'error' | 'neutral' {
+  return STATUS_VARIANTS[status] ?? 'neutral';
+}
+
+function statusLabel(t: (key: string, fallback: string) => string, status: StatusKey): string {
+  return t(STATUS_LABEL_KEYS[status], STATUS_LABEL_DEFAULTS[status]);
+}
+
+/**
+ * One configured target, with its last run's outcome.
+ *
+ * Split out of the card so the card stays a composer. Every row explains *why* it
+ * looks the way it does, because the alternative is a list of badges a user cannot
+ * act on: an open pass means deletions are deliberately held back, and a run of
+ * failures means the backend will probably auto-disable the target.
+ */
+export function VolumeReplicationRow({
+  replication,
+  busy,
+  onSyncNow,
+  onToggle,
+  onShowDecisions,
+  onRemove,
+}: {
+  replication: BucketReplication;
+  busy: boolean;
+  onSyncNow: () => void;
+  onToggle: () => void;
+  onShowDecisions: () => void;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <li className="rounded-md border border-[var(--color-border)] p-3 space-y-2">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-[var(--color-text-primary)] break-all">{targetLabel(replication)}</p>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {t('replication.every', 'Every {{interval}}', { interval: intervalLabel(replication.intervalMinutes) })} ·{' '}
+            {t(MODE_LABEL_KEYS[replication.mode], replication.mode)}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant={statusVariant(resolveStatus(replication.lastStatus))}>
+            {statusLabel(t, resolveStatus(replication.lastStatus))}
+          </Badge>
+          {!replication.enabled && <Badge variant="neutral">{t('replication.disabled', 'Paused')}</Badge>}
+        </div>
+      </div>
+
+      {replication.lastError !== null && replication.lastError !== '' && (
+        <p className="text-xs text-[var(--color-error-text)] break-all">{replication.lastError}</p>
+      )}
+
+      {replication.passInFlight && (
+        <p className="text-xs text-[var(--color-text-muted)]">
+          {t(
+            'replication.passInFlight',
+            'A Sync Pass Is In Progress. Deletions Propagate Only After A Pass Finishes Without Errors.',
+          )}
+        </p>
+      )}
+
+      {replication.consecutiveFailures > 0 && (
+        <p className="text-xs text-[var(--color-warning-text)]">
+          {t('replication.consecutiveFailures', '{{count}} Consecutive Failed Attempts', { count: replication.consecutiveFailures })}
+        </p>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button size="sm" loading={busy} onClick={onSyncNow}>
+          {t('replication.syncNow', 'Sync Now')}
+        </Button>
+        <Button size="sm" variant="secondary" loading={busy} onClick={onToggle}>
+          {replication.enabled ? t('replication.pause', 'Pause') : t('replication.resume', 'Resume')}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={onShowDecisions}>
+          {t('replication.showConflicts', 'Show Decisions')}
+        </Button>
+        <Button size="sm" variant="danger" onClick={onRemove}>
+          {t('replication.remove', 'Remove')}
+        </Button>
+      </div>
+    </li>
+  );
+}

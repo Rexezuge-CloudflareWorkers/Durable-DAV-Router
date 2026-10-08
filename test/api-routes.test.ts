@@ -795,6 +795,22 @@ describe('browser-plane subpath proxy', () => {
     return { url, method: init.method ?? 'GET', headers: new Headers(init.headers), body: init.body };
   };
 
+  /**
+   * The upstream request body, as text.
+   *
+   * This plane forwards `request.body` as a stream (`duplex: 'half'`), so
+   * `init.body` is a `ReadableStream` rather than the string a route like
+   * `createVolume` sends. Reading it back is the only way to assert that a
+   * request's payload arrived intact — and "the status was 201" cannot see a
+   * truncated body.
+   */
+  async function upstreamText(): Promise<string> {
+    const body = upstream().body;
+    if (body instanceof ReadableStream) return new Response(body).text();
+    if (typeof body === 'string') return body;
+    throw new Error(`unexpected upstream body: ${typeof body}`);
+  }
+
   it('forwards Depth on a PROPFIND', async () => {
     // The regression: `Depth` is what separates one collection from the whole
     // subtree. RFC 4918 §9.1 makes a PROPFIND without it `Depth: infinity`, which
@@ -984,6 +1000,143 @@ describe('browser-plane subpath proxy', () => {
       fakeContext({ method: 'DELETE', env, url: `https://router.example.com${FILES}/a.txt?backend=office`, headers: { 'User-Agent': 'Mozilla/5.0' } }),
     );
     expect(upstream().headers.get('User-Agent')).toBe('durable-dav-router');
+  });
+
+  /**
+   * Replication is backend-owned and needs no route of its own.
+   *
+   * The whole surface — list, create, patch, delete, `/run`, `/credential`,
+   * `/conflicts`, `/conflicts/:id/resolve` — rides this same wildcard, which
+   * registers `SUPPORT_METHODS` plus `POST`/`PATCH`. That is the claim worth
+   * asserting: it is what lets the feature ship without a router route, and if a
+   * future change narrows `BROWSER_PLANE_EXTRA_METHODS` this is the test that
+   * turns a 405 on "Sync now" into a failing build.
+   */
+  describe('replication sub-paths ride the same wildcard', () => {
+    const REPLICATION = '/user/volumes/alice/photos/replications';
+
+    it('forwards a POST to the collection, body and all', async () => {
+      const body = JSON.stringify({
+        targetKind: 'dav',
+        remoteUrl: 'https://remote.example.com/dav',
+        mode: 'keep-both',
+        intervalMinutes: 60,
+      });
+      stubs.fetch.mockImplementation(async () => new Response('{"replication":{}}', { status: 201, headers: { 'Content-Type': 'application/json' } }));
+      const { routes, env } = oneBackend();
+      const res = await call(
+        routes,
+        `ON /user/volumes/:owner/:volume/*`,
+        fakeContext({
+          method: 'POST',
+          env,
+          url: `https://router.example.com${REPLICATION}?backend=office`,
+          headers: { 'Content-Type': 'application/json' },
+          rawBody: body,
+        }),
+      );
+      expect(upstream().url).toBe(`https://backend.example.com${REPLICATION}`);
+      expect(upstream().method).toBe('POST');
+      expect(await upstreamText()).toBe(body);
+      // Unreshaped: the backend's projection is the only thing between a stored
+      // credential and a client, so the router must not re-project it.
+      expect(res.status).toBe(201);
+      expect(await res.text()).toBe('{"replication":{}}');
+    });
+
+    it('forwards "Sync now" and preserves the 202 that says the work was detached', async () => {
+      // `202` is load-bearing. The backend answers it from `waitUntil` because a
+      // slice runs for tens of seconds; a client timeout would look like a failed
+      // sync that had in fact succeeded. So the status must not be normalised.
+      stubs.fetch.mockImplementation(async () => new Response('{"sync":"started"}', { status: 202, headers: { 'Content-Type': 'application/json' } }));
+      const { routes, env } = oneBackend();
+      const res = await call(
+        routes,
+        `ON /user/volumes/:owner/:volume/*`,
+        fakeContext({ method: 'POST', env, url: `https://router.example.com${REPLICATION}/r1/run?backend=office` }),
+      );
+      expect(upstream().url).toBe(`https://backend.example.com${REPLICATION}/r1/run`);
+      expect(res.status).toBe(202);
+      expect(await res.text()).toBe('{"sync":"started"}');
+    });
+
+    it('forwards the credential rotation without inspecting the secret in transit', async () => {
+      // The router stores nothing about a replication and must not read, log or
+      // reshape a remote credential. All it owes is that the bytes arrive intact
+      // at the owning backend — so the assertion is the round trip, not any
+      // knowledge of the field.
+      const body = JSON.stringify({ authKind: 'basic', username: 'me', secret: 'hunter2' });
+      stubs.fetch.mockImplementation(async () => new Response('{"replication":{}}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      const { routes, env } = oneBackend();
+      await call(
+        routes,
+        `ON /user/volumes/:owner/:volume/*`,
+        fakeContext({
+          method: 'POST',
+          env,
+          url: `https://router.example.com${REPLICATION}/r1/credential?backend=office`,
+          headers: { 'Content-Type': 'application/json' },
+          rawBody: body,
+        }),
+      );
+      expect(upstream().url).toBe(`https://backend.example.com${REPLICATION}/r1/credential`);
+      expect(await upstreamText()).toBe(body);
+    });
+
+    it('forwards a DELETE and a conflict resolve without modelling either', async () => {
+      stubs.fetch.mockImplementation(async () => new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      const { routes, env } = oneBackend();
+      await call(
+        routes,
+        `ON /user/volumes/:owner/:volume/*`,
+        fakeContext({ method: 'DELETE', env, url: `https://router.example.com${REPLICATION}/r1?backend=office` }),
+      );
+      expect(upstream().url).toBe(`https://backend.example.com${REPLICATION}/r1`);
+      expect(upstream().method).toBe('DELETE');
+
+      stubs.fetch.mockClear();
+      await call(
+        routes,
+        `ON /user/volumes/:owner/:volume/*`,
+        fakeContext({ method: 'POST', env, url: `https://router.example.com${REPLICATION}/r1/conflicts/c1/resolve?backend=office` }),
+      );
+      expect(upstream().url).toBe(`https://backend.example.com${REPLICATION}/r1/conflicts/c1/resolve`);
+    });
+
+    it('still 409s when the selector is missing and several backends match', async () => {
+      // Skew handling reads a 404 as "this backend predates the feature". That
+      // inference is only safe because an unresolvable selector is a 409, not a
+      // 404 — otherwise the card would tell an owner with an ambiguous backend
+      // that their backend is out of date when it never answered at all.
+      const { db, rows } = fakeDb();
+      const now = Math.floor(Date.now() / 1000);
+      for (const slug of ['office', 'home']) {
+        rows.set(slug, {
+          id: slug,
+          owner_email: 'test@example.com',
+          owner_user_id: 'usr_test_example_com',
+          slug,
+          slug_ci: slug,
+          base_url: `https://${slug}.example.com`,
+          display_name: null,
+          created_at: now,
+          updated_at: now,
+          last_seen_at: null,
+          last_status: null,
+          backend_username: null,
+          backend_username_ci: null,
+        });
+      }
+      const { app, routes } = stubApp();
+      registerAggregatedVolumeRoutes(app as never);
+      const res = await call(
+        routes,
+        `ON /user/volumes/:owner/:volume/*`,
+        fakeContext({ method: 'GET', env: { ...ENV, DB: db }, url: `https://router.example.com${REPLICATION}` }),
+      );
+      expect(res.status).toBe(409);
+      expect(stubs.fetch).not.toHaveBeenCalled();
+    });
   });
 
   it('does not force a JSON Accept onto a DAV request', async () => {

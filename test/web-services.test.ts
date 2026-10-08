@@ -7,7 +7,20 @@ import {
   setBucketCredentialReadOnly,
 } from '../apps/web/src/services/credentialService';
 import { loadCurrentUser } from '../apps/web/src/services/userService';
+import {
+  createReplication,
+  deleteReplication,
+  intervalLabel,
+  listReplicationConflicts,
+  listReplications,
+  REPLICATION_INTERVALS,
+  resolveReplicationConflict,
+  runReplicationNow,
+  targetLabel,
+  updateReplication,
+} from '../apps/web/src/services/replicationService';
 import { deleteVolume, listMyVolumes, loadVolume, updateVolume } from '../apps/web/src/services/volumeService';
+import type { BucketReplication } from '../apps/web/src/types';
 
 /**
  * The API service layer, and specifically the `?backend=` selector.
@@ -176,6 +189,175 @@ describe('credentialService', () => {
   });
 });
 
+describe('replicationService', () => {
+  const owner = 'test';
+  const volume = 'my bucket';
+  const base = `/user/volumes/${owner}/${encodeURIComponent(volume)}/replications`;
+
+  const replication = (over: Partial<BucketReplication> = {}): BucketReplication => ({
+    replicationId: 'r1',
+    targetKind: 'dav',
+    remoteUrl: 'https://remote.example.com/dav',
+    remoteOwner: '',
+    remoteVolume: '',
+    remotePath: '',
+    authKind: 'none',
+    mode: 'keep-both',
+    intervalMinutes: 60,
+    enabled: true,
+    lastRunAt: null,
+    lastStatus: null,
+    lastError: null,
+    consecutiveFailures: 0,
+    passInFlight: false,
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+  });
+
+  it('reports the backend\'s targets and its allowed intervals', async () => {
+    const { result, calls } = await withFetch(
+      '{"replications":[{"replicationId":"r1"}],"allowedIntervals":[60,360]}',
+      () => listReplications(owner, volume),
+    );
+    expect(only(calls).url).toBe(base);
+    expect(result.supported).toBe(true);
+    if (!result.supported) throw new Error('expected a supported result');
+    expect(result.replications).toEqual([{ replicationId: 'r1' }]);
+    expect(result.allowedIntervals).toEqual([60, 360]);
+  });
+
+  it('defaults a missing array to empty and a missing interval list to the local copy', async () => {
+    const { result } = await withFetch('{}', () => listReplications(owner, volume));
+    if (!result.supported) throw new Error('expected a supported result');
+    expect(result.replications).toEqual([]);
+    // The local list is a rendering fallback for the first paint only; the backend
+    // stays the enforcement point for what it will accept.
+    expect(result.allowedIntervals).toEqual([...REPLICATION_INTERVALS]);
+  });
+
+  it('reads a 404 as "this backend predates replication", not as a failure', async () => {
+    // The whole point of the union. A 404 here is version skew, and it must not
+    // reach the error path — the notice bar would show a fault where the truth is
+    // that the backend has no such route.
+    const { result } = await withFetch(
+      '{"Exception":{"Type":"NotFound","Message":"Volume not found"}}',
+      () => listReplications(owner, volume),
+      404,
+    );
+    expect(result).toEqual({ supported: false });
+  });
+
+  it('still throws for anything that is not a 404', async () => {
+    // A 403 is the backend refusing, and a 500 is an outage. Both must surface as
+    // errors: collapsing them into "unsupported" would tell an owner their backend
+    // is old when it is refusing them.
+    for (const status of [401, 403, 409, 500, 502]) {
+      await expect(
+        withFetch('{"Exception":{"Type":"InternalServerError","Message":"boom"}}', () => listReplications(owner, volume), status),
+      ).rejects.toThrow();
+    }
+  });
+
+  it('creates with the selector, and sends the body the backend validates', async () => {
+    const { result, calls } = await withFetch('{"replication":{"replicationId":"r1"}}', () =>
+      createReplication(
+        owner,
+        volume,
+        {
+          targetKind: 'dav',
+          remoteUrl: 'https://remote.example.com/dav',
+          authKind: 'basic',
+          username: 'me',
+          secret: 'hunter2',
+          mode: 'sync',
+          intervalMinutes: 360,
+        },
+        'office',
+      ),
+    );
+    expect(target(only(calls).url)).toBe(`${base}?backend=office`);
+    expect(only(calls).init.method).toBe('POST');
+    expect(await recordedJson(only(calls))).toEqual({
+      targetKind: 'dav',
+      remoteUrl: 'https://remote.example.com/dav',
+      authKind: 'basic',
+      username: 'me',
+      secret: 'hunter2',
+      mode: 'sync',
+      intervalMinutes: 360,
+    });
+    expect(result.replicationId).toBe('r1');
+  });
+
+  it('patches, runs, lists conflicts and resolves under the one selector', async () => {
+    const patched = await withFetch('{"replication":{"replicationId":"r 1"}}', () =>
+      updateReplication(owner, volume, 'r 1', { enabled: false }, 'office'),
+    );
+    expect(target(only(patched.calls).url)).toBe(`${base}/${encodeURIComponent('r 1')}?backend=office`);
+    expect(only(patched.calls).init.method).toBe('PATCH');
+    expect(await recordedJson(only(patched.calls))).toEqual({ enabled: false });
+
+    // `run` returns 202 with the work in `waitUntil`; the router forwards the
+    // status unreshaped, so `started` reaches the client rather than a timeout.
+    const run = await withFetch('{"sync":"started"}', () => runReplicationNow(owner, volume, 'r1', 'office'), 202);
+    expect(target(only(run.calls).url)).toBe(`${base}/r1/run?backend=office`);
+    expect(only(run.calls).init.method).toBe('POST');
+    expect(run.result.sync).toBe('started');
+
+    const conflicts = await withFetch('{"conflicts":[{"conflictId":"c1"}]}', () =>
+      listReplicationConflicts(owner, volume, 'r 1', 'office'),
+    );
+    expect(target(only(conflicts.calls).url)).toBe(`${base}/${encodeURIComponent('r 1')}/conflicts?backend=office`);
+    expect(conflicts.result).toEqual([{ conflictId: 'c1' }]);
+
+    const resolved = await withFetch('{"resolved":true}', () =>
+      resolveReplicationConflict(owner, volume, 'r 1', 'c 1', 'office'),
+    );
+    expect(target(only(resolved.calls).url)).toBe(
+      `${base}/${encodeURIComponent('r 1')}/conflicts/${encodeURIComponent('c 1')}/resolve?backend=office`,
+    );
+    expect(only(resolved.calls).init.method).toBe('POST');
+    expect(resolved.result).toBe(true);
+  });
+
+  it('deletes by id and defaults a missing conflict array to empty', async () => {
+    const deleted = await withFetch('{"ok":true}', () => deleteReplication(owner, volume, 'r1', 'office'));
+    expect(target(only(deleted.calls).url)).toBe(`${base}/r1?backend=office`);
+    expect(only(deleted.calls).init.method).toBe('DELETE');
+
+    const empty = await withFetch('{}', () => listReplicationConflicts(owner, volume, 'r1'));
+    expect(empty.result).toEqual([]);
+  });
+
+  it('never lets the selector become a path segment', async () => {
+    // The regression shape for this whole service: a slug containing a slash, left
+    // unencoded, would append a segment and address a different resource — a 404
+    // that reads as a missing bucket.
+    const { calls } = await withFetch('{}', () => listReplications(owner, volume, 'a b/c'));
+    expect(new URL(only(calls).url, 'https://router.example.com').pathname).toBe(base);
+  });
+
+  it('renders an interval and a target label from the fields the backend sent', () => {
+    expect(intervalLabel(15)).toBe('15m');
+    expect(intervalLabel(60)).toBe('1h');
+    expect(intervalLabel(90)).toBe('1.5h');
+    expect(intervalLabel(1440)).toBe('1d');
+    expect(intervalLabel(10_080)).toBe('7d');
+
+    expect(targetLabel(replication())).toBe('https://remote.example.com/dav');
+    expect(targetLabel(replication({ remotePath: 'backups/bucket' }))).toBe('https://remote.example.com/dav/backups/bucket');
+    // A sibling bucket's "URL" is its owner/volume path — the URL column is empty
+    // for that kind, so rendering it would show the user a blank target.
+    expect(targetLabel(replication({ targetKind: 'dav-volume', remoteUrl: '', remoteOwner: 'alice', remoteVolume: 'photos' }))).toBe(
+      'alice/photos',
+    );
+    expect(
+      targetLabel(replication({ targetKind: 'dav-volume', remoteUrl: '', remoteOwner: 'alice', remoteVolume: 'photos', remotePath: 'sub' })),
+    ).toBe('alice/photos/sub');
+  });
+});
+
 describe('volumeService', () => {
   it('lists volumes and backends, defaulting both to empty', async () => {
     const { result, calls } = await withFetch('{"volumes":[{"name":"photos"}],"backends":[{"slug":"office"}]}', () => listMyVolumes());
@@ -275,6 +457,19 @@ describe('the ?backend= selector, as a contract rather than as five shapes', () 
       ['createBucketCredential', () => createBucketCredential('test', 'photos', 'c', 30, true, SLUG)],
       ['setBucketCredentialReadOnly', () => setBucketCredentialReadOnly('test', 'photos', 'cred 1', true, SLUG)],
       ['revokeBucketCredential', () => revokeBucketCredential('test', 'photos', 'cred 1', SLUG)],
+      ['listReplications', () => listReplications('test', 'photos', SLUG)],
+      ['createReplication', () =>
+        createReplication(
+          'test',
+          'photos',
+          { targetKind: 'dav', authKind: 'none', mode: 'sync', intervalMinutes: 60 },
+          SLUG,
+        )],
+      ['updateReplication', () => updateReplication('test', 'photos', 'r1', { enabled: false }, SLUG)],
+      ['deleteReplication', () => deleteReplication('test', 'photos', 'r1', SLUG)],
+      ['runReplicationNow', () => runReplicationNow('test', 'photos', 'r1', SLUG)],
+      ['listReplicationConflicts', () => listReplicationConflicts('test', 'photos', 'r1', SLUG)],
+      ['resolveReplicationConflict', () => resolveReplicationConflict('test', 'photos', 'r1', 'c1', SLUG)],
     ];
     for (const [name, call] of services) {
       const { calls } = await withFetch('{"ok":true,"credentials":[],"volumes":[],"backends":[]}', call);
@@ -295,6 +490,14 @@ describe('the ?backend= selector, as a contract rather than as five shapes', () 
       ['createBucketCredential', () => createBucketCredential('test', 'photos', 'c')],
       ['setBucketCredentialReadOnly', () => setBucketCredentialReadOnly('test', 'photos', 'c', false)],
       ['revokeBucketCredential', () => revokeBucketCredential('test', 'photos', 'c')],
+      ['listReplications', () => listReplications('test', 'photos')],
+      ['createReplication', () =>
+        createReplication('test', 'photos', { targetKind: 'dav', authKind: 'none', mode: 'sync', intervalMinutes: 60 })],
+      ['updateReplication', () => updateReplication('test', 'photos', 'r1', { enabled: false })],
+      ['deleteReplication', () => deleteReplication('test', 'photos', 'r1')],
+      ['runReplicationNow', () => runReplicationNow('test', 'photos', 'r1')],
+      ['listReplicationConflicts', () => listReplicationConflicts('test', 'photos', 'r1')],
+      ['resolveReplicationConflict', () => resolveReplicationConflict('test', 'photos', 'r1', 'c1')],
     ];
     for (const [name, call] of services) {
       const { calls } = await withFetch('{"ok":true,"credentials":[],"volumes":[],"backends":[]}', call);

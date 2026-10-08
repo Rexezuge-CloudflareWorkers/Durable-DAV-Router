@@ -4,7 +4,7 @@ Request router to backend Durable-DAV instances (RFC 4918 WebDAV reverse proxy o
 
 - Multi-backend from day one: each user registers backend Durable-DAV origins at `/user/backends`; buckets stay at `/:owner/:volume/` and proxy to the selected backend via `?backend=<slug>` (or `X-Backend`; lone backend implicit, multiples without selector → `409`).
 - Auth passthrough (router stores no secrets): Cloudflare Access JWT for `/user/*` fan-out + per-bucket Basic for WebDAV, forwarded verbatim. Each user gets up to `MAX_BACKENDS_PER_USER` (20) registered backends.
-- Uniform browser UI: aggregated bucket view grouped by backend with health badges; per-bucket files/settings/credentials proxy to the owning backend through one shape.
+- Uniform browser UI: aggregated bucket view grouped by backend with health badges; per-bucket files/settings/credentials/**replication** proxy to the owning backend through one shape — including scheduled two-way WebDAV sync, which the router forwards without modelling.
 - Only needed binding: D1 `DB` (registry only; files/props/locks live on backends).
 
 ## Quick Start

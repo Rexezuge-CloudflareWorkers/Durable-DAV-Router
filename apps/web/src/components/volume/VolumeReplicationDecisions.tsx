@@ -1,0 +1,75 @@
+import { useTranslation } from 'react-i18next';
+import type { ReplicationConflict } from '../../types';
+import { Button } from '../ui/Button';
+
+/**
+ * Who a decision favoured, in words.
+ *
+ * One helper because the two call sites below are the only place a `winner` is
+ * turned into English, and a third would be a third place to get "remote" and
+ * "this bucket" backwards.
+ */
+function winnerLabel(t: (key: string, fallback: string) => string, winner: ReplicationConflict['winner']): string {
+  return winner === 'local' ? t('replication.thisBucket', 'This Bucket') : t('replication.remote', 'Remote');
+}
+
+/**
+ * The recorded decisions for one target.
+ *
+ * Both `conflict` and `deletion` rows appear, and that is the point: a two-way
+ * sync that deletes on both sides is the most dangerous thing this codebase does,
+ * and once a deletion has propagated there is no undo. Recording every one turns
+ * "the file is gone" from an archaeology problem into a lookup, and it is the
+ * only place a user learns that a conflict copy exists at all.
+ */
+export function VolumeReplicationDecisions({
+  conflicts,
+  onResolve,
+  onDismiss,
+}: {
+  conflicts: readonly ReplicationConflict[];
+  onResolve: (conflict: ReplicationConflict) => void;
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h4 className="text-sm font-medium text-[var(--color-text-primary)]">{t('replication.decisions', 'Recorded Decisions')}</h4>
+        <Button size="sm" variant="secondary" onClick={onDismiss}>
+          {t('replication.hideDecisions', 'Hide')}
+        </Button>
+      </div>
+      {conflicts.length === 0 ? (
+        <p className="text-sm text-[var(--color-text-muted)]">{t('replication.noDecisions', 'Nothing To Reconcile.')}</p>
+      ) : (
+        <ul className="space-y-2">
+          {conflicts.map((conflict) => (
+            <li key={conflict.conflictId} className="rounded-md border border-[var(--color-border)] p-3">
+              <p className="text-sm text-[var(--color-text-primary)] break-all">{conflict.path}</p>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                {conflict.kind === 'deletion'
+                  ? t('replication.deletionPropagated', 'Deletion Propagated. {{winner}} Side Was Removed.', {
+                      winner: winnerLabel(t, conflict.winner),
+                    })
+                  : t('replication.conflictResolved', 'Both Sides Changed. {{winner}} Side Was Kept.', {
+                      winner: winnerLabel(t, conflict.winner),
+                    })}
+              </p>
+              {conflict.keptPath !== null && (
+                <p className="text-xs text-[var(--color-text-secondary)] break-all">
+                  {t('replication.keptCopy', 'Other Version Kept At: {{path}}', { path: conflict.keptPath })}
+                </p>
+              )}
+              {conflict.resolvedAt === null && (
+                <Button size="sm" variant="secondary" className="mt-2" onClick={() => onResolve(conflict)}>
+                  {t('replication.markResolved', 'Mark Resolved')}
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
