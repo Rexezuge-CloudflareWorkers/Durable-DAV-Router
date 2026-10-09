@@ -11,6 +11,7 @@ import { RefreshButton } from '../shared/RefreshButton';
 import { TypeToConfirmModal } from '../modals/TypeToConfirmModal';
 import { VolumeCredentialsCard } from './VolumeCredentialsCard';
 import { HrefPrefixModeCard } from './HrefPrefixModeCard';
+import { VolumeReplicationCard } from './VolumeReplicationCard';
 
 export function VolumeSettingsTab({
   owner,
@@ -159,6 +160,24 @@ export function VolumeSettingsTab({
           detail={detail}
           showNotice={showNotice}
           onUpdated={onUpdated}
+          backend={backend}
+        />
+      )}
+
+      {/*
+       Inside the same `detail` gate, and that is load-bearing rather than tidy.
+       The replication card treats a 404 from `GET .../replications` as "this
+       backend predates the feature" and says so instead of showing an error.
+       That reading is only sound because `detail` proves the bucket exists and is
+       owned — the backend answers 404 for a foreign volume too, so a caller who
+       does not own this bucket never gets here. Outside the gate the two 404s
+       would be indistinguishable and the skew notice would mask a real one.
+       */}
+      {detail && (
+        <VolumeReplicationCard
+          owner={owner}
+          volume={volume}
+          showNotice={showNotice}
           backend={backend}
         />
       )}

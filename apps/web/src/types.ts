@@ -108,3 +108,54 @@ export interface DavEntry {
   lastModified: string | null;
   etag: string | null;
 }
+
+/**
+ * One configured replication target on a backend.
+ *
+ * Backend-owned, proxied verbatim: the router stores nothing about a replication
+ * and interprets none of it. Every field here is the backend's own projection
+ * (`ReplicationRoutes.replicationProjection`), which is the only thing standing
+ * between a stored credential and a client — `encrypted_secret`/`secret_iv` are
+ * named nowhere in it, so they cannot reach a browser even by accident.
+ *
+ * `passInFlight` is not cosmetic: a non-null value *is* the backend's deletion
+ * gate, so the UI can explain why a deletion has not propagated yet instead of
+ * leaving the owner to wonder whether replication is broken.
+ */
+export interface BucketReplication {
+  replicationId: string;
+  targetKind: 'dav' | 'dav-volume';
+  remoteUrl: string;
+  remoteOwner: string;
+  remoteVolume: string;
+  remotePath: string;
+  authKind: 'none' | 'basic' | 'bearer';
+  mode: 'copy-only' | 'sync' | 'keep-both';
+  intervalMinutes: number;
+  enabled: boolean;
+  lastRunAt: number | null;
+  lastStatus: 'ok' | 'partial' | 'failed' | null;
+  lastError: string | null;
+  consecutiveFailures: number;
+  passInFlight: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * One recorded sync decision worth explaining.
+ *
+ * `kind: 'deletion'` means a deletion was propagated between the two sides. Those
+ * are recorded as well as conflicts precisely because they are the irreversible
+ * ones, and `keptPath` is the only place a losing version survives — so a client
+ * that cannot see it cannot resolve the decision it is being told about.
+ */
+export interface ReplicationConflict {
+  conflictId: string;
+  path: string;
+  winner: 'local' | 'remote';
+  keptPath: string | null;
+  kind: 'conflict' | 'deletion';
+  detectedAt: number;
+  resolvedAt: number | null;
+}

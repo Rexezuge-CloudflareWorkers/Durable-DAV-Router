@@ -44,6 +44,7 @@ export const KEY_NAMESPACES = [
   'unauthorized',
   'errors',
   'backends',
+  'replication',
 ];
 
 const NS = `(?:${KEY_NAMESPACES.join('|')})`;
