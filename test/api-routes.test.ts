@@ -1044,6 +1044,45 @@ describe('browser-plane subpath proxy', () => {
       expect(await res.text()).toBe('{"replication":{}}');
     });
 
+    it('forwards a destructive replication flag without inspecting or dropping it', async () => {
+      // `mirrorDeletions: true` on a `pull-only` target is the one field in this
+      // surface that can make a sync pass delete a file the bucket holds. The
+      // router stores no replication state and enforces nothing, so its whole
+      // obligation is to forward the field byte-for-byte and let the backend
+      // decide — a router that validated, defaulted or filtered it would be
+      // holding a piece of the backend's policy it cannot keep consistent.
+      const body = JSON.stringify({
+        targetKind: 'dav',
+        remoteUrl: 'https://remote.example.com/dav',
+        mode: 'pull-only',
+        mirrorDeletions: true,
+        intervalMinutes: 60,
+      });
+      stubs.fetch.mockImplementation(
+        async () =>
+          new Response(
+            '{"replications":[{"replicationId":"r1","mode":"pull-only","mirrorDeletions":true}],"allowedIntervals":[60]}',
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      );
+      const { routes, env } = oneBackend();
+      const res = await call(
+        routes,
+        `ON /user/volumes/:owner/:volume/*`,
+        fakeContext({
+          method: 'POST',
+          env,
+          url: `https://router.example.com${REPLICATION}?backend=office`,
+          headers: { 'Content-Type': 'application/json' },
+          rawBody: body,
+        }),
+      );
+      expect(await upstreamText()).toBe(body);
+      // And back: the flag in the projection is the row's only account of the
+      // setting, so the SPA cannot badge a target the router has re-projected.
+      expect(await res.text()).toContain('"mirrorDeletions":true');
+    });
+
     it('forwards "Sync now" and preserves the 202 that says the work was detached', async () => {
       // `202` is load-bearing. The backend answers it from `waitUntil` because a
       // slice runs for tens of seconds; a client timeout would look like a failed

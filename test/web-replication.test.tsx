@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 /**
  * `initReactI18next` is included for the same reason the credential card's test
@@ -53,6 +53,11 @@ vi.mock('../apps/web/src/services/replicationService', async () => {
   );
   return {
     REPLICATION_INTERVALS: actual.REPLICATION_INTERVALS,
+    // Also a value the form imports directly, and the one a missing re-export
+    // empties silently: the mode `<select>` maps over it, so a mock that omits it
+    // renders a select with no `<option>`s rather than failing — which is how the
+    // mode list would have gone missing from a test run that was otherwise green.
+    REPLICATION_MODES: actual.REPLICATION_MODES,
     intervalLabel: actual.intervalLabel,
     targetLabel: actual.targetLabel,
     listReplications: (...args: unknown[]) => listReplications(...args),
@@ -416,5 +421,172 @@ describe('replication card: adding a target', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add Replication' }));
 
     await waitFor(() => expect(showNotice).toHaveBeenCalledWith('error', 'Bad Request.'));
+  });
+});
+
+/**
+ * `pull-only` and its `mirrorDeletions` flag.
+ *
+ * This is the one control in the settings UI that can make a sync pass *delete* a
+ * file this bucket holds, and the backend validates the flag against the mode it
+ * will be read in: `true` anywhere else is a `400`, not a no-op. So the two
+ * things worth pinning are that the flag rides along exactly when the mode is
+ * `pull-only`, and that it is absent — not `false` — everywhere else.
+ */
+describe('replication card: pull-only and mirror deletions', () => {
+  /**
+   * By role, and by a regex over the accessible name — not `getByLabelText` with
+   * the label string. The control's `<label>` wraps both the prompt *and* the help
+   * text beneath it, so the label's whole text content is the two sentences joined,
+   * and an exact `getByLabelText` misses. Worse, a `queryByLabelText` in the
+   * "not offered" assertion then misses for the same reason on *every* mode and
+   * passes without ever proving the control was absent.
+   */
+  const mirrorCheckbox = () => screen.queryByRole('checkbox', { name: /Delete Files Here That The Remote Does Not Have/ });
+
+  const addTarget = async (mode: string) => {
+    cleanup();
+    createReplication.mockClear();
+    renderCard('office');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Sync Mode'), { target: { value: mode } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Replication' }));
+    await waitFor(() => expect(createReplication).toHaveBeenCalled());
+    return createReplication.mock.calls[0]?.[2] as Record<string, unknown>;
+  };
+
+  it('offers the fourth mode, because a backend that supports it cannot offer it otherwise', async () => {
+    renderCard();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+
+    const options = [...screen.getByLabelText('Sync Mode').querySelectorAll('option')].map((o) => o.value);
+
+    expect(options).toContain('pull-only');
+  });
+
+  it('explains that the remote wins, because that is what the mode changes', async () => {
+    renderCard();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Sync Mode'), { target: { value: 'pull-only' } });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'One Way: The Remote Is The Only Writer. Changes Here Are Never Sent Back. A Local Version That Would Be Replaced Is Saved Beside It First.',
+        ),
+      ).toBeTruthy(),
+    );
+  });
+
+  it('does not offer the deletion control outside pull-only, where the backend refuses it', async () => {
+    // The backend answers `400` for `mirrorDeletions: true` in any other mode
+    // because the flag is unread there. A control that can be ticked into a
+    // guaranteed rejection is worse than no control.
+    renderCard();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+
+    expect(mirrorCheckbox()).toBeNull();
+
+    for (const mode of ['copy-only', 'sync', 'keep-both']) {
+      fireEvent.change(screen.getByLabelText('Sync Mode'), { target: { value: mode } });
+      expect(mirrorCheckbox()).toBeNull();
+    }
+  });
+
+  it('defaults the deletion control to off, because on is the destructive half', async () => {
+    renderCard();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Sync Mode'), { target: { value: 'pull-only' } });
+
+    const box = mirrorCheckbox() as HTMLInputElement;
+    expect(box).toBeTruthy();
+    expect(box.checked).toBe(false);
+    expect(screen.getByText(/This Bucket Is A Safe Copy/)).toBeTruthy();
+  });
+
+  it('sends an explicit off under pull-only, so the stored value is a choice and not a default', async () => {
+    // Absent-versus-`false` is the whole rule for the other three modes; here the
+    // field is read, so sending the real state is what keeps the created row
+    // distinguishable from one the owner never considered.
+    const input = await addTarget('pull-only');
+    expect(input['mode']).toBe('pull-only');
+    expect(input['mirrorDeletions']).toBe(false);
+  });
+
+  it('sends true once ticked, which is the only destructive value that may leave the browser', async () => {
+    renderCard('office');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Sync Mode'), { target: { value: 'pull-only' } });
+    fireEvent.click(mirrorCheckbox() as HTMLElement);
+    expect((mirrorCheckbox() as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Replication' }));
+
+    await waitFor(() => expect(createReplication).toHaveBeenCalled());
+    const input = createReplication.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(input['mirrorDeletions']).toBe(true);
+  });
+
+  it('omits the flag entirely outside pull-only, rather than sending a false', async () => {
+    // Not `false`: a backend predating `mirror_deletions` ignores the field
+    // completely, so a sent `false` reads as "accepted" for a setting it never
+    // stored, while an absent key is indistinguishable from a client that has
+    // never heard of it.
+    for (const mode of ['copy-only', 'sync', 'keep-both']) {
+      const input = await addTarget(mode);
+      expect(input['mode']).toBe(mode);
+      expect(Object.hasOwn(input, 'mirrorDeletions')).toBe(false);
+    }
+  });
+
+  it('badges a mirror-deletion target as the destructive configuration it is', async () => {
+    listReplications.mockResolvedValue({
+      supported: true,
+      replications: [replication({ mode: 'pull-only', mirrorDeletions: true })],
+      allowedIntervals: [60],
+    });
+    renderCard();
+    await waitFor(() => expect(button('Sync Now')).toBeTruthy());
+
+    expect(screen.getByText('Exact Mirror')).toBeTruthy();
+    expect(screen.queryByText('Safe Copy')).toBeNull();
+  });
+
+  it('badges a pull-only target with deletions off as a safe copy', async () => {
+    listReplications.mockResolvedValue({
+      supported: true,
+      replications: [replication({ mode: 'pull-only' })],
+      allowedIntervals: [60],
+    });
+    renderCard();
+    await waitFor(() => expect(button('Sync Now')).toBeTruthy());
+
+    // Absent, as a backend predating the flag omits it. Such a backend cannot
+    // hold a `pull-only` target at all, so the reading is never wrong — but if it
+    // ever were, "Safe Copy" is the answer that must never be invented, which is
+    // why the badge keys on the mode the backend reported rather than on the flag.
+    expect(screen.getByText('Safe Copy')).toBeTruthy();
+    expect(screen.queryByText('Exact Mirror')).toBeNull();
+  });
+
+  it('badges nothing on the modes that never read the flag', async () => {
+    // The flag is unread in all three, so a badge here would be a claim about a
+    // setting the backend does not have — and `copy-only` already propagates
+    // deletions *to* the remote, so "Safe Copy" would be exactly backwards.
+    for (const mode of ['copy-only', 'sync', 'keep-both'] as const) {
+      listReplications.mockResolvedValue({
+        supported: true,
+        replications: [replication({ mode })],
+        allowedIntervals: [60],
+      });
+      renderCard();
+      await waitFor(() => expect(button('Sync Now')).toBeTruthy());
+
+      expect(screen.queryByText('Exact Mirror')).toBeNull();
+      expect(screen.queryByText('Safe Copy')).toBeNull();
+      cleanup();
+    }
   });
 });
