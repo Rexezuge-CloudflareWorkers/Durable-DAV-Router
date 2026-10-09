@@ -130,7 +130,33 @@ export interface BucketReplication {
   remoteVolume: string;
   remotePath: string;
   authKind: 'none' | 'basic' | 'bearer';
-  mode: 'copy-only' | 'sync' | 'keep-both';
+  /**
+   * The backend's conflict policy, which also carries the *direction* of the
+   * sync — there is no separate direction setting, so "never imports" and
+   * "always wins" have to be one decision.
+   *
+   * `pull-only` is the one-way import: the remote is the sole writer, nothing is
+   * ever pushed back, and a local version the remote would replace is preserved
+   * beside it rather than overwritten. It is also the only mode
+   * `mirrorDeletions` is read in.
+   */
+  mode: 'copy-only' | 'sync' | 'keep-both' | 'pull-only';
+  /**
+   * `pull-only` only. `true` makes this an exact mirror — a local path the remote
+   * does not have is deleted — and `false` (the default) is a safe copy, where
+   * the remote's content is imported and nothing local is ever destroyed. It is
+   * the one boolean in this projection that decides whether a sync pass can
+   * *remove* a file the bucket holds, so the row badges it rather than burying
+   * it in a list of fields.
+   *
+   * Optional for the same reason `Volume.hrefPrefixMode` is: the router fronts
+   * arbitrary backends and a backend predating `mirror_deletions` omits it. The
+   * omission is only reachable where the badge is not rendered, because such a
+   * backend cannot hold a `pull-only` target — its `mode` validator has never
+   * accepted the value — so "absent reads as off" is never a claim about a
+   * mirror-deletion the backend might actually perform.
+   */
+  mirrorDeletions?: boolean;
   intervalMinutes: number;
   enabled: boolean;
   lastRunAt: number | null;

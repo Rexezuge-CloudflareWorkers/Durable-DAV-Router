@@ -13,6 +13,25 @@ import { withBackendSelector } from '../lib/backendSelector';
 export const REPLICATION_INTERVALS = [15, 60, 360, 720, 1440, 10_080] as const;
 
 /**
+ * The modes the UI offers, mirrored from the backend's `REPLICATION_MODES`.
+ *
+ * The same arrangement as the intervals above: a local copy so the dropdown
+ * cannot render blank or offer a value the server will reject, with the backend
+ * remaining the enforcement point. Unlike the intervals there is no server-sent
+ * list to reconcile against — `GET /replications` returns `allowedIntervals` but
+ * no modes — so the router cannot hide an option a particular backend does not
+ * support, and does not try. A backend predating `pull-only` answers `400` for
+ * it, which reaches the notice bar through the ordinary error path.
+ *
+ * `pull-only` is the one-way import: the remote is the sole writer, nothing is
+ * ever pushed back, and — with `mirrorDeletions` — local paths the remote lacks
+ * are removed rather than kept.
+ */
+export const REPLICATION_MODES = ['keep-both', 'sync', 'pull-only', 'copy-only'] as const;
+
+export type ReplicationMode = (typeof REPLICATION_MODES)[number];
+
+/**
 Human label for an interval. Minutes under an hour, then hours/days.
 */
 export function intervalLabel(minutes: number): string {
@@ -112,7 +131,16 @@ export type CreateReplicationInput = {
   authKind: 'none' | 'basic' | 'bearer';
   username?: string;
   secret?: string;
-  mode: 'copy-only' | 'sync' | 'keep-both';
+  mode: ReplicationMode;
+  /**
+   * `pull-only` only: delete local paths the remote does not have, making this an
+   * exact mirror rather than a safe copy. Omitted for every other mode — the
+   * backend refuses it there, so sending it is a `400` rather than a no-op, and
+   * sending `false` is worse than sending nothing: it is a field an older
+   * backend silently ignores, which reads as "accepted" for a setting it never
+   * stored.
+   */
+  mirrorDeletions?: boolean;
   intervalMinutes: number;
   enabled?: boolean;
 };
@@ -131,7 +159,7 @@ export async function updateReplication(
   owner: string,
   volume: string,
   replicationId: string,
-  patch: { mode?: 'copy-only' | 'sync' | 'keep-both'; intervalMinutes?: number; enabled?: boolean },
+  patch: { mode?: ReplicationMode; mirrorDeletions?: boolean; intervalMinutes?: number; enabled?: boolean },
   backend?: string | null,
 ): Promise<BucketReplication> {
   const data = await apiPatch<{ replication: BucketReplication }>(

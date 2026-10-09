@@ -2,11 +2,10 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '../ui/Button';
 import { Input, Label, Select } from '../ui/Input';
-import { createReplication } from '../../services/replicationService';
-import type { CreateReplicationInput } from '../../services/replicationService';
+import { VolumeReplicationMirrorToggle } from './VolumeReplicationMirrorToggle';
+import { createReplication, REPLICATION_MODES } from '../../services/replicationService';
+import type { CreateReplicationInput, ReplicationMode } from '../../services/replicationService';
 import { toLocalizedErrorMessage } from '../../lib/backendErrors';
-
-const MODES = ['keep-both', 'sync', 'copy-only'] as const;
 
 /**
 What each mode will and will not do.
@@ -18,8 +17,12 @@ delete files on the remote, and the other will never overwrite anything.
 A `{ mode: { key, text } }` shape rather than a `[key, text]` tuple: the coverage
 extractor recognises a key only when it follows a colon, so the tuple form reads
 as three orphans and fails `pnpm run validate:locales`.
-*/
-const MODE_HELP = {
+*
+ * Typed `Record<ReplicationMode, …>` rather than an object that happens to hold
+ * the right keys: widening the backend's mode list becomes a compile error here
+ * instead of a mode that silently renders with no label and no explanation.
+ */
+const MODE_HELP: Record<ReplicationMode, { key: string; text: string }> = {
   'copy-only': {
     key: 'replication.modeHelpCopyOnly',
     text: 'One Way: This Bucket Is The Only Writer. Changes On The Remote Are Ignored, And Deletions Here Remove Them There.',
@@ -32,15 +35,20 @@ const MODE_HELP = {
     key: 'replication.modeHelpKeepBoth',
     text: 'Two Way. If Both Sides Change The Same File, Neither Is Overwritten: The Other Version Is Saved Beside It As A Conflict Copy.',
   },
-} as const;
+  'pull-only': {
+    key: 'replication.modeHelpPullOnly',
+    text: 'One Way: The Remote Is The Only Writer. Changes Here Are Never Sent Back. A Local Version That Would Be Replaced Is Saved Beside It First.',
+  },
+};
 
-const MODE_LABELS = {
+const MODE_LABELS: Record<ReplicationMode, string> = {
   'copy-only': 'replication.modeCopyOnly',
   sync: 'replication.modeSync',
   'keep-both': 'replication.modeKeepBoth',
-} as const;
+  'pull-only': 'replication.modePullOnly',
+};
 
-function modeHelp(t: (key: string, fallback: string) => string, mode: (typeof MODES)[number]): string {
+function modeHelp(t: (key: string, fallback: string) => string, mode: ReplicationMode): string {
   const { key, text } = MODE_HELP[mode];
   return t(key, text);
 }
@@ -85,7 +93,8 @@ export function VolumeReplicationForm({
   const [authKind, setAuthKind] = useState<'none' | 'basic' | 'bearer'>('none');
   const [username, setUsername] = useState('');
   const [secret, setSecret] = useState('');
-  const [mode, setMode] = useState<(typeof MODES)[number]>('keep-both');
+  const [mode, setMode] = useState<ReplicationMode>('keep-both');
+  const [mirrorDeletions, setMirrorDeletions] = useState(false);
   const [chosenInterval, setChosenInterval] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -113,6 +122,12 @@ export function VolumeReplicationForm({
       username: authKind === 'basic' ? username.trim() : '',
       secret: authKind === 'none' ? '' : secret,
       mode,
+      // Sent only where the server accepts it. `true` on any other mode is a 400,
+      // and `false` elsewhere is a field an older backend silently ignores, which
+      // reads as "accepted" for a setting it never stored — so this is derived
+      // from the mode rather than being a checkbox that can be left ticked while
+      // the mode changes underneath it.
+      ...(mode === 'pull-only' && { mirrorDeletions }),
       intervalMinutes,
     };
     try {
@@ -122,6 +137,7 @@ export function VolumeReplicationForm({
       setRemoteVolume('');
       setRemotePath('');
       setSecret('');
+      setMirrorDeletions(false);
       showNotice('success', t('replication.created', 'Replication Added.'));
       onSaved();
     } catch (error) {
@@ -224,8 +240,8 @@ export function VolumeReplicationForm({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="replication-mode">{t('replication.mode', 'Sync Mode')}</Label>
-          <Select id="replication-mode" value={mode} onChange={(e) => setMode(e.target.value as (typeof MODES)[number])}>
-            {MODES.map((option) => (
+          <Select id="replication-mode" value={mode} onChange={(e) => setMode(e.target.value as ReplicationMode)}>
+            {REPLICATION_MODES.map((option) => (
               <option key={option} value={option}>
                 {t(MODE_LABELS[option], option)}
               </option>
@@ -245,6 +261,13 @@ export function VolumeReplicationForm({
       </div>
 
       <p className="text-xs text-[var(--color-text-muted)]">{modeHelp(t, mode)}</p>
+
+      {/* Keyed on the mode rather than shown-and-disabled, because the backend
+          refuses the flag outright anywhere else: `mirrorDeletions: true` outside
+          `pull-only` is a 400, so a control left on screen there is a control the
+          owner can only get a rejection from. The mode is also what the flag is
+          sent with, so the two cannot disagree. */}
+      {mode === 'pull-only' && <VolumeReplicationMirrorToggle checked={mirrorDeletions} onChange={setMirrorDeletions} />}
 
       <div>
         <Button type="submit" variant="primary" size="sm" loading={saving}>

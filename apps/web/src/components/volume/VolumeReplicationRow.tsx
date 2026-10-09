@@ -39,6 +39,7 @@ const MODE_LABEL_KEYS: Record<BucketReplication['mode'], string> = {
   'copy-only': 'replication.modeCopyOnly',
   sync: 'replication.modeSync',
   'keep-both': 'replication.modeKeepBoth',
+  'pull-only': 'replication.modePullOnly',
 };
 
 /**
@@ -94,6 +95,21 @@ export function VolumeReplicationRow({
           <p className="text-xs text-[var(--color-text-muted)]">
             {t('replication.every', 'Every {{interval}}', { interval: intervalLabel(replication.intervalMinutes) })} ·{' '}
             {t(MODE_LABEL_KEYS[replication.mode], replication.mode)}
+            {/*
+              A badge rather than another line of prose, because "exact mirror" is the
+              single fact about a `pull-only` target that determines what the owner
+              must not do here — it is the only configuration in which a sync can
+              delete a file this bucket holds. Keyed on the mode, so a backend that
+              predates `mirror_deletions` (and therefore cannot hold a `pull-only`
+              target at all) never renders a claim about it.
+            */}
+            {replication.mode === 'pull-only' && (
+              <Badge variant={replication.mirrorDeletions ? 'warning' : 'neutral'}>
+                {replication.mirrorDeletions
+                  ? t('replication.exactMirror', 'Exact Mirror')
+                  : t('replication.safeCopy', 'Safe Copy')}
+              </Badge>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
