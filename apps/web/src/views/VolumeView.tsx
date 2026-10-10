@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronRight, Plus, Upload } from 'lucide-react';
 import type { VolumeDetail } from '../types';
 import { parentDavPath, stripSlashes } from '../lib/davXml';
+import { withBackendSelector } from '../lib/backendSelector';
 import { clampPage, readStoredPageSize, storePageSize } from '../lib/davPage';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
@@ -139,19 +140,27 @@ function VolumeView({
     [path, setPath],
   );
 
+  // The bucket-name crumb is a real link, so its `to` is the whole fix. It used
+  // to point at a bare `/${owner}/${volume}`, which drops the selector every
+  // `davClient` call carries, and `useVolumeFiles` re-keys on `backend`: the
+  // PROPFIND then goes out with no selector and the router answers
+  // `409 Multiple backends match`, so a trip back to the bucket home failed
+  // the listing instead. A single-backend account never sees it, which is how
+  // it survived review.
+  //
+  // There is deliberately no `onClick` here. The target already means "root
+  // path, files tab, selector kept" — the only two setters a handler would
+  // call — and an `onClick` on a `Link` runs even on a ⌘-click or a
+  // middle-click, where the link declines to navigate but the handler does not:
+  // the open tab would be navigated away while the new tab opened.
+  const crumbHref = withBackendSelector(`/${owner}/${volume}`, backend);
+
   return (
     <div>
       <ContextBar
         crumb={
           <span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">
-            <Link
-              to={`/${owner}/${volume}`}
-              onClick={() => {
-                setTab('files');
-                setPath('');
-              }}
-              className="hover:text-[var(--color-accent)]"
-            >
+            <Link to={crumbHref} className="hover:text-[var(--color-accent)]">
               {owner}/{volume}
             </Link>
             {activeTab === 'files' &&
