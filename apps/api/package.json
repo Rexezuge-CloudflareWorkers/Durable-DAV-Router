@@ -13,7 +13,7 @@
     "@durable-dav-router/shared": "workspace:*",
     "@durable-dav-router/webdav": "workspace:*",
     "chanfana": "3.4.0",
-    "hono": "4.13.12"
+    "hono": "4.13.13"
   },
   "devDependencies": {
     "@types/node": "26.6.3",
