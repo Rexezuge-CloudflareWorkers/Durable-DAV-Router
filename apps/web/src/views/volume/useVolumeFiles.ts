@@ -51,7 +51,7 @@ function useVolumeFiles(
   const [entries, setEntries] = useState<DavEntry[]>([]);
   const [status, setStatus] = useState<Status>('loading');
   const [reloadKey, setReloadKey] = useState(0);
-  const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [paging, setPaging] = useState<Paging>(UNPAGED);
 
   useEffect(() => {
@@ -74,7 +74,7 @@ function useVolumeFiles(
       } catch (error) {
         if (cancelled) return;
         setStatus('missing');
-        setNotice({ type: 'error', text: toLocalizedErrorMessage(t, error, 'errors.failedToLoadFiles', 'Failed To Load Files.') });
+        setNotice({ kind: 'error', message: toLocalizedErrorMessage(t, error, 'errors.failedToLoadFiles', 'Failed To Load Files.') });
       }
     };
     void run();

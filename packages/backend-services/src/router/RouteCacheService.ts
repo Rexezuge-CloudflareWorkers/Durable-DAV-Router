@@ -1,6 +1,6 @@
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
-import { clampTtl } from '@durable-dav-router/backend-runtime/kv';
-import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
+import { clampTtl } from '@rexezuge/runtime';
+import type { KvCache } from '@rexezuge/runtime';
 
 // KV lookaside for owner/volume → owning backend (`davRoute` domain).
 //
@@ -103,7 +103,7 @@ async function getCachedRoute(kv: KvCache | null | undefined, owner: string, vol
   if (hit) return hit;
   if (!kv) return null;
   try {
-    const raw = await kv.getJson<unknown>('davRoute', routeCacheParts(owner, volume));
+    const raw = await kv.getJson<unknown>('metadata', routeCacheParts(owner, volume));
     if (!isCachedRoute(raw)) return null;
     setL1(owner, volume, raw);
     return raw;
@@ -124,8 +124,8 @@ async function putCachedRoute(
   setL1(owner, volume, route);
   if (!kv) return;
   try {
-    const ttl = clampTtl(opts?.ttlSeconds ?? getRouteCacheTtlSeconds(env), 'davRoute');
-    await kv.putJson('davRoute', routeCacheParts(owner, volume), route, ttl === undefined ? undefined : { ttlSeconds: ttl });
+    const ttl = clampTtl(opts?.ttlSeconds ?? getRouteCacheTtlSeconds(env), 'metadata');
+    await kv.putJson('metadata', routeCacheParts(owner, volume), route, { ttlSeconds: ttl });
   } catch {
     // Best-effort population; misses just re-probe.
   }
@@ -135,7 +135,7 @@ async function invalidateCachedRoute(kv: KvCache | null | undefined, owner: stri
   delL1(owner, volume);
   if (!kv) return;
   try {
-    await kv.del('davRoute', routeCacheParts(owner, volume));
+    await kv.del('metadata', routeCacheParts(owner, volume));
   } catch {
     // Fail-soft; TTL + self-heal bound the stale window.
   }
@@ -154,8 +154,8 @@ async function invalidateCachedRouteIfPresent(kv: KvCache | null | undefined, ow
   delL1(owner, volume);
   if (!kv) return;
   try {
-    if ((await kv.getJson('davRoute', routeCacheParts(owner, volume))) === null) return;
-    await kv.del('davRoute', routeCacheParts(owner, volume));
+    if ((await kv.getJson('metadata', routeCacheParts(owner, volume))) === null) return;
+    await kv.del('metadata', routeCacheParts(owner, volume));
   } catch {
     // Fail-soft; TTL + self-heal bound the stale window.
   }
@@ -173,7 +173,7 @@ async function purgeCachedRoutes(kv: KvCache | null | undefined): Promise<number
   clearL1();
   if (!kv) return 0;
   try {
-    return await kv.purgePrefix('davRoute');
+    return await kv.purgePrefix('metadata');
   } catch {
     return 0;
   }

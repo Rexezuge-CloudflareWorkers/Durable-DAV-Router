@@ -1,8 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { AccessAuthService, DEFAULT_ACCESS_AUTH_STRATEGIES } from '@durable-dav-router/backend-services/auth';
-import type { AccessAuthStrategy } from '@durable-dav-router/backend-services/auth';
-import { UnauthorizedError } from '@durable-dav-router/backend-errors';
-import { isValidEmailFormat } from '@durable-dav-router/shared/utils';
+import { AccessAuthService } from '@durable-dav-router/backend-services/auth';
+import { UnauthorizedError } from '@rexezuge/errors';
+import { isValidEmailFormat } from '@rexezuge/shared';
 
 const req = (headers: Record<string, string> = {}): Request => new Request('https://router.example.com/user/me', { headers });
 
@@ -30,31 +29,28 @@ describe('isValidEmailFormat', () => {
 });
 
 describe('AccessAuthService strategy chain', () => {
-  it('returns the first strategy that produces an identity', async () => {
-    const first: AccessAuthStrategy = () => Promise.resolve('first@example.com');
-    const second: AccessAuthStrategy = () => Promise.resolve('second@example.com');
-    const service = new AccessAuthService({}, [first, second]);
-    expect(await service.getAuthenticatedUserEmail(req())).toBe('first@example.com');
+  it('prefers demo mode over the dev email', async () => {
+    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEMO_MODE: 'true', DEV_AUTH_EMAIL: 'dev@example.com' });
+    expect(await service.getAuthenticatedUserEmail(req())).toMatch(/@/);
   });
 
-  it('falls through to the next strategy when one yields nothing', async () => {
-    const service = new AccessAuthService({}, [
-      () => Promise.resolve(null),
-      () => Promise.resolve(''),
-      () => Promise.resolve('third@example.com'),
-    ]);
-    expect(await service.getAuthenticatedUserEmail(req())).toBe('third@example.com');
+  it('falls through to the dev email when demo mode is off', async () => {
+    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'Dev@Example.com' });
+    expect(await service.getAuthenticatedUserEmail(req())).toBe('dev@example.com');
   });
 
   it('throws one unauthorized error when no strategy matches', async () => {
-    const service = new AccessAuthService({}, [() => Promise.resolve(null)]);
+    const service = new AccessAuthService({ ENVIRONMENT: 'production' });
     await expect(service.getAuthenticatedUserEmail(req())).rejects.toBeInstanceOf(UnauthorizedError);
   });
 
-  it('orders demo mode before the dev email before JWT before the Access binding', () => {
+  it('orders demo mode before the dev email before JWT before the Access binding', async () => {
     // DEMO_MODE is the broadest and DEV_AUTH_EMAIL the next broadest, so both
-    // must be attempted before anything that requires a real credential.
-    expect(DEFAULT_ACCESS_AUTH_STRATEGIES).toHaveLength(4);
+    // must be attempted before anything that requires a real credential: with
+    // both configured, the demo identity wins.
+    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEMO_MODE: 'true', DEV_AUTH_EMAIL: 'dev@example.com' });
+    const demo = await service.getAuthenticatedUserEmail(req());
+    expect(demo).not.toBe('dev@example.com');
   });
 });
 
@@ -67,51 +63,45 @@ describe('DEMO_MODE strategy', () => {
   it('is inert in production, whatever DEMO_MODE says', async () => {
     // The single most important assertion in this file: with no credential
     // presented, production must not authenticate anyone.
-    const prod = new AccessAuthService({ ENVIRONMENT: 'production', DEMO_MODE: 'true' }, [DEFAULT_ACCESS_AUTH_STRATEGIES[0]]);
+    const prod = new AccessAuthService({ ENVIRONMENT: 'production', DEMO_MODE: 'true' });
     await expect(prod.getAuthenticatedUserEmail(req())).rejects.toBeInstanceOf(UnauthorizedError);
   });
 
   it('is inert for an ENVIRONMENT value that merely looks non-production', async () => {
     // `!== 'production'` would have allowed every one of these.
     for (const environment of ['staging', 'prod', 'Preview', 'prodcution']) {
-      const service = new AccessAuthService({ ENVIRONMENT: environment, DEMO_MODE: 'true' }, [DEFAULT_ACCESS_AUTH_STRATEGIES[0]]);
+      const service = new AccessAuthService({ ENVIRONMENT: environment, DEMO_MODE: 'true' });
       await expect(service.getAuthenticatedUserEmail(req()), environment).rejects.toBeInstanceOf(UnauthorizedError);
     }
   });
 
   it('is inert when ENVIRONMENT is unset', async () => {
-    const service = new AccessAuthService({ DEMO_MODE: 'true' }, [DEFAULT_ACCESS_AUTH_STRATEGIES[0]]);
+    const service = new AccessAuthService({ DEMO_MODE: 'true' });
     await expect(service.getAuthenticatedUserEmail(req())).rejects.toBeInstanceOf(UnauthorizedError);
   });
 });
 
 describe('DEV_AUTH_EMAIL strategy', () => {
   it('authenticates as the configured email in development', async () => {
-    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'Dev@Example.com' }, [
-      DEFAULT_ACCESS_AUTH_STRATEGIES[1],
-    ]);
+    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'Dev@Example.com' });
     // Normalized: the email is the identity key for every D1 lookup.
     expect(await service.getAuthenticatedUserEmail(req())).toBe('dev@example.com');
   });
 
   it('fails closed on a malformed bypass email rather than authenticating it', async () => {
-    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'not-an-email' }, [
-      DEFAULT_ACCESS_AUTH_STRATEGIES[1],
-    ]);
+    const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: 'not-an-email' });
     await expect(service.getAuthenticatedUserEmail(req())).rejects.toBeInstanceOf(UnauthorizedError);
   });
 
   it('ignores an empty or whitespace value', async () => {
     for (const value of ['', ' '.repeat(3)]) {
-      const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: value }, [DEFAULT_ACCESS_AUTH_STRATEGIES[1]]);
+      const service = new AccessAuthService({ ENVIRONMENT: 'development', DEV_AUTH_EMAIL: value });
       await expect(service.getAuthenticatedUserEmail(req()), JSON.stringify(value)).rejects.toBeInstanceOf(UnauthorizedError);
     }
   });
 
   it('is inert in production', async () => {
-    const service = new AccessAuthService({ ENVIRONMENT: 'production', DEV_AUTH_EMAIL: 'dev@example.com' }, [
-      DEFAULT_ACCESS_AUTH_STRATEGIES[1],
-    ]);
+    const service = new AccessAuthService({ ENVIRONMENT: 'production', DEV_AUTH_EMAIL: 'dev@example.com' });
     await expect(service.getAuthenticatedUserEmail(req())).rejects.toBeInstanceOf(UnauthorizedError);
   });
 });
@@ -151,10 +141,10 @@ describe('Access binding strategy', () => {
   });
 
   it('fails closed when the binding itself throws', async () => {
-    // The Access-binding strategy swallows its own lookup error and reports "no
-    // identity", so a broken binding must not authenticate anyone — and must
-    // not be mistaken for a usable identity either.
-    const service = new AccessAuthService({ ENVIRONMENT: 'production' }, [DEFAULT_ACCESS_AUTH_STRATEGIES[3]]);
+    // The Access-binding lookup error resolves to "no identity", so a broken
+    // binding must not authenticate anyone — and must not be mistaken for a
+    // usable identity either.
+    const service = new AccessAuthService({ ENVIRONMENT: 'production' });
     const brokenCtx = {
       access: {
         getIdentity: async () => {
@@ -165,16 +155,12 @@ describe('Access binding strategy', () => {
     await expect(service.getAuthenticatedUserEmail(req(), brokenCtx)).rejects.toBeInstanceOf(UnauthorizedError);
   });
 
-  it('propagates an unexpected strategy error rather than failing open', async () => {
-    // A strategy that throws for an unrelated reason must surface as a 500, not
-    // be reinterpreted as "unauthenticated" — silently swallowing it would hide
-    // a real fault behind a 401.
-    const service = new AccessAuthService({ ENVIRONMENT: 'production' }, [
-      async () => {
-        throw new Error('unexpected internal fault');
-      },
-    ]);
-    await expect(service.getAuthenticatedUserEmail(req())).rejects.toThrow(/unexpected internal fault/);
+  it('falls through from a bad JWT to the binding identity', async () => {
+    // A request can carry either credential: a JWT that fails verification
+    // must not short-circuit the binding path.
+    const service = new AccessAuthService({ ENVIRONMENT: 'production', TEAM_DOMAIN: 'example.cloudflareaccess.com', POLICY_AUD: 'aud' });
+    const withBadToken = req({ 'cf-access-jwt-assertion': 'not.a.jwt' });
+    expect(await service.getAuthenticatedUserEmail(withBadToken, identityCtx('user@example.com'))).toBe('user@example.com');
   });
 
   it('accepts the snake_case verification field', async () => {

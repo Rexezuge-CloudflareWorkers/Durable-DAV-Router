@@ -10,9 +10,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
 import { Input } from '../ui/Input';
-import { RefreshButton } from '../shared/RefreshButton';
-import { ReadOnlyField } from '../shared/ReadOnlyField';
-import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { RefreshButton, ReadOnlyField, ConfirmDeleteModal } from '@rexezuge/web';
 
 export function VolumeCredentialsCard({
   owner,
@@ -22,7 +20,7 @@ export function VolumeCredentialsCard({
 }: {
   owner: string;
   volume: string;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
   backend?: string | null;
 }) {
   const { t } = useTranslation();
@@ -122,7 +120,7 @@ const toggleReadOnly = async (cred: BucketCredential) => {
     <Card>
       <CardHeader>
         <CardTitle>{t('credentials.bucketCredentials', 'Bucket Credentials')}</CardTitle>
-        <RefreshButton onRefresh={refresh} loading={loading} />
+        <RefreshButton onRefresh={refresh} loading={loading} label={t('common.refresh', 'Refresh')} />
       </CardHeader>
       <p className="text-sm text-[var(--color-text-secondary)] mb-3">
         {t('credentials.hint', 'Each Credential Unlocks Only This Bucket. Use The Generated Username And Password As WebDAV Basic Auth.')}
@@ -160,8 +158,8 @@ const toggleReadOnly = async (cred: BucketCredential) => {
       </form>
       {lastCreated && (
         <div className="mt-4 space-y-2">
-          <ReadOnlyField label={t('credentials.newUsername', 'New Username')} value={lastCreated.username} showCopy />
-          <ReadOnlyField label={t('credentials.newPassword', 'New Password (Copy Once)')} value={lastCreated.password} showCopy />
+          <ReadOnlyField label={t('credentials.newUsername', 'New Username')} value={lastCreated.username} showCopy copyLabel={t('common.copyToClipboard', 'Copy To Clipboard')} />
+          <ReadOnlyField label={t('credentials.newPassword', 'New Password (Copy Once)')} value={lastCreated.password} showCopy copyLabel={t('common.copyToClipboard', 'Copy To Clipboard')} />
           {lastCreated.readOnly && <Badge variant="info">{t('credentials.readOnlyBadge', 'Read-Only Access')}</Badge>}
         </div>
       )}
@@ -196,8 +194,10 @@ const toggleReadOnly = async (cred: BucketCredential) => {
       )}
       {revoking && (
         <ConfirmDeleteModal
-          title={t('credentials.revokeCredential', 'Revoke Credential')}
-          displayName={revoking.name}
+          ariaLabel={t('credentials.revokeCredential', 'Revoke Credential')}
+          message={t('common.deleteConfirm', 'Delete {{name}}? This Cannot Be Undone.', { name: revoking.name })}
+          confirmLabel={t('common.delete', 'Delete')}
+          cancelLabel={t('common.cancel', 'Cancel')}
           onConfirm={() => void confirmRevoke()}
           onCancel={() => setRevoking(null)}
         />

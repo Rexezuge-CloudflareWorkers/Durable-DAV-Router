@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearRouteCacheL1, MAX_PROBE_CANDIDATES, PROBE_AUTHORIZATION } from '@durable-dav-router/backend-services/router';
-import { KvCache } from '@durable-dav-router/backend-runtime/kv';
+import { KvCache } from '@rexezuge/runtime';
 import { registerRouterDavProxyRoutes } from '../apps/api/src/workers/routes/RouterDavProxyRoutes';
 
 interface CapturedFetch {
@@ -672,7 +672,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // right backend, so there is no value to write — a delete here buys a
     // re-probe on the next request and nothing else.
     stubProbesAndFailingForwards({ 'https://a.example.com': 404, 'https://b.example.com': 207 });
-    const kv = countingKv({ 'davRoute:v1:owner:root404': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
+    const kv = countingKv({ 'metadata:v1:owner:root404': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
     const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/root404', 'PROPFIND');
     const statuses = await repeatAcrossIsolates(4, request);
     expect(statuses).toEqual([404, 404, 404, 404]);
@@ -684,12 +684,12 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // `put` is an upsert, so the stale value never needed deleting first. The
     // pair of operations is the whole point: one write, and it is a real change.
     stubProbesAndFailingForwards({ 'https://a.example.com': 207, 'https://b.example.com': 404 });
-    const kv = countingKv({ 'davRoute:v1:owner:moved': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
+    const kv = countingKv({ 'metadata:v1:owner:moved': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
     const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/moved', 'PROPFIND');
     await repeatAcrossIsolates(2, request);
     expect(kv.ops.put).toBe(1);
     expect(kv.ops.delete).toBe(0);
-    expect(JSON.parse(kv.store.get('davRoute:v1:owner:moved') ?? '{}')).toMatchObject({
+    expect(JSON.parse(kv.store.get('metadata:v1:owner:moved') ?? '{}')).toMatchObject({
       backendId: '1',
       baseUrl: 'https://a.example.com',
     });
@@ -699,7 +699,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // Afterwards there is no entry left to evict, so a client that keeps asking
     // for a deleted bucket costs a single delete rather than one per request.
     stubProbesAndFailingForwards({});
-    const kv = countingKv({ 'davRoute:v1:owner:nobody': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
+    const kv = countingKv({ 'metadata:v1:owner:nobody': JSON.stringify({ backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' }) });
     const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/nobody', 'PROPFIND');
     const statuses = await repeatAcrossIsolates(3, request);
     expect(statuses).toEqual([404, 404, 404]);
@@ -725,7 +725,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // in the *account* for a single user's save.
     stubEverythingAnswers207();
     const kv = countingKv({
-      'davRoute:v1:owner:edited': JSON.stringify({ backendId: '1', slug: 'solo', baseUrl: 'https://old.example.com' }),
+      'metadata:v1:owner:edited': JSON.stringify({ backendId: '1', slug: 'solo', baseUrl: 'https://old.example.com' }),
     });
     const request = proxyFor(kv, fakeDb({ backends: SOLO }), 'https://router.example.com/owner/edited');
     const statuses = await repeatAcrossIsolates(1, request);
@@ -738,7 +738,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
   it('drops an entry naming a deleted backend, and forwards to the survivor', async () => {
     stubEverythingAnswers207();
     const kv = countingKv({
-      'davRoute:v1:owner:orphaned': JSON.stringify({ backendId: '99', slug: 'gone', baseUrl: 'https://gone.example.com' }),
+      'metadata:v1:owner:orphaned': JSON.stringify({ backendId: '99', slug: 'gone', baseUrl: 'https://gone.example.com' }),
     });
     const request = proxyFor(kv, fakeDb({ backends: SOLO }), 'https://router.example.com/owner/orphaned');
     const res = await request();
@@ -754,7 +754,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // deliberately excluded from the staleness set for the same reason.
     stubProbesUnavailableForwards404();
     const kv = countingKv({
-      'davRoute:v1:owner:blip': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
+      'metadata:v1:owner:blip': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
     });
     const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/blip', 'PROPFIND');
     const statuses = await repeatAcrossIsolates(1, request);
@@ -771,7 +771,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // is wrong regardless and has to go.
     stubProbesUnavailableForwards404();
     const kv = countingKv({
-      'davRoute:v1:owner:blip': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://edited.example.com' }),
+      'metadata:v1:owner:blip': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://edited.example.com' }),
     });
     const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/blip', 'PROPFIND');
     const statuses = await repeatAcrossIsolates(1, request);
@@ -788,7 +788,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // daily write budget in ~40 minutes while answering every request correctly.
     stubForwardStatus(403);
     const kv = countingKv({
-      'davRoute:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
+      'metadata:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
     });
     const request = proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/photos/notes.txt', 'PUT');
     const statuses = await repeatAcrossIsolates(6, request);
@@ -807,7 +807,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // either one would be invisible to a status-only test.
     const calls = stubForwardStatus(403);
     const kv = countingKv({
-      'davRoute:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
+      'metadata:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
     });
     const res = await proxyFor(kv, fakeDb({ backends: BACKENDS_TWO }), 'https://router.example.com/owner/photos/notes.txt', 'PUT')();
 
@@ -847,7 +847,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     const first = await handler(ctx());
     expect(first.status).toBe(207);
     expect(probeCount(calls)).toBe(2);
-    expect([...kv.store.keys()].some((k) => k.startsWith('davRoute:'))).toBe(true);
+    expect([...kv.store.keys()].some((k) => k.startsWith('metadata:'))).toBe(true);
     const second = await handler(ctx());
     expect(second.status).toBe(207);
     // Cache hit: one more forward, zero new probes.
@@ -939,7 +939,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     const kv = makeFakeKv();
     // Seed the stale entry directly (as if an earlier probe resolved to b).
     const seeder = new KvCache(kv as never);
-    await seeder.putJson('davRoute', ['owner', 'movedvol'], { backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' });
+    await seeder.putJson('metadata', ['owner', 'movedvol'], { backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' });
     const db = fakeDb({ backends: BACKENDS_TWO });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
@@ -1094,7 +1094,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     });
     const kv = makeFakeKv();
     const seeder = new KvCache(kv as never);
-    await seeder.putJson('davRoute', ['owner', 'blipvol'], { backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' });
+    await seeder.putJson('metadata', ['owner', 'blipvol'], { backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' });
     const db = fakeDb({ backends: BACKENDS_TWO });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
@@ -1131,7 +1131,7 @@ describe('RouterDavProxyRoutes KV route cache', () => {
     });
     const kv = makeFakeKv();
     const seeder = new KvCache(kv as never);
-    await seeder.putJson('davRoute', ['owner', 'mvvol'], { backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' });
+    await seeder.putJson('metadata', ['owner', 'mvvol'], { backendId: '2', slug: 'b', baseUrl: 'https://b.example.com' });
     const db = fakeDb({ backends: BACKENDS_TWO });
     const { app, routes } = stubApp();
     registerRouterDavProxyRoutes(app as never);
@@ -1355,7 +1355,7 @@ describe('RouterDavProxyRoutes D1 faults are not "not found"', () => {
     stubEverythingAnswers207();
     const db = faultyDb({ backends: SOLO, fault: 'byUsernameCi' });
     const kv = countingKv({
-      'davRoute:v1:owner:outage': JSON.stringify({ backendId: '1', slug: 'solo', baseUrl: 'https://backend.example.com' }),
+      'metadata:v1:owner:outage': JSON.stringify({ backendId: '1', slug: 'solo', baseUrl: 'https://backend.example.com' }),
     });
     const request = proxySubpathRequest(kv, db, 'https://router.example.com/owner/outage/file.txt');
     await repeatAcrossIsolates(3, request);
@@ -1374,7 +1374,7 @@ describe('RouterDavProxyRoutes D1 faults are not "not found"', () => {
     stubEverythingAnswers207();
     const db = faultyDb({ backends: SOLO, fault: 'byId' });
     const kv = countingKv({
-      'davRoute:v1:owner:unprovable': JSON.stringify({ backendId: '99', slug: 'gone', baseUrl: 'https://gone.example.com' }),
+      'metadata:v1:owner:unprovable': JSON.stringify({ backendId: '99', slug: 'gone', baseUrl: 'https://gone.example.com' }),
     });
     const request = proxySubpathRequest(kv, db, 'https://router.example.com/owner/unprovable/file.txt');
     const statuses = await repeatAcrossIsolates(3, request);

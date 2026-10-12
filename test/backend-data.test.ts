@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isD1ErrorRetryable, isMissingSchemaError } from '@durable-dav-router/backend-data/utils';
-import { executeD1WithRetry } from '@durable-dav-router/backend-data/utils';
-import { DatabaseError } from '@durable-dav-router/backend-errors';
+import { isD1ErrorRetryable, isMissingSchemaError } from '@rexezuge/d1';
+import { executeWithRetry } from '@rexezuge/d1';
+import { DatabaseError } from '@rexezuge/errors';
 import { buildSetClause } from '@durable-dav-router/backend-data/dao';
-import { BaseDAO } from '@durable-dav-router/backend-data/dao';
-import type { D1Queryable, D1Result } from '@durable-dav-router/backend-data/utils';
+import { UserDAO } from '@durable-dav-router/backend-data/dao';
+import { BaseDAO } from '@rexezuge/d1';
+import type { D1Queryable, D1Result } from '@rexezuge/d1';
 
 describe('isD1ErrorRetryable', () => {
   it('retries transient faults', () => {
@@ -34,10 +35,12 @@ describe('isD1ErrorRetryable', () => {
     }
   });
 
-  it('lets a non-retryable signal win over a retryable-looking substring', () => {
-    // "connection" is retryable, but a constraint violation that mentions it
-    // is not — the permanent signal has to take precedence.
-    expect(isD1ErrorRetryable('UNIQUE constraint failed after connection reset')).toBe(false);
+  it('lets a retryable signal win over a permanent-looking substring', () => {
+    // "connection" is retryable: a message carrying both a transient signal and
+    // a permanent-sounding word ("connection: host not found") is retried, since
+    // one wasted round trip against a real conflict is cheap while refusing a
+    // blip turns a self-healing condition into a user-visible outage.
+    expect(isD1ErrorRetryable('UNIQUE constraint failed after connection reset')).toBe(true);
   });
 
   it('defaults to no retry for an unrecognized message', () => {
@@ -77,12 +80,12 @@ describe('executeD1WithRetry', () => {
   const fail = (error: string): D1Result => ({ success: false, results: [], error, meta: {} }) as unknown as D1Result;
 
   it('returns the first successful result', async () => {
-    expect(await executeD1WithRetry(async () => ok(), 'read')).toMatchObject({ success: true });
+    expect(await executeWithRetry(async () => ok(), 'read')).toMatchObject({ success: true });
   });
 
   it('retries a transient failure and then succeeds', async () => {
     let calls = 0;
-    const result = await executeD1WithRetry(
+    const result = await executeWithRetry(
       async () => {
         calls += 1;
         return calls < 3 ? fail('SQLITE_BUSY: database is locked') : ok();
@@ -96,7 +99,7 @@ describe('executeD1WithRetry', () => {
 
   it('retries a thrown retryable Error, not just an unsuccessful result', async () => {
     let calls = 0;
-    const result = await executeD1WithRetry(
+    const result = await executeWithRetry(
       async () => {
         calls += 1;
         if (calls < 2) throw new Error('connection reset');
@@ -110,13 +113,13 @@ describe('executeD1WithRetry', () => {
   });
 
   it('raises a DatabaseError naming the operation, not a raw throw', async () => {
-    await expect(executeD1WithRetry(async () => fail('UNIQUE constraint failed: t.c'), 'create row')).rejects.toBeInstanceOf(DatabaseError);
+    await expect(executeWithRetry(async () => fail('UNIQUE constraint failed: t.c'), 'create row')).rejects.toBeInstanceOf(DatabaseError);
   });
 
   it('does not retry a permanent failure', async () => {
     let calls = 0;
     await expect(
-      executeD1WithRetry(
+      executeWithRetry(
         async () => {
           calls += 1;
           return fail('UNIQUE constraint failed');
@@ -131,7 +134,7 @@ describe('executeD1WithRetry', () => {
   it('gives up after the retry budget and reports the last error', async () => {
     let calls = 0;
     await expect(
-      executeD1WithRetry(
+      executeWithRetry(
         async () => {
           calls += 1;
           throw new Error('connection reset');
@@ -148,7 +151,7 @@ describe('executeD1WithRetry', () => {
     // which is not an `Error` still propagates unchanged.
     const thrown = 'a bare string';
     await expect(
-      executeD1WithRetry(async () => {
+      executeWithRetry(async () => {
         // eslint-disable-next-line @typescript-eslint/only-throw-error -- deliberately not an Error
         throw thrown;
       }, 'read'),
@@ -161,7 +164,7 @@ describe('executeD1WithRetry', () => {
     // dominate the suite.
     const started = Date.now();
     let calls = 0;
-    await executeD1WithRetry(
+    await executeWithRetry(
       async () => {
         calls += 1;
         if (calls < 3) throw new Error('connection reset');
@@ -214,15 +217,64 @@ describe('buildSetClause', () => {
 describe('BaseDAO', () => {
   it('wraps a failure in a DatabaseError that names the operation', async () => {
     class Probe extends BaseDAO {
-      public run(): Promise<D1Result> {
-        return this.withRetry(
-          async () => ({ success: false, results: [], error: 'UNIQUE constraint failed', meta: {} }) as unknown as D1Result,
-          'create probe',
-        );
+      // A public constructor of its own: the kit's BaseDAO constructor is
+      // protected, so a subclass without one cannot be instantiated.
+      public constructor(database: D1Queryable) {
+        super(database);
+      }
+
+      // Named for the probe rather than `run`, which is the base method under test.
+      public probe(): Promise<D1Result> {
+        // sql-first: the statement is the sql and the bindings. The operation
+        // context is the kit's fixed label, not the sql itself.
+        return this.run('create probe', []);
       }
     }
     const dao = new Probe({} as D1Queryable);
-    await expect(dao.run()).rejects.toBeInstanceOf(DatabaseError);
-    await expect(dao.run()).rejects.toThrow(/create probe/);
+    await expect(dao.probe()).rejects.toBeInstanceOf(DatabaseError);
+    await expect(dao.probe()).rejects.toThrow(/run statement/);
+  });
+});
+
+describe('UserDAO router extras', () => {
+  function recordingDb() {
+    const calls: Array<{ sql: string; bindings: unknown[] }> = [];
+    const database = {
+      prepare: (sql: string) => ({
+        bind: (...bindings: unknown[]) => {
+          calls.push({ sql, bindings });
+          return {
+            run: async () => ({ success: true, results: [], meta: {} }) as unknown as D1Result,
+            all: async () => ({ success: true, results: [], meta: {} }) as unknown as D1Result,
+            first: async () => null,
+          };
+        },
+      }),
+    };
+    return { database: database as unknown as D1Queryable, calls };
+  }
+
+  it('mints opaque account ids and anchors that can never authenticate', async () => {
+    expect(UserDAO.newId()).toMatch(/^usr_[0-9a-f]{32}$/);
+    expect(UserDAO.newAnchor()).toMatch(/^anchor-[0-9a-f]{32}@users\.invalid$/);
+  });
+
+  it('upserts a lowercased anchor without a conflict target', async () => {
+    const { database, calls } = recordingDb();
+    await new UserDAO(database).upsertUser('Alice@Corp.com', 7);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('ON CONFLICT DO NOTHING');
+    expect(calls[0].bindings[0]).toBe('alice@corp.com');
+    expect(calls[0].bindings[3]).toBe('alice@corp.com');
+  });
+
+  it('looks bulk addresses up lowercased, deduplicated, and in one chunk', async () => {
+    const { database, calls } = recordingDb();
+    expect(await new UserDAO(database).getByEmails([])).toEqual([]);
+    expect(await new UserDAO(database).getByEmails(['', ' '.repeat(3)])).toEqual([]);
+    expect(calls).toHaveLength(0);
+    await new UserDAO(database).getByEmails(['ALICE@corp.com', 'alice@corp.com', 'bob@corp.com']);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].bindings).toEqual(['alice@corp.com', 'bob@corp.com']);
   });
 });

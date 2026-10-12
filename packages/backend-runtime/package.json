@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@durable-dav-router/shared": "workspace:*"
+    "@durable-dav-router/shared": "workspace:*",
+    "@rexezuge/runtime": "^1.2.0"
   },
   "devDependencies": {
     "@types/node": "26.6.4",

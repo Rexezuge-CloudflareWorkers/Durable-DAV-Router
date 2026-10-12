@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { AuthConfig } from '@durable-dav-router/backend-runtime/config';
+import { EnvParser } from '@rexezuge/runtime';
 import { RouterLimits } from '@durable-dav-router/backend-runtime/config';
-import { EnvParser } from '@durable-dav-router/backend-runtime/config';
 
 // `fromEnv` takes `unknown` on purpose: it is called from fail-soft paths where
 // the env object may not be shaped as expected, and must not throw there. The
@@ -30,31 +30,35 @@ describe('EnvParser', () => {
     expect(EnvParser.isValidPositiveInt({ N: 'nope' }, 'N')).toBe(false);
   });
 
-  it('accepts a boolean however it is spelled, and nothing else', () => {
-    // Case and surrounding whitespace are formatting, not meaning: `TRUE` and
-    // `" true "` are the same answer as `true`. Everything that is not `true`
-    // or `false` is *not a boolean*, and falls through to the caller's default
-    // rather than being silently read as an opt-out.
+  it('is presence-of-"true", and nothing else', () => {
+    // The kit reads a boolean as the exact string `true`: anything else is
+    // `false` — never "absent means true". Case included: `TRUE` is not the
+    // value the dashboard writes, and treating it as set would let formatting
+    // enable a flag nobody meant to set.
     expect(EnvParser.boolean({ B: 'true' }, 'B', 'false')).toBe(true);
-    expect(EnvParser.boolean({ B: 'TRUE' }, 'B', 'false')).toBe(true);
+    expect(EnvParser.boolean({ B: 'TRUE' }, 'B', 'false')).toBe(false);
     expect(EnvParser.boolean({ B: '1' }, 'B', 'false')).toBe(false);
     expect(EnvParser.boolean({ B: 'yes' }, 'B', 'false')).toBe(false);
     expect(EnvParser.boolean({ B: 'on' }, 'B', 'false')).toBe(false);
-    expect(EnvParser.boolean({ B: '' }, 'B', 'true')).toBe(true);
+    // Present-but-empty is still a value, not an absence: only an unset key
+    // falls through to the default.
+    expect(EnvParser.boolean({ B: '' }, 'B', 'true')).toBe(false);
     expect(EnvParser.boolean({}, 'B', 'true')).toBe(true);
     expect(EnvParser.boolean({}, 'B', 'false')).toBe(false);
   });
 
   it('tells a flag apart from an unrecognised value', () => {
-    // `optionalBoolean` is the tri-state reader that lets a caller distinguish
-    // "explicitly off" from "not a boolean at all" — the distinction
-    // `ALLOW_PRIVATE_BACKEND_HOSTS` needs, since its unset case means "follow the
-    // environment" rather than "denied".
-    expect(EnvParser.optionalBoolean({ B: 'true' }, 'B')).toBe(true);
-    expect(EnvParser.optionalBoolean({ B: ' FALSE ' }, 'B')).toBe(false);
-    expect(EnvParser.optionalBoolean({ B: 'banana' }, 'B')).toBeNull();
-    expect(EnvParser.optionalBoolean({ B: ' '.repeat(3) }, 'B')).toBeNull();
-    expect(EnvParser.optionalBoolean({}, 'B')).toBeNull();
+    // The tri-state read lets a caller distinguish "explicitly off" from "not a
+    // boolean at all" — the distinction `ALLOW_PRIVATE_BACKEND_HOSTS` needs,
+    // since its unset case means "follow the environment" rather than "denied".
+    // It is read through the getter rather than a parser method: the kit's
+    // `EnvParser` reads with a default, the opposite contract, so the
+    // tri-state is this repo's and is reached the way `BackendService` reaches it.
+    expect(AppConfiguration.fromEnv({ ALLOW_PRIVATE_BACKEND_HOSTS: 'true' }).getAllowPrivateBackendHosts()).toBe(true);
+    expect(AppConfiguration.fromEnv({ ALLOW_PRIVATE_BACKEND_HOSTS: ' FALSE ' }).getAllowPrivateBackendHosts()).toBe(false);
+    expect(AppConfiguration.fromEnv({ ALLOW_PRIVATE_BACKEND_HOSTS: 'banana' }).getAllowPrivateBackendHosts()).toBeNull();
+    expect(AppConfiguration.fromEnv({ ALLOW_PRIVATE_BACKEND_HOSTS: ' '.repeat(3) }).getAllowPrivateBackendHosts()).toBeNull();
+    expect(AppConfiguration.fromEnv({}).getAllowPrivateBackendHosts()).toBeNull();
   });
 });
 
@@ -279,7 +283,7 @@ describe('environment declarations', () => {
   Every key the config layer reads through `EnvParser`.
   */
   function keysReadInConfigLayer(): Set<string> {
-    const source = ['config/AppConfiguration.ts', 'config/EnvParser.ts', 'config/sections/AuthConfig.ts', 'config/sections/RouterLimits.ts']
+    const source = ['config/AppConfiguration.ts', 'config/sections/AuthConfig.ts', 'config/sections/RouterLimits.ts']
       .map((file) => readFileSync(path.join(backendRuntimeSrc, file), 'utf8'))
       .join('\n');
     const keys = new Set<string>();
@@ -323,8 +327,8 @@ describe('environment declarations', () => {
     // documentation gap rather than a tidiness one, and because it is tri-state:
     // unset means "follow the environment", so it can never be a boolean.
     expect(declaredIn('config/ServiceEnv.ts', 'ServiceEnv').has('ALLOW_PRIVATE_BACKEND_HOSTS')).toBe(true);
-    expect(EnvParser.optionalBoolean({ ALLOW_PRIVATE_BACKEND_HOSTS: 'true' }, 'ALLOW_PRIVATE_BACKEND_HOSTS')).toBe(true);
-    expect(EnvParser.optionalBoolean({}, 'ALLOW_PRIVATE_BACKEND_HOSTS')).toBeNull();
+    expect(AppConfiguration.fromEnv({ ALLOW_PRIVATE_BACKEND_HOSTS: 'true' }).getAllowPrivateBackendHosts()).toBe(true);
+    expect(AppConfiguration.fromEnv({}).getAllowPrivateBackendHosts()).toBeNull();
   });
 });
 

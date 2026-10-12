@@ -1,6 +1,6 @@
 // Service bindings for the per-request composition root.
 import type { RouterBackendDAO, UserDAO, UserEmailDAO } from '@durable-dav-router/backend-data/dao';
-import type { Container, Token } from '@durable-dav-router/backend-runtime/di';
+import type { Container, Token } from '@rexezuge/runtime';
 import { Tokens } from './tokens';
 import type { RequestScopeEnv } from './serviceFactory';
 import type { DaoThunks } from './serviceBindings/daoThunks';

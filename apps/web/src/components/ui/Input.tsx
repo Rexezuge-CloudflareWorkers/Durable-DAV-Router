@@ -1,4 +1,4 @@
-import { cn } from '../../lib/utils';
+import { cn } from '@rexezuge/web';
 
 export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
   return (

@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
-import { ConflictError } from '@durable-dav-router/backend-errors';
-import { ErrorSanitizationUtil, canonicalizeLanguageTag } from '@durable-dav-router/shared/utils';
+import { AmbiguousBackendError } from '@durable-dav-router/backend-services/router';
+import { ErrorSanitizationUtil, canonicalizeLanguageTag } from '@rexezuge/shared';
 import { createRequestScope } from '@durable-dav-router/backend-services/composition';
-import { getRequestScope, asScopedContext } from '@durable-dav-router/backend-runtime/di';
+import { getRequestScope, asScopedContext } from '@rexezuge/runtime';
 import { mapServiceError } from '@durable-dav-router/backend-services/errors';
 import type { RouteContext, RouterEnv } from '@/requestContext';
 
@@ -114,7 +114,7 @@ abstract class BaseRoute {
     // A typed error may carry machine-readable context — the candidate slugs
     // behind an ambiguous `?backend=` selector, for example — which the client
     // needs but must not be folded into the translated message.
-    const details = error instanceof ConflictError ? error.details : undefined;
+    const details = error instanceof AmbiguousBackendError ? error.details : undefined;
     return Response.json(details && Object.keys(details).length > 0 ? { ...body, ...details } : body, { status });
   }
 
@@ -126,7 +126,7 @@ abstract class BaseRoute {
       if (!first) return 'en';
       // Canonicalize (`en_us` → `en-US`) so backend string lookup and logs see
       // one tag shape; unknown tags still fall back to `en` downstream via
-      // `normalizeBackendLocale`.
+      // `normalizeLocale` (the kit's i18n).
       return canonicalizeLanguageTag(first);
     } catch {
       return 'en';

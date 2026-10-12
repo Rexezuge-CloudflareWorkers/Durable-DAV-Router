@@ -3,7 +3,7 @@ import type { DavEntry } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ModalShell, ModalHeader, ModalBody } from '../../components/modals/ModalShell';
-import { ConfirmDeleteModal } from '../../components/modals/ConfirmDeleteModal';
+import { ConfirmDeleteModal } from '@rexezuge/web';
 
 function VolumeFileModals({
   busy,
@@ -44,7 +44,7 @@ function VolumeFileModals({
   return (
     <>
       {mkdirOpen && (
-        <ModalShell onClose={onCloseMkdir} ariaLabel={t('files.newFolder', 'New Folder')}>
+        <ModalShell onClose={onCloseMkdir} ariaLabel={t('files.newFolder', 'New Folder')} closeLabel={t('common.close', 'Close')}>
           <ModalHeader title={t('files.newFolder', 'New Folder')} onClose={onCloseMkdir} />
           <ModalBody>
             <form onSubmit={onMkdirSubmit} className="space-y-3">
@@ -62,7 +62,7 @@ function VolumeFileModals({
         </ModalShell>
       )}
       {renaming && (
-        <ModalShell onClose={onCloseRename} ariaLabel={t('files.rename', 'Rename')}>
+        <ModalShell onClose={onCloseRename} ariaLabel={t('files.rename', 'Rename')} closeLabel={t('common.close', 'Close')}>
           <ModalHeader title={t('files.rename', 'Rename')} onClose={onCloseRename} />
           <ModalBody>
             <form onSubmit={onRenameSubmit} className="space-y-3">
@@ -76,14 +76,16 @@ function VolumeFileModals({
       )}
       {deleting && (
         <ConfirmDeleteModal
-          title={t('files.deleteEntry', 'Delete Entry')}
-          displayName={deleting.name}
+          ariaLabel={t('files.deleteEntry', 'Delete Entry')}
+          message={t('common.deleteConfirm', 'Delete {{name}}? This Cannot Be Undone.', { name: deleting.name })}
+          confirmLabel={t('common.delete', 'Delete')}
+          cancelLabel={t('common.cancel', 'Cancel')}
           onConfirm={onConfirmDelete}
           onCancel={onCancelDelete}
         />
       )}
       {preview && (
-        <ModalShell onClose={onClosePreview} widthClass="w-full max-w-2xl max-h-[82vh] overflow-hidden mx-4" ariaLabel={preview.entry.name}>
+        <ModalShell onClose={onClosePreview} widthClass="w-full max-w-2xl max-h-[82vh] overflow-hidden mx-4" ariaLabel={preview.entry.name} closeLabel={t('common.close', 'Close')}>
           <ModalHeader title={preview.entry.name} onClose={onClosePreview} />
           <ModalBody>
             {preview.text === null ? (

@@ -8,7 +8,7 @@ import { deleteBackend, listBackends, probeBackend, updateBackend } from '../../
 import { Button } from '../ui/Button';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
 import { Input } from '../ui/Input';
-import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { ConfirmDeleteModal } from '@rexezuge/web';
 
 /**
  * The whole backend registry, and the only page that shows one.
@@ -17,7 +17,7 @@ import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
  * halves: the registry edits (display name, delete) and the liveness view
  * (status, on-demand probe).
  */
-export function BackendsSettingsCard({ showNotice }: { showNotice: (type: 'success' | 'error', text: string) => void }) {
+export function BackendsSettingsCard({ showNotice }: { showNotice: (kind: 'success' | 'error', message: string) => void }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [editing, setEditing] = useState<Record<string, string>>({});
@@ -164,14 +164,18 @@ export function BackendsSettingsCard({ showNotice }: { showNotice: (type: 'succe
 
       {confirming && (
         <ConfirmDeleteModal
-          title={t('backends.title', 'Backends')}
+          ariaLabel={t('backends.title', 'Backends')}
           // The same label the row shows, so the dialog identifies the backend
           // by what the user is looking at rather than by a bare slug they may
           // have renamed away from.
-          displayName={(() => {
-            const row = rows.find((b) => b.slug === confirming);
-            return row?.displayName ? `${row.displayName} (${row.slug})` : confirming;
-          })()}
+          message={t('common.deleteConfirm', 'Delete {{name}}? This Cannot Be Undone.', {
+            name: (() => {
+              const row = rows.find((b) => b.slug === confirming);
+              return row?.displayName ? `${row.displayName} (${row.slug})` : confirming;
+            })(),
+          })}
+          confirmLabel={t('common.delete', 'Delete')}
+          cancelLabel={t('common.cancel', 'Cancel')}
           onConfirm={() => {
             const slug = confirming;
             setConfirming(null);

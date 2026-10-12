@@ -154,7 +154,7 @@ function fakeContext(opts: {
     },
     env: opts.env,
     get: (k: string): unknown =>
-      k === 'AuthenticatedAccount' ? { id: 'usr_test', email: 'test@example.com', anchorEmail: 'test@example.com' } : undefined,
+      k === 'AuthenticatedAccount' ? { id: 'usr_test', email: 'test@example.com', anchorEmail: 'test@example.com', username: null } : undefined,
     json: (data: unknown, status = 200) => Response.json(data, { status }),
   };
 }

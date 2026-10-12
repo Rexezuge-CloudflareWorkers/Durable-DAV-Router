@@ -2,14 +2,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { NoticeBar } from '../apps/web/src/components/layout/NoticeBar';
-import { EmptyState, LoadingSpinner } from '../apps/web/src/components/layout/PageState';
-import { ReadOnlyField } from '../apps/web/src/components/shared/ReadOnlyField';
-import { LanguageSelector } from '../apps/web/src/components/shared/LanguageSelector';
-import Unauthorized from '../apps/web/src/components/layout/Unauthorized';
+import { NoticeBar, EmptyState, LoadingSpinner, ReadOnlyField, LanguageSelector, Unauthorized } from '@rexezuge/web';
 import { LanguageSettingsCard } from '../apps/web/src/components/settings/LanguageSettingsCard';
 import { ProfileSettingsCard } from '../apps/web/src/components/settings/ProfileSettingsCard';
-import { TypeToConfirmModal } from '../apps/web/src/components/modals/TypeToConfirmModal';
+import { TypeToConfirmModal } from '@rexezuge/web';
 
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: () => undefined },
@@ -39,12 +35,12 @@ describe('layout composition', () => {
   it('renders a notice bar with a status role for assistive tech', () => {
     render(
       <MemoryRouter>
-        <NoticeBar notice={{ type: 'error', text: 'Failed To Load Volumes.' }} />
+        <NoticeBar notice={{ kind: 'error', message: 'Failed To Load Volumes.' }} statusLabels={{ success: 'Success', error: 'Error' }} />
       </MemoryRouter>,
     );
     // `role="status"` is a live region: a screen reader announces a new notice
     // without the user having to go looking for it.
-    const region = screen.getByRole('status');
+    const region = screen.getByRole('alert');
     expect(region.textContent).toContain('Failed To Load Volumes.');
     expect(region.textContent?.startsWith('Error')).toBe(true);
   });
@@ -52,7 +48,7 @@ describe('layout composition', () => {
   it('labels a success notice as such', () => {
     render(
       <MemoryRouter>
-        <NoticeBar notice={{ type: 'success', text: 'Folder Created.' }} />
+        <NoticeBar notice={{ kind: 'success', message: 'Folder Created.' }} statusLabels={{ success: 'Success', error: 'Error' }} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('status').textContent).toContain('Success');
@@ -74,7 +70,7 @@ describe('layout composition', () => {
     // the user it happened.
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    render(<ReadOnlyField label="Base URL" value="https://backend.example.com" showCopy />);
+    render(<ReadOnlyField label="Base URL" value="https://backend.example.com" showCopy copyLabel="Copy To Clipboard" />);
     const button = screen.getByRole('button', { name: /copy/i });
     fireEvent.click(button);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://backend.example.com'));
@@ -91,7 +87,7 @@ describe('layout composition', () => {
 
   it('offers the languages the bundle ships, and reports a choice', () => {
     const onChange = vi.fn();
-    render(<LanguageSelector value="en" onChange={onChange} />);
+    render(<LanguageSelector value="en" onChange={onChange} label="Select Language" unknownLabel="Unknown Language" supported={['en']} />);
     const select = screen.getByRole('combobox') as unknown as HTMLSelectElement;
     // English-only today; the list grows bundle by bundle and is asserted against
     // `SUPPORTED_LANGUAGES` so an option cannot appear without a bundle behind it.
@@ -106,7 +102,7 @@ describe('layout composition', () => {
     // path from a page the user cannot render.
     const assign = vi.fn();
     vi.stubGlobal('location', { ...globalThis.location, assign });
-    render(<Unauthorized />);
+    render(<Unauthorized title="Access Required" actionLabel="Sign In With Cloudflare Access" />);
     expect(screen.getByText('Access Required')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
     expect(assign).toHaveBeenCalledWith('/user/');
@@ -148,6 +144,9 @@ describe('layout composition', () => {
         description="Permanently deletes the bucket."
         expectedName="photos"
         confirmLabel="Delete Bucket"
+        cancelLabel="Cancel"
+        copyLabel="Copy To Clipboard"
+        promptLabel='Type "photos" To Confirm'
         onConfirm={onConfirm}
         onCancel={onCancel}
       />,

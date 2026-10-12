@@ -1,14 +1,14 @@
 import { useTranslation } from 'react-i18next';
 import type { CurrentUser } from '../../types';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
-import { ReadOnlyField } from '../shared/ReadOnlyField';
+import { ReadOnlyField } from '@rexezuge/web';
 
 export function ProfileSettingsCard({
   user,
 }: {
   user: CurrentUser;
   setUser: (user: CurrentUser) => void;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
 }) {
   const { t } = useTranslation();
   return (

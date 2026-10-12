@@ -15,7 +15,7 @@ import {
 import { BACKEND_TYPE_TO_FALLBACK, BACKEND_TYPE_TO_I18N_KEY, toLocalizedErrorMessage } from '../apps/web/src/lib/backendErrors';
 import { formatBytes, formatExpiryTimestamp, resolveLocale } from '../apps/web/src/lib/format';
 import { joinDavPath, parentDavPath, parseMultistatus } from '../apps/web/src/lib/davXml';
-import { cn } from '../apps/web/src/lib/utils';
+import { cn } from '@rexezuge/web';
 
 describe('BackendError', () => {
   it('carries the status and the backend error type', () => {

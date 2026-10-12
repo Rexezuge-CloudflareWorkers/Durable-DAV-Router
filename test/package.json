@@ -9,11 +9,12 @@
   "//": "This directory is a workspace project so `pnpm -r typecheck` and `pnpm run lint` actually reach it. It sat outside the workspace while holding roughly 200 KB of test code, so a type error or lint violation in a test only surfaced when that test happened to run — and `eslint.config.mjs` ignored `test/**` outright, so it was never linted at all.",
   "dependencies": {
     "@durable-dav-router/backend-data": "workspace:*",
-    "@durable-dav-router/backend-errors": "workspace:*",
     "@durable-dav-router/backend-runtime": "workspace:*",
     "@durable-dav-router/backend-services": "workspace:*",
     "@durable-dav-router/shared": "workspace:*",
     "@durable-dav-router/webdav": "workspace:*",
+    "@rexezuge/web": "^1.2.0",
+    "lucide-react": "1.52.0",
     "vitest": "4.1.11"
   },
   "devDependencies": {

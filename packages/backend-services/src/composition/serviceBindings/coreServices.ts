@@ -3,7 +3,7 @@ import { AccessAuthService } from '@durable-dav-router/backend-services/auth';
 import { UserIdentityService } from '@durable-dav-router/backend-services/identity';
 import { BackendService } from '@durable-dav-router/backend-services/router';
 import { UserService } from '@durable-dav-router/backend-services/user';
-import type { Container } from '@durable-dav-router/backend-runtime/di';
+import type { Container } from '@rexezuge/runtime';
 import { Tokens } from '../tokens';
 import { createService } from '../serviceFactory';
 import type { ServiceGroupContext } from './daoThunks';

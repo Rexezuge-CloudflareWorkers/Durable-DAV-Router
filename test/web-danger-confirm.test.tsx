@@ -13,7 +13,7 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-import { TypeToConfirmModal } from '../apps/web/src/components/modals/TypeToConfirmModal';
+import { TypeToConfirmModal } from '@rexezuge/web';
 
 function renderModal() {
   const onConfirm = vi.fn();
@@ -24,6 +24,9 @@ function renderModal() {
       description="Permanently Deletes Everything."
       expectedName="alice/my-files"
       confirmLabel="Delete Bucket"
+      cancelLabel="Cancel"
+      copyLabel="Copy To Clipboard"
+      promptLabel='Type "alice/my-files" To Confirm'
       onConfirm={onConfirm}
       onCancel={onCancel}
     />,

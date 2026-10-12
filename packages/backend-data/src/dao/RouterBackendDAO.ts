@@ -1,7 +1,7 @@
-import { BaseDAO } from './BaseDAO';
+import { BaseDAO } from '@rexezuge/d1';
 import { buildSetClause } from './UpdateClause';
 import type { SetAssignment } from './UpdateClause';
-import type { D1Queryable } from '../utils/D1Types';
+import type { D1Queryable } from '@rexezuge/d1';
 
 export interface RouterBackendRow {
   id: string;
@@ -64,14 +64,7 @@ class RouterBackendDAO extends BaseDAO {
     // foreign key into `users(email)` (exact-match, and that column is BINARY)
     // and part of the `(owner_email, slug_ci)` uniqueness constraint, so an
     // un-normalized write is an FK violation rather than a helpful duplicate.
-    await this.withRetry(
-      () =>
-        this.database
-          .prepare(
-            'INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          )
-          .bind(
-            input.id,
+    await this.run('INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [input.id,
             input.owner.anchorEmail.toLowerCase(),
             input.owner.userId,
             input.slug,
@@ -79,11 +72,7 @@ class RouterBackendDAO extends BaseDAO {
             input.baseUrl,
             input.displayName,
             input.now,
-            input.now,
-          )
-          .run(),
-      'create router backend',
-    );
+            input.now,]);
   }
 
   /**
@@ -111,17 +100,10 @@ class RouterBackendDAO extends BaseDAO {
     // `ON CONFLICT DO NOTHING` covers the `(owner_user_id, slug_ci)` index; the
     // `SELECT ... WHERE` makes the quota part of the same statement, so a
     // concurrent insert cannot overshoot it.
-    const result = await this.withRetry(
-      () =>
-        this.database
-          .prepare(
-            `INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, created_at, updated_at)
+    const result = await this.run(`INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, created_at, updated_at)
              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE (SELECT COUNT(*) FROM router_backends WHERE owner_user_id = ?) < ?
-             ON CONFLICT (owner_user_id, slug_ci) DO NOTHING`,
-          )
-          .bind(
-            input.id,
+             ON CONFLICT (owner_user_id, slug_ci) DO NOTHING`, [input.id,
             input.owner.anchorEmail.toLowerCase(),
             input.owner.userId,
             input.slug,
@@ -131,11 +113,7 @@ class RouterBackendDAO extends BaseDAO {
             input.now,
             input.now,
             input.owner.userId,
-            max,
-          )
-          .run(),
-      'create router backend (guarded)',
-    );
+            max,]);
     const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
     if (changes > 0) return 'ok';
     // No row written: either the slug was taken or the quota was full. One
@@ -204,14 +182,7 @@ class RouterBackendDAO extends BaseDAO {
       );
     }
     const { clause, values } = buildSetClause(assignments);
-    await this.withRetry(
-      () =>
-        this.database
-          .prepare(`UPDATE router_backends SET ${clause} WHERE id = ?`)
-          .bind(...values, id)
-          .run(),
-      'update router backend',
-    );
+    await this.run(`UPDATE router_backends SET ${clause} WHERE id = ?`, [...values, id]);
   }
 
   public async listByBackendUsernameCi(usernameCi: string, limit = 100): Promise<RouterBackendRow[]> {
@@ -223,7 +194,7 @@ class RouterBackendDAO extends BaseDAO {
   }
 
   public async deleteById(id: string): Promise<void> {
-    await this.withRetry(() => this.database.prepare('DELETE FROM router_backends WHERE id = ?').bind(id).run(), 'delete router backend');
+    await this.run('DELETE FROM router_backends WHERE id = ?', [id]);
   }
 }
 

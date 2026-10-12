@@ -1,7 +1,7 @@
 import type { Next } from 'hono';
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import type { AccessIdentityContext } from '@durable-dav-router/backend-services/auth';
-import { ErrorSanitizationUtil } from '@durable-dav-router/shared/utils';
+import { ErrorSanitizationUtil } from '@rexezuge/shared';
 import { BaseRoute } from '../endpoints/IBaseRoute';
 import type { HonoContext } from '../endpoints/IBaseRoute';
 import type { AuthenticatedAccount } from '../requestContext';

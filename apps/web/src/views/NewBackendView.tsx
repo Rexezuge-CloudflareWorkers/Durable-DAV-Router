@@ -1,15 +1,15 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Logo } from '../components/layout/Logo';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
 import { createBackend } from '../services/backendService';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 import { Input, Label } from '../components/ui/Input';
-import { ContextBar } from '../components/layout/ContextBar';
-import { AppPage } from '../components/layout/AppPage';
+import { ContextBar, AppPage } from '@rexezuge/web';
 
-export function NewBackendView({ showNotice }: { showNotice: (type: 'success' | 'error', text: string) => void }) {
+export function NewBackendView({ showNotice }: { showNotice: (kind: 'success' | 'error', message: string) => void }) {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [slug, setSlug] = useState('');
@@ -38,6 +38,11 @@ export function NewBackendView({ showNotice }: { showNotice: (type: 'success' | 
   return (
     <div>
       <ContextBar
+        home={
+          <Link to="/" aria-label={t('header.home', 'Durable-DAV-Router Home')}>
+            <Logo />
+          </Link>
+        }
         crumb={
           <span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">{t('backends.newBackend', 'New Backend')}</span>
         }

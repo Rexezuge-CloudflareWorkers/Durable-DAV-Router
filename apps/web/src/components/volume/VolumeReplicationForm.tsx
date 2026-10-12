@@ -80,7 +80,7 @@ export function VolumeReplicationForm({
   owner: string;
   volume: string;
   intervals: number[];
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
   onSaved: () => void;
   backend?: string | null;
 }) {

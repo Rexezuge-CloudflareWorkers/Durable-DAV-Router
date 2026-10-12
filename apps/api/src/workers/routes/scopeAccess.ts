@@ -1,7 +1,7 @@
 import { Tokens } from '@durable-dav-router/backend-services/composition';
 import type { BackendService } from '@durable-dav-router/backend-services/router';
-import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
-import type { Container } from '@durable-dav-router/backend-runtime/di';
+import type { KvCache } from '@rexezuge/runtime';
+import type { Container } from '@rexezuge/runtime';
 
 /**
  * Resolving the two things every route reaches for out of the request scope.

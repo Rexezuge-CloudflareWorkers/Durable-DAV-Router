@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Logo } from '../components/layout/Logo';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, Plus, Upload } from 'lucide-react';
 import type { VolumeDetail } from '../types';
@@ -8,9 +9,6 @@ import { withBackendSelector } from '../lib/backendSelector';
 import { clampPage, readStoredPageSize, storePageSize } from '../lib/davPage';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
-import { ContextBar } from '../components/layout/ContextBar';
-import { AppPage } from '../components/layout/AppPage';
-import { RefreshButton } from '../components/shared/RefreshButton';
 import { VolumeSettingsTab } from '../components/volume/VolumeSettingsTab';
 import { VisibilityBadge } from '../components/ui/Badge';
 import { useVolumeFiles } from './volume/useVolumeFiles';
@@ -18,6 +16,7 @@ import { useVolumeMutations } from './volume/useVolumeMutations';
 import { VolumeFileList } from './volume/VolumeFileList';
 import { VolumeFileModals } from './volume/VolumeFileModals';
 import { VolumeFilePager } from './volume/VolumeFilePager';
+import { ContextBar, AppPage, RefreshButton } from '@rexezuge/web';
 
 /**
  * Normalise a `?path=` query value into a safe volume-relative path.
@@ -48,7 +47,7 @@ function VolumeView({
   showNotice,
 }: {
   authorized: boolean | null;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
 }) {
   const { owner = '', volume = '' } = useParams<{ owner: string; volume: string }>();
   const navigate = useNavigate();
@@ -73,7 +72,7 @@ function VolumeView({
       return;
     }
 
-    showNotice(notice.type, notice.text);
+    showNotice(notice.kind, notice.message);
     consumeNotice();
   }, [notice, showNotice, consumeNotice]);
 
@@ -158,6 +157,11 @@ function VolumeView({
   return (
     <div>
       <ContextBar
+        home={
+          <Link to="/" aria-label={t('header.home', 'Durable-DAV-Router Home')}>
+            <Logo />
+          </Link>
+        }
         crumb={
           <span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">
             <Link to={crumbHref} className="hover:text-[var(--color-accent)]">
@@ -183,7 +187,7 @@ function VolumeView({
             )}
           </span>
         }
-        actions={<RefreshButton onRefresh={refresh} loading={status === 'loading'} />}
+        actions={<RefreshButton onRefresh={refresh} loading={status === 'loading'} label={t('common.refresh', 'Refresh')} />}
       />
       <div className="max-w-7xl mx-auto px-6 pt-4 flex gap-2">
         <Button variant={activeTab === 'files' ? 'primary' : 'secondary'} size="sm" onClick={() => setTab('files')}>

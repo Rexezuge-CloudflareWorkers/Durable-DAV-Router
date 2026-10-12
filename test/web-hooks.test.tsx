@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
-import { NOTICE_TIMEOUT_MS } from '../apps/web/src/lib/constants';
+import { NOTICE_TIMEOUT_MS } from '@rexezuge/web';
 import { useNotice } from '../apps/web/src/hooks/useNotice';
 import { useCurrentUser } from '../apps/web/src/hooks/useCurrentUser';
 import { singleSegmentName, useVolumeMutations } from '../apps/web/src/views/volume/useVolumeMutations';
@@ -74,7 +74,7 @@ describe('useNotice', () => {
     act(() => {
       result.current.showNotice('error', 'Failed To Load Volumes.');
     });
-    expect(result.current.notice).toEqual({ type: 'error', text: 'Failed To Load Volumes.' });
+    expect(result.current.notice).toEqual({ kind: 'error', message: 'Failed To Load Volumes.' });
     act(() => {
       vi.advanceTimersByTime(NOTICE_TIMEOUT_MS);
     });
@@ -97,7 +97,7 @@ describe('useNotice', () => {
       // they have finished it.
       vi.advanceTimersByTime(NOTICE_TIMEOUT_MS - 1);
     });
-    expect(result.current.notice).toEqual({ type: 'error', text: 'Second.' });
+    expect(result.current.notice).toEqual({ kind: 'error', message: 'Second.' });
   });
 });
 

@@ -1,11 +1,11 @@
 import { RouterBackendDAO } from '@durable-dav-router/backend-data/dao';
 import type { BackendOwner, RouterBackendRow } from '@durable-dav-router/backend-data/dao';
-import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
-import { isMissingSchemaError } from '@durable-dav-router/backend-data/utils';
-import { BadRequestError, ConflictError, DatabaseError, ForbiddenError, NotFoundError } from '@durable-dav-router/backend-errors';
+import type { D1Queryable } from '@rexezuge/d1';
+import { isMissingSchemaError } from '@rexezuge/d1';
+import { BadRequestError, ConflictError, DatabaseError, ForbiddenError, NotFoundError } from '@rexezuge/errors';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
-import { TimestampUtil, UUIDUtil } from '@durable-dav-router/shared/utils';
-import { MAX_URL_LENGTH, isPrivateOrInternalHost } from '@durable-dav-router/shared/utils';
+import { TimestampUtil, UUIDUtil } from '@rexezuge/shared';
+import { isPrivateOrInternalHost, MAX_REMOTE_URL_LENGTH } from '@rexezuge/shared';
 import type { AccountIdentity } from '../identity/UserIdentityService';
 import { stripTrailingSlashes } from './BackendProxyService';
 
@@ -74,7 +74,7 @@ function normalizeBaseUrl(raw: unknown, allowPrivateHosts = false): string {
   // and this value is stored and then fetched on every proxied request. Anything
   // longer than a real host:port is either a mistake or an attempt to spend the
   // row's storage and every lookup on it.
-  if (trimmed.length > MAX_URL_LENGTH) throw new BadRequestError(`baseUrl is too long (max ${MAX_URL_LENGTH} characters)`);
+  if (trimmed.length > MAX_REMOTE_URL_LENGTH) throw new BadRequestError(`baseUrl is too long (max ${MAX_REMOTE_URL_LENGTH} characters)`);
   let url: URL;
   try {
     url = new URL(trimmed);

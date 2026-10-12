@@ -1,38 +1,9 @@
-import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
-import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { X } from 'lucide-react';
 
-export function ModalShell({
-  onClose,
-  children,
-  widthClass = 'w-80',
-  ariaLabel,
-}: {
-  onClose: () => void;
-  children: ReactNode;
-  widthClass?: string;
-  ariaLabel?: string;
-}) {
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={ariaLabel}
-    >
-      <div className="fixed inset-0 bg-black/60 animate-backdrop-in" />
-      <div
-        className={`relative bg-[var(--color-surface-1)] border border-[var(--color-border-muted)] rounded-2xl shadow-2xl animate-fade-in ${widthClass}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>,
-    document.body,
-  );
-}
+
+
 
 export function ModalHeader({ title, onClose, actions }: { title: string; onClose: () => void; actions?: ReactNode }) {
   const { t } = useTranslation();
@@ -56,3 +27,5 @@ export function ModalHeader({ title, onClose, actions }: { title: string; onClos
 export function ModalBody({ children }: { children: ReactNode }) {
   return <div className="overflow-y-auto p-5 space-y-2.5 max-h-[calc(82vh-4rem)]">{children}</div>;
 }
+
+export {ModalShell} from '@rexezuge/web';

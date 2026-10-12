@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BackendService, normalizeBaseUrl, normalizeSlug } from '@durable-dav-router/backend-services/router';
-import {
-  classifyProbeStatus,
-  describeBackendFailure,
-  joinBackendUrl,
-  joinBackendUrlWithoutSelector,
-  resolveBackend,
-  rewriteDestinationForBackend,
-  stripBackendSelector,
-} from '@durable-dav-router/backend-services/router';
+import { classifyProbeStatus, describeBackendFailure, joinBackendUrl, joinBackendUrlWithoutSelector, resolveBackend, rewriteDestinationForBackend, stripBackendSelector } from '@durable-dav-router/backend-services/router';
 import type { BackendOwner, RouterBackendRow } from '@durable-dav-router/backend-data/dao';
 import type { AccountIdentity } from '@durable-dav-router/backend-services/identity';
-import { BadRequestError, ConflictError, DatabaseError, NotFoundError } from '@durable-dav-router/backend-errors';
+import { BadRequestError, ConflictError, DatabaseError, NotFoundError } from '@rexezuge/errors';
 
 /**
  * A resolved caller. `anchorEmail` is the account's frozen `users.email` — for a
@@ -21,7 +13,7 @@ import { BadRequestError, ConflictError, DatabaseError, NotFoundError } from '@d
  * on.
  */
 function account(email = 'user@example.com', id = 'usr_test1'): AccountIdentity {
-  return { id, email, anchorEmail: email };
+  return { id, email, anchorEmail: email, username: null };
 }
 
 function row(slug: string, baseUrl = 'https://backend.example.com'): RouterBackendRow {

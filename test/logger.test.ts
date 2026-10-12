@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { createLogger } from '@durable-dav-router/backend-runtime/logger';
+import { createLogger } from '@rexezuge/runtime';
 
 afterEach(() => vi.restoreAllMocks());
 

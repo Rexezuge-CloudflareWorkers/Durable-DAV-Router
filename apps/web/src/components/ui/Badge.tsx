@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from 'class-variance-authority';
 import { useTranslation } from 'react-i18next';
-import { cn } from '../../lib/utils';
+import { cn } from '@rexezuge/web';
 
 const badgeVariants = cva('inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium shrink-0', {
   variants: {

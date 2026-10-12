@@ -1,4 +1,4 @@
-import { cn } from '../../lib/utils';
+import { cn } from '@rexezuge/web';
 
 export function Card({ className, children }: { className?: string; children: React.ReactNode }) {
   return <div className={cn('rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] p-5', className)}>{children}</div>;

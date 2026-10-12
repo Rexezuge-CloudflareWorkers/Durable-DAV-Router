@@ -8,7 +8,7 @@
 // no status-code assertion can see — a client that 404s in a loop spent a delete
 // plus a put of the identical value on *every* request and exhausted the whole
 // daily budget in around 40 minutes, while every response stayed correct.
-import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
+import type { KvCache } from '@rexezuge/runtime';
 import { invalidateCachedRoute, putCachedRoute, sameRoute } from '@durable-dav-router/backend-services/router';
 import type { CachedRoute } from '@durable-dav-router/backend-services/router';
 import type { RouteContext } from '@/requestContext';

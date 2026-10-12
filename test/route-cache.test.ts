@@ -1,18 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  clearRouteCacheL1,
-  getCachedRoute,
-  getRouteCacheTtlSeconds,
-  invalidateCachedRoute,
-  invalidateCachedRouteIfPresent,
-  isCachedRoute,
-  parseDestinationVolume,
-  putCachedRoute,
-  purgeCachedRoutes,
-  routeCacheParts,
-  sameRoute,
-} from '@durable-dav-router/backend-services/router';
-import { buildKvKey, clampTtl, KV_DOMAINS, KvCache } from '@durable-dav-router/backend-runtime/kv';
+import { clearRouteCacheL1, getCachedRoute, getRouteCacheTtlSeconds, invalidateCachedRoute, invalidateCachedRouteIfPresent, isCachedRoute, parseDestinationVolume, putCachedRoute, purgeCachedRoutes, routeCacheParts, sameRoute } from '@durable-dav-router/backend-services/router';
+import { buildKvKey, clampTtl, KV_DOMAINS, KvCache } from '@rexezuge/runtime';
 
 /**
 `KVNamespace` double that counts operations, so a test can assert cost.
@@ -71,15 +59,15 @@ function makeFakeKv(initial: Record<string, string> = {}) {
 
 const ROUTE = { backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' };
 
-describe('davRoute KV domain', () => {
-  it('is long-lived for rarely-changing buckets', () => {
-    expect(KV_DOMAINS.davRoute.ttlSeconds).toBe(86_400);
-    expect(KV_DOMAINS.davRoute.maxValueBytes).toBe(4096);
+describe('route-cache KV domain', () => {
+  it('uses the kit metadata domain for rarely-changing buckets', () => {
+    expect(KV_DOMAINS.metadata.ttlSeconds).toBe(120);
+    expect(KV_DOMAINS.metadata.maxValueBytes).toBe(1_048_576);
   });
   it('builds stable keys and clamps TTL to the 60s floor', () => {
-    expect(buildKvKey('davRoute', ['owner', 'vol'])).toBe('davRoute:v1:owner:vol');
-    expect(clampTtl(undefined, 'davRoute')).toBe(86_400);
-    expect(clampTtl(5, 'davRoute')).toBe(60);
+    expect(buildKvKey('metadata', ['owner', 'vol'])).toBe('metadata:v1:owner:vol');
+    expect(clampTtl(undefined, 'metadata')).toBe(120);
+    expect(clampTtl(5, 'metadata')).toBe(60);
   });
 });
 
@@ -118,9 +106,9 @@ describe('RouteCacheService', () => {
     // Owner is canonicalized: mixed-case lookup hits the same KV entry.
     clearRouteCacheL1();
     await expect(getCachedRoute(kv, 'owner', 'Vol')).resolves.toEqual(ROUTE);
-    const bad = new KvCache(makeFakeKv({ [buildKvKey('davRoute', ['owner', 'bad'])]: 'not-json{' }) as never);
+    const bad = new KvCache(makeFakeKv({ [buildKvKey('metadata', ['owner', 'bad'])]: 'not-json{' }) as never);
     await expect(getCachedRoute(bad, 'owner', 'bad')).resolves.toBeNull();
-    const wrongShape = new KvCache(makeFakeKv({ [buildKvKey('davRoute', ['owner', 'ws'])]: JSON.stringify({ nope: 1 }) }) as never);
+    const wrongShape = new KvCache(makeFakeKv({ [buildKvKey('metadata', ['owner', 'ws'])]: JSON.stringify({ nope: 1 }) }) as never);
     await expect(getCachedRoute(wrongShape, 'owner', 'ws')).resolves.toBeNull();
   });
 
