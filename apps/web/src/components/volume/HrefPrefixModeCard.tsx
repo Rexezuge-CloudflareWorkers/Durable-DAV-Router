@@ -37,7 +37,7 @@ export function HrefPrefixModeCard({
   owner: string;
   volume: string;
   detail: VolumeDetail;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
   onUpdated: (detail: VolumeDetail) => void;
   backend?: string | null;
 }) {

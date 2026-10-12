@@ -1,4 +1,4 @@
-import { ConflictError, NotFoundError } from '@durable-dav-router/backend-errors';
+import { ConflictError, NotFoundError } from '@rexezuge/errors';
 import { resolveBackend } from './BackendProxyService';
 import type { RoutableBackend } from './BackendProxyService';
 
@@ -15,6 +15,25 @@ import type { RoutableBackend } from './BackendProxyService';
  * repeated at five call sites and had already drifted from the canonical
  * `Exception.Type` strings.
  */
+/**
+ * An ambiguous `?backend=` selector, carrying the candidates that matched.
+ *
+ * A plain `ConflictError` (the kit's) says "retry with ?backend=<slug>" and
+ * stops there; the client cannot offer the slugs it found without a second
+ * request, and it must not be asked to parse them out of the message. The
+ * kit's error options carry only `retryable`/`expose`/`cause`, so the
+ * machine-readable half rides on a subclass whose `details`
+ * `BaseRoute.toErrorResponse` already spreads into the body.
+ */
+class AmbiguousBackendError extends ConflictError {
+  public readonly details: { backends: string[] };
+
+  constructor(backends: string[]) {
+    super('Multiple backends match; retry with ?backend=<slug>');
+    this.details = { backends };
+  }
+}
+
 function selectBackend(backends: RoutableBackend[], explicitSlug: string | null, what = 'backend'): RoutableBackend {
   const resolved = resolveBackend(backends, explicitSlug);
   if (resolved.kind === 'not-found') {
@@ -24,7 +43,12 @@ function selectBackend(backends: RoutableBackend[], explicitSlug: string | null,
     throw new NotFoundError(`No ${what} matches this request`);
   }
   if (resolved.kind === 'ambiguous') {
-    throw new ConflictError('Multiple backends match; retry with ?backend=<slug>', { backends: resolved.backends.map((b) => b.slug) });
+    // The candidate slugs are machine-readable context the client needs but the
+    // translated message must not absorb, so they ride on a local subclass. The
+    // kit's error options carry only retryable/expose/cause — there is no slot
+    // for an application payload — and `BaseRoute.toErrorResponse` already
+    // spreads a conflict error's `details` into the body.
+    throw new AmbiguousBackendError(resolved.backends.map((b) => b.slug));
   }
   return resolved.backend;
 }
@@ -45,4 +69,4 @@ function explicitBackendSlug(c: {
   return h?.trim() ? h.trim() : null;
 }
 
-export { selectBackend, explicitBackendSlug };
+export { AmbiguousBackendError, selectBackend, explicitBackendSlug };

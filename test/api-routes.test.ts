@@ -204,7 +204,7 @@ function fakeContext(opts: {
     get: (k: string): unknown => {
       if (k !== 'AuthenticatedAccount') return undefined;
       const email = opts.email ?? 'test@example.com';
-      return { id: `usr_${email.replaceAll(/[^a-z0-9]+/gi, '_')}`, email, anchorEmail: email };
+      return { id: `usr_${email.replaceAll(/[^a-z0-9]+/gi, '_')}`, email, anchorEmail: email, username: null };
     },
     json: (data: unknown, status = 200) => Response.json(data, { status }),
   };

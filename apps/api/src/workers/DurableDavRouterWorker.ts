@@ -1,4 +1,4 @@
-import { AbstractEntrypointWorker } from '@durable-dav-router/backend-runtime/base';
+import { AbstractEntrypointWorker } from '@rexezuge/runtime';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { fromHono } from 'chanfana';
 import type { HonoOpenAPIRouterType } from 'chanfana';
@@ -20,6 +20,16 @@ function acceptsHtml(request: Request): boolean {
 }
 
 class DurableDavRouterWorker extends AbstractEntrypointWorker {
+  /**
+   * No scheduled work on the router plane: it serves requests and nothing
+   * else, so the kit's entrypoint hook answers nothing rather than claiming
+   * the route cache invalidates itself on a timer (it does not — mutations
+   * and a self-heal on forward 404/410 do).
+   */
+  protected onScheduled(): Promise<void> {
+    return Promise.resolve();
+  }
+
   protected readonly app: AppRouter;
   // Configuration problems are silent at runtime — a bad numeric var falls back
   // to its default, an auth bypass in production authenticates everyone as one

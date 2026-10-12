@@ -1,5 +1,5 @@
-import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
-import type { KvNamespaceLike } from '@durable-dav-router/backend-runtime/kv';
+import type { D1Queryable } from '@rexezuge/d1';
+import type { KvNamespaceLike } from '@rexezuge/runtime';
 
 // Minimal structural env for scope creation.
 interface RequestScopeEnv {

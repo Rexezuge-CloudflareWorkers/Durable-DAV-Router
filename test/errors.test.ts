@@ -1,20 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  BadRequestError,
-  ConflictError,
-  DatabaseError,
-  DefaultInternalServerError,
-  ForbiddenError,
-  InternalServerError,
-  MethodNotAllowedError,
-  NotFoundError,
-  PayloadTooLargeError,
-  RateLimitedError,
-  ServiceError,
-  UnauthorizedError,
-} from '@durable-dav-router/backend-errors';
+import { BadRequestError, ConflictError, DatabaseError, DefaultInternalServerError, ForbiddenError, InternalServerError, MethodNotAllowedError, NotFoundError, PayloadTooLargeError, RateLimitedError, ServiceError, UnauthorizedError } from '@rexezuge/errors';
 import { mapServiceError, toServiceStatus, buildBody } from '@durable-dav-router/backend-services/errors';
-import { getBackendStrings } from '@durable-dav-router/shared/i18n';
+import { getLocalizedStrings } from '@rexezuge/i18n';
 
 describe('ServiceError hierarchy', () => {
   // Each error's status and Type string are part of the wire contract: the SPA
@@ -34,13 +21,15 @@ describe('ServiceError hierarchy', () => {
     it(`${name} maps to ${status} ${type}`, () => {
       const error = make();
       expect(error).toBeInstanceOf(ServiceError);
-      expect(error.getErrorCode()).toBe(status);
-      expect(error.getErrorType()).toBe(type);
+      // The kit's taxonomy: the status and the catalog key are fields, the
+      // wire envelope reads them straight off the error.
+      expect(error.status).toBe(status);
+      expect(error.type).toBe(type);
     });
   }
 
   it('carries its own message', () => {
-    expect(new NotFoundError('Backend not found').getErrorMessage()).toBe('Backend not found');
+    expect(new NotFoundError('Backend not found').message).toBe('Backend not found');
   });
 
   it('supplies a default message when none is given', () => {
@@ -57,7 +46,7 @@ describe('ServiceError hierarchy', () => {
       ['MethodNotAllowedError', () => new MethodNotAllowedError()],
     ];
     for (const [name, make] of defaults) {
-      const message = make().getErrorMessage();
+      const message = make().message;
       expect(typeof message, name).toBe('string');
       expect(message.trim().length, name).toBeGreaterThan(0);
     }
@@ -75,7 +64,7 @@ describe('DatabaseError', () => {
     // A UNIQUE violation will never succeed on retry, so retrying it wastes
     // three round trips and then returns the same failure.
     const error = new DatabaseError('UNIQUE constraint failed: router_backends.owner_email');
-    expect(error.getErrorCode()).toBe(500);
+    expect(error.status).toBe(500);
     expect(error.retryable).toBe(false);
   });
 
@@ -85,18 +74,18 @@ describe('DatabaseError', () => {
 
   it('exposes the underlying driver text for logging', () => {
     // The message is masked on the way out; `ErrorMapper` logs it instead.
-    expect(new DatabaseError('no such table: users').getErrorMessage()).toBe('no such table: users');
+    expect(new DatabaseError('no such table: users').message).toBe('no such table: users');
   });
 });
 
 describe('InternalServerError', () => {
   it('reports 500', () => {
-    expect(new InternalServerError('boom').getErrorCode()).toBe(500);
+    expect(new InternalServerError('boom').status).toBe(500);
   });
 
   it('exposes a shared default instance for masked responses', () => {
-    expect(DefaultInternalServerError.getErrorType()).toBe('InternalServerError');
-    expect(DefaultInternalServerError.getErrorCode()).toBe(500);
+    expect(DefaultInternalServerError.type).toBe('InternalServerError');
+    expect(DefaultInternalServerError.status).toBe(500);
   });
 });
 
@@ -131,8 +120,8 @@ describe('mapServiceError', () => {
   });
 
   it('localizes the masked message', () => {
-    expect(mapServiceError(new Error('secret'), 'ja').body.Exception?.Message).toBe(getBackendStrings('ja').common.internalError);
-    expect(mapServiceError(new Error('secret')).body.Exception?.Message).toBe(getBackendStrings('en').common.internalError);
+    expect(mapServiceError(new Error('secret'), 'ja').body.Exception?.Message).toBe(getLocalizedStrings('ja').common.internalError);
+    expect(mapServiceError(new Error('secret')).body.Exception?.Message).toBe(getLocalizedStrings('en').common.internalError);
   });
 
   it('does not localize a client error message', () => {

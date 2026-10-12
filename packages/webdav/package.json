@@ -12,7 +12,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@durable-dav-router/backend-errors": "workspace:*",
     "@durable-dav-router/shared": "workspace:*",
     "@xmldom/xmldom": "^0.9.12"
   },

@@ -6,14 +6,13 @@ import path from 'node:path';
 // reachable in one place and as an orphan in the other.
 import { computedKeySites, referencedKeys } from '../scripts/i18n-coverage.js';
 import {
-  BACKEND_STRINGS,
-  SUPPORTED_BACKEND_LOCALES,
-  canonicalizeBackendLocaleTag,
-  formatBackendString,
-  getBackendStrings,
-  normalizeBackendLocale,
+  LOCALE_STRINGS,
+  SUPPORTED_LOCALES,
+  canonicalizeLanguageTag,
+  getLocalizedStrings,
+  normalizeLocale,
   resolveLocalizedStrings,
-} from '@durable-dav-router/shared/i18n';
+} from '@rexezuge/i18n';
 
 // NOTE: `apps/web/src/i18n.ts` is not importable in this node unit-test env —
 // it pulls `i18next`/`react-i18next` (web-only deps, not resolvable from the repo
@@ -26,8 +25,8 @@ import {
 
 describe('backend strings (en)', () => {
   it('serves Title Case English strings', () => {
-    const strings = getBackendStrings('en');
-    expect(strings).toBe(BACKEND_STRINGS.en);
+    const strings = getLocalizedStrings('en');
+    expect(strings).toBe(LOCALE_STRINGS.en);
     expect(strings.common.unauthorized).toBe('Authentication Required.');
     expect(strings.common.forbidden).toBe('Access Denied.');
     expect(strings.common.internalError).toBe('Internal Server Error.');
@@ -36,25 +35,25 @@ describe('backend strings (en)', () => {
   it('exposes only the namespaces the router actually returns', () => {
     // The router has no repos, tokens, issues, or namespaces. Those namespaces
     // came from the Durable-DAV backend and were unreachable here.
-    for (const locale of SUPPORTED_BACKEND_LOCALES) {
-      expect(Object.keys(BACKEND_STRINGS[locale])).toEqual(['common']);
+    for (const locale of SUPPORTED_LOCALES) {
+      expect(Object.keys(LOCALE_STRINGS[locale])).toEqual(['common']);
     }
   });
 
   it('keeps locale bundles structurally identical', () => {
-    const enKeys = Object.keys(BACKEND_STRINGS.en).sort();
-    expect(SUPPORTED_BACKEND_LOCALES).toEqual(['en', 'de', 'fr', 'es', 'it', 'nl', 'pt', 'pl', 'ja', 'zh-CN', 'zh-TW', 'ko']);
-    expect(Object.keys(BACKEND_STRINGS)).toEqual([...SUPPORTED_BACKEND_LOCALES]);
-    for (const locale of SUPPORTED_BACKEND_LOCALES) {
-      expect(Object.keys(BACKEND_STRINGS[locale]).sort()).toEqual(enKeys);
-      expect(Object.keys(BACKEND_STRINGS[locale].common).sort()).toEqual(Object.keys(BACKEND_STRINGS.en.common).sort());
+    const enKeys = Object.keys(LOCALE_STRINGS.en).sort();
+    expect(SUPPORTED_LOCALES).toEqual(['en', 'de', 'fr', 'es', 'it', 'nl', 'pt', 'pl', 'ja', 'zh-CN', 'zh-TW', 'ko']);
+    expect(Object.keys(LOCALE_STRINGS)).toEqual([...SUPPORTED_LOCALES]);
+    for (const locale of SUPPORTED_LOCALES) {
+      expect(Object.keys(LOCALE_STRINGS[locale]).sort()).toEqual(enKeys);
+      expect(Object.keys(LOCALE_STRINGS[locale].common).sort()).toEqual(Object.keys(LOCALE_STRINGS.en.common).sort());
     }
   });
 
   it('gives every locale a non-empty translation for every key', () => {
     // A missing or blank string would surface to a client as an empty `Message`.
-    for (const locale of SUPPORTED_BACKEND_LOCALES) {
-      const entries = Object.entries(BACKEND_STRINGS[locale].common);
+    for (const locale of SUPPORTED_LOCALES) {
+      const entries = Object.entries(LOCALE_STRINGS[locale].common);
       for (const [key, value] of entries) {
         expect(typeof value, `${locale}:${key}`).toBe('string');
         expect(value.trim().length, `${locale}:${key}`).toBeGreaterThan(0);
@@ -71,11 +70,11 @@ describe('backend strings (en)', () => {
       }
     };
     const enVars = new Map<string, string[]>();
-    collect(BACKEND_STRINGS.en, enVars);
-    for (const locale of SUPPORTED_BACKEND_LOCALES) {
+    collect(LOCALE_STRINGS.en, enVars);
+    for (const locale of SUPPORTED_LOCALES) {
       if (locale === 'en') continue;
       const vars = new Map<string, string[]>();
-      collect(BACKEND_STRINGS[locale], vars);
+      collect(LOCALE_STRINGS[locale], vars);
       for (const [key, expected] of enVars) {
         expect(vars.get(key), `${locale}:${key}`).toEqual(expected);
       }
@@ -84,75 +83,58 @@ describe('backend strings (en)', () => {
 
   it('actually localizes rather than echoing English everywhere', () => {
     // Guards against a bundle silently falling back to the English text.
-    expect(getBackendStrings('ja').common.internalError).not.toBe(BACKEND_STRINGS.en.common.internalError);
-    expect(getBackendStrings('de').common.unauthorized).not.toBe(BACKEND_STRINGS.en.common.unauthorized);
+    expect(getLocalizedStrings('ja').common.internalError).not.toBe(LOCALE_STRINGS.en.common.internalError);
+    expect(getLocalizedStrings('de').common.unauthorized).not.toBe(LOCALE_STRINGS.en.common.unauthorized);
   });
 });
 
 describe('backend strings (zh-CN)', () => {
   it('serves Chinese strings', () => {
-    const strings = getBackendStrings('zh-CN');
+    const strings = getLocalizedStrings('zh-CN');
     expect(strings.common.internalError).toBe('服务器内部错误。');
-    expect(strings.common.internalError).not.toBe(BACKEND_STRINGS.en.common.internalError);
+    expect(strings.common.internalError).not.toBe(LOCALE_STRINGS.en.common.internalError);
   });
 });
 
 describe('locale fallback', () => {
   it('falls back to en for unknown, empty, or missing locales', () => {
     for (const locale of ['en-US', 'xx', '', null, undefined]) {
-      expect(getBackendStrings(locale)).toBe(BACKEND_STRINGS.en);
+      expect(getLocalizedStrings(locale)).toBe(LOCALE_STRINGS.en);
     }
   });
 
   it('serves every supported locale directly', () => {
-    for (const locale of SUPPORTED_BACKEND_LOCALES) {
-      expect(getBackendStrings(locale)).toBe(BACKEND_STRINGS[locale]);
+    for (const locale of SUPPORTED_LOCALES) {
+      expect(getLocalizedStrings(locale)).toBe(LOCALE_STRINGS[locale]);
     }
   });
 
   it('maps zh variants to zh-CN', () => {
     for (const locale of ['zh', 'zh_CN', 'ZH-cn']) {
-      expect(getBackendStrings(locale)).toBe(BACKEND_STRINGS['zh-CN']);
+      expect(getLocalizedStrings(locale)).toBe(LOCALE_STRINGS['zh-CN']);
     }
   });
 
   it('base-matches regional variants to their language bundle', () => {
-    expect(getBackendStrings('de-AT')).toBe(BACKEND_STRINGS.de);
-    expect(getBackendStrings('fr-CA')).toBe(BACKEND_STRINGS.fr);
-    expect(getBackendStrings('pt-BR')).toBe(BACKEND_STRINGS.pt);
+    expect(getLocalizedStrings('de-AT')).toBe(LOCALE_STRINGS.de);
+    expect(getLocalizedStrings('fr-CA')).toBe(LOCALE_STRINGS.fr);
+    expect(getLocalizedStrings('pt-BR')).toBe(LOCALE_STRINGS.pt);
   });
 
   it('canonicalizes tags case- and separator-insensitively', () => {
-    expect(canonicalizeBackendLocaleTag('zh_cn')).toBe('zh-CN');
-    expect(canonicalizeBackendLocaleTag('ZH-CN')).toBe('zh-CN');
-    expect(canonicalizeBackendLocaleTag(' en ')).toBe('en');
-    expect(normalizeBackendLocale('pt')).toBe('pt');
-    expect(normalizeBackendLocale('xx')).toBe('en');
+    expect(canonicalizeLanguageTag('zh_cn')).toBe('zh-CN');
+    expect(canonicalizeLanguageTag('ZH-CN')).toBe('zh-CN');
+    expect(canonicalizeLanguageTag(' en ')).toBe('en');
+    expect(normalizeLocale('pt')).toBe('pt');
+    expect(normalizeLocale('xx')).toBe('en');
   });
 
   it('resolveLocalizedStrings prefers the primary locale, then the fallback', () => {
-    expect(resolveLocalizedStrings('zh-CN')).toBe(BACKEND_STRINGS['zh-CN']);
-    expect(resolveLocalizedStrings('xx', 'zh-CN')).toBe(BACKEND_STRINGS['zh-CN']);
-    expect(resolveLocalizedStrings('de', 'zh-CN')).toBe(BACKEND_STRINGS.de);
-    expect(resolveLocalizedStrings(null, null)).toBe(BACKEND_STRINGS.en);
-    expect(resolveLocalizedStrings('en')).toBe(BACKEND_STRINGS.en);
-  });
-});
-
-describe('formatBackendString', () => {
-  it('substitutes string and number placeholders', () => {
-    expect(formatBackendString('Repository {fullName} Created.', { fullName: 'alice/demo' })).toBe('Repository alice/demo Created.');
-    expect(formatBackendString('Maximum Of {max} Tokens Reached.', { max: 5 })).toBe('Maximum Of 5 Tokens Reached.');
-  });
-
-  it('leaves unknown placeholders untouched', () => {
-    expect(formatBackendString('Hello {name}.', {})).toBe('Hello {name}.');
-    expect(formatBackendString('No vars here.')).toBe('No vars here.');
-  });
-
-  it('ignores non-scalar variable values', () => {
-    // A substituted `[object Object]` would reach a client verbatim.
-    expect(formatBackendString('Value: {v}', { v: {} as unknown as string })).toBe('Value: {v}');
+    expect(resolveLocalizedStrings('zh-CN')).toBe(LOCALE_STRINGS['zh-CN']);
+    expect(resolveLocalizedStrings('xx', 'zh-CN')).toBe(LOCALE_STRINGS['zh-CN']);
+    expect(resolveLocalizedStrings('de', 'zh-CN')).toBe(LOCALE_STRINGS.de);
+    expect(resolveLocalizedStrings(null, null)).toBe(LOCALE_STRINGS.en);
+    expect(resolveLocalizedStrings('en')).toBe(LOCALE_STRINGS.en);
   });
 });
 

@@ -14,11 +14,10 @@ import {
 import { useAsyncLoad } from '../../hooks/useAsyncLoad';
 import { toLocalizedErrorMessage } from '../../lib/backendErrors';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
-import { RefreshButton } from '../shared/RefreshButton';
-import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
 import { VolumeReplicationRow } from './VolumeReplicationRow';
 import { VolumeReplicationForm } from './VolumeReplicationForm';
 import { VolumeReplicationDecisions } from './VolumeReplicationDecisions';
+import { RefreshButton, ConfirmDeleteModal } from '@rexezuge/web';
 
 /**
  * Per-bucket replication targets.
@@ -52,7 +51,7 @@ export function VolumeReplicationCard({
 }: {
   owner: string;
   volume: string;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
   backend?: string | null;
 }) {
   const { t } = useTranslation();
@@ -183,7 +182,7 @@ export function VolumeReplicationCard({
             {t('replication.title', 'Replication')}
           </span>
         </CardTitle>
-        <RefreshButton onRefresh={refresh} loading={loading} />
+        <RefreshButton onRefresh={refresh} loading={loading} label={t('common.refresh', 'Refresh')} />
       </CardHeader>
 
       <div className="space-y-4">
@@ -247,8 +246,12 @@ export function VolumeReplicationCard({
 
       {removing !== null && (
         <ConfirmDeleteModal
-          title={t('replication.removeTarget', 'Remove Replication Target')}
-          displayName={removing.targetKind === 'dav-volume' ? `${removing.remoteOwner}/${removing.remoteVolume}` : removing.remoteUrl}
+          ariaLabel={t('replication.removeTarget', 'Remove Replication Target')}
+          message={t('common.deleteConfirm', 'Delete {{name}}? This Cannot Be Undone.', {
+            name: removing.targetKind === 'dav-volume' ? `${removing.remoteOwner}/${removing.remoteVolume}` : removing.remoteUrl,
+          })}
+          confirmLabel={t('common.delete', 'Delete')}
+          cancelLabel={t('common.cancel', 'Cancel')}
           onConfirm={() => void confirmRemove()}
           onCancel={() => setRemoving(null)}
         />

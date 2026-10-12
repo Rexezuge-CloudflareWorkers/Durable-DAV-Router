@@ -6,11 +6,12 @@ import path from 'node:path';
 
 const apiSrcPath = fileURLToPath(new URL('../../apps/api/src', import.meta.url));
 const backendDataSrcPath = fileURLToPath(new URL('../../packages/backend-data/src', import.meta.url));
-const backendErrorsSrcPath = fileURLToPath(new URL('../../packages/backend-errors/src', import.meta.url));
 const backendRuntimeSrcPath = fileURLToPath(new URL('../../packages/backend-runtime/src', import.meta.url));
 const webdavSrcPath = fileURLToPath(new URL('../../packages/webdav/src', import.meta.url));
 const sharedSrcPath = fileURLToPath(new URL('../../packages/shared/src', import.meta.url));
 const backendServicesSrcPath = fileURLToPath(new URL('../../packages/backend-services/src', import.meta.url));
+
+const rexezugeDist = (name: string): string => fileURLToPath(new URL(`../../node_modules/@rexezuge/${name}/dist/index.js`, import.meta.url));
 
 const migrationsDir = path.resolve(fileURLToPath(new URL('../../migrations', import.meta.url)));
 const migrationFiles = readdirSync(migrationsDir)
@@ -57,17 +58,25 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^@durable-dav-router\/backend-data$/, replacement: `${backendDataSrcPath}/index.ts` },
-      { find: /^@durable-dav-router\/backend-errors$/, replacement: `${backendErrorsSrcPath}/index.ts` },
       { find: /^@durable-dav-router\/backend-runtime$/, replacement: `${backendRuntimeSrcPath}/index.ts` },
       { find: /^@durable-dav-router\/webdav$/, replacement: `${webdavSrcPath}/index.ts` },
       { find: /^@durable-dav-router\/shared$/, replacement: `${sharedSrcPath}/index.ts` },
       { find: /^@durable-dav-router\/backend-services$/, replacement: `${backendServicesSrcPath}/index.ts` },
       { find: '@durable-dav-router/backend-data', replacement: backendDataSrcPath },
-      { find: '@durable-dav-router/backend-errors', replacement: backendErrorsSrcPath },
       { find: '@durable-dav-router/backend-runtime', replacement: backendRuntimeSrcPath },
       { find: '@durable-dav-router/webdav', replacement: webdavSrcPath },
       { find: '@durable-dav-router/shared', replacement: sharedSrcPath },
       { find: '@durable-dav-router/backend-services', replacement: backendServicesSrcPath },
+      // The kit ships bundled dist with bare cross-package imports
+      // (`@rexezuge/d1` → `@rexezuge/errors`); the worker bundle must resolve
+      // every one or workerd fails the import at runtime.
+      { find: /^@rexezuge\/d1$/, replacement: rexezugeDist('d1') },
+      { find: /^@rexezuge\/errors$/, replacement: rexezugeDist('errors') },
+      { find: /^@rexezuge\/http$/, replacement: rexezugeDist('http') },
+      { find: /^@rexezuge\/i18n$/, replacement: rexezugeDist('i18n') },
+      { find: /^@rexezuge\/identity$/, replacement: rexezugeDist('identity') },
+      { find: /^@rexezuge\/runtime$/, replacement: rexezugeDist('runtime') },
+      { find: /^@rexezuge\/shared$/, replacement: rexezugeDist('shared') },
       { find: /^@\//, replacement: `${apiSrcPath}/` },
     ],
   },

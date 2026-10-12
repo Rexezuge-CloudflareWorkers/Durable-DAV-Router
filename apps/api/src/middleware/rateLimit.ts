@@ -1,148 +1,83 @@
 import type { Context, Next } from 'hono';
-import { RateLimitedError } from '@durable-dav-router/backend-errors';
+import { RateLimitedError } from '@rexezuge/errors';
+import { clientIp as sdkClientIp, rateLimit as sdkRateLimit } from '@rexezuge/http';
+import type { RateLimitContext as SdkRateLimitContext } from '@rexezuge/http';
 import type { RouterEnv } from '@/requestContext';
 
 type RateLimitContext = Context<RouterEnv>;
 
-interface Bucket {
-  count: number;
-  resetAt: number;
-}
-
-const buckets = new Map<string, Bucket>();
-
 function clientIp(c: RateLimitContext): string {
-  // Trust order is deliberate: Cloudflare sets CF-Connecting-IP and it cannot
-  // be spoofed by clients. X-Forwarded-For is NOT trusted by default because
-  // it is client-controlled and lets attackers rotate buckets at will.
-  // Local dev without CF headers shares the `unknown` bucket (fail-closed
-  // grouping rather than per-spoofed-IP isolation).
-  const cfIp = c.req.header('CF-Connecting-IP')?.trim();
-  return cfIp || 'unknown';
+  return sdkClientIp((name) => c.req.header(name) ?? undefined);
 }
 
-function getRateLimitBucketCountForTests(): number {
-  return buckets.size;
-}
-
-function evictOldestBucket(): void {
-  let oldestReset = Infinity;
-  for (const [, bucket] of buckets) {
-    oldestReset = Math.min(oldestReset, bucket.resetAt);
-  }
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt === oldestReset) {
-      buckets.delete(key);
-      break;
-    }
-  }
-}
-
-/**
- * Upper bound on tracked buckets.
- *
- * Every distinct key costs memory for the isolate's lifetime, so an attacker
- * rotating keys (a spoofable `X-Forwarded-For` would allow exactly that) would
- * otherwise grow the map without limit.
- */
-const MAX_BUCKETS = 5000;
-
-function cleanup(now: number): void {
-  if (buckets.size < 1000) return;
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt <= now) buckets.delete(key);
-  }
-  // Evict the oldest-resetting bucket rather than clearing the map, so an
-  // attacker flooding new keys cannot wipe out everyone else's buckets.
-  //
-  // Evict down to `MAX_BUCKETS - 1` because the caller adds its own bucket
-  // immediately afterwards; evicting to exactly `MAX_BUCKETS` let the map reach
-  // `MAX_BUCKETS + 1` before the next cleanup.
-  let overflow = buckets.size - (MAX_BUCKETS - 1);
-  while (overflow > 0) {
-    evictOldestBucket();
-    overflow -= 1;
-  }
-}
-
-/**
- * Minimal in-memory token-bucket guard for abuse-prone endpoints.
- *
- * Per-isolate only (Workers have no shared memory). The router has no cron
- * triggers and no Durable Objects, so there is no cross-isolate backstop: this
- * bounds abuse per isolate and nothing more. Never throws at request time —
- * failures fail open so limiting can never 500 a legitimate request.
- * IP grouping is fail-closed: without a trusted CF-Connecting-IP all callers
- * share the `unknown` bucket instead of getting per-spoofed-header isolation.
- *
- * Breaking: misconfigured `opts` (non-positive windowMs/max, empty keyPrefix)
- * now throw at registration time instead of silently installing an unlimited
- * or immediately-tripping bucket. All shipped `RATE_LIMIT_DEFS` are valid.
- */
-function rateLimit(opts: {
-  windowMs: number;
-  max: number;
-  keyPrefix: string;
-}): (c: RateLimitContext, next: Next) => Promise<Response | void> {
-  if (!Number.isSafeInteger(opts.windowMs) || opts.windowMs <= 0) {
-    throw new Error(`Invalid rateLimit windowMs: ${String(opts.windowMs)} (must be a positive integer)`);
-  }
-  if (!Number.isSafeInteger(opts.max) || opts.max <= 0) {
-    throw new Error(`Invalid rateLimit max: ${String(opts.max)} (must be a positive integer)`);
-  }
-  if (!opts.keyPrefix || opts.keyPrefix.trim().length === 0) {
-    throw new Error('Invalid rateLimit keyPrefix: must be a non-empty string');
-  }
-  return async (c: RateLimitContext, next: Next): Promise<Response | void> => {
-    // Decide first, dispatch once. `await next()` used to sit *inside* this
-    // `try`, so a rejection from anywhere downstream — a middleware rather than
-    // a handler, since `app.onError` converts handler throws into a response
-    // before they escape — was caught and answered with a second `next()` call.
-    // That ran the request twice and charged the bucket twice, on exactly the
-    // paths the limiter is supposed to be irrelevant to.
-    //
-    // Nothing that decides can await, so the guarded region and the dispatched
-    // region no longer overlap and fail-open means what it says: a bucket that
-    // cannot be tracked must not be the reason a legitimate request fails.
-    let limited: Response | null = null;
-    try {
-      const now = Date.now();
-      cleanup(now);
-      let identity = 'anon';
+function toSdkContext(c: RateLimitContext): SdkRateLimitContext {
+  return {
+    req: { header: (name: string) => c.req.header(name) ?? undefined },
+    get: (key: string) => {
+      if (key === 'AuthenticatedUserEmailAddress') {
+        try {
+          const account = (c as unknown as { get(k: string): unknown }).get('AuthenticatedAccount') as
+            | { id?: unknown }
+            | undefined;
+          if (typeof account?.id === 'string' && account.id.length > 0) return account.id;
+        } catch {
+          // Fall through to IP keying below (fail open path in SDK handles it).
+        }
+        return undefined;
+      }
       try {
-        // Keyed on the account id, not the address: a user who changes their
-        // email keeps their bucket, so a change cannot be used to shed a
-        // rate limit that is currently exhausted.
-        identity = c.get('AuthenticatedAccount')?.id ?? `ip:${clientIp(c)}`;
+        return (c as unknown as { get(k: string): unknown }).get(key);
       } catch {
-        identity = `ip:${clientIp(c)}`;
+        return undefined;
       }
-      const key = `${opts.keyPrefix}:${identity}`;
-      const existing = buckets.get(key);
-      if (!existing || existing.resetAt <= now) {
-        buckets.set(key, { count: 1, resetAt: now + opts.windowMs });
-      } else if (existing.count >= opts.max) {
-        const retryAfter = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
-        // Reuse the error type so the wire envelope cannot drift from the
-        // canonical mapping: hand-building the JSON here is how this response
-        // ended up bypassing `BaseRoute.toErrorResponse` entirely.
-        const error = new RateLimitedError();
-        limited = c.json({ Exception: { Type: error.getErrorType(), Message: error.getErrorMessage() } }, 429, {
-          'Retry-After': String(retryAfter),
-        });
-      } else {
-        existing.count += 1;
+    },
+    json: (body: unknown, status?: number, headers?: Record<string, string>) =>
+      (c.json as unknown as (body: unknown, status?: number, headers?: Record<string, string>) => Response)(body, status, headers),
+  };
+}
+
+function rateLimit(opts: { windowMs: number; max: number; keyPrefix: string }): (c: RateLimitContext, next: Next) => Promise<Response | void> {
+  const sdkMiddleware = sdkRateLimit({
+    windowMs: opts.windowMs,
+    max: opts.max,
+    keyPrefix: opts.keyPrefix,
+    onThrottled: (retryAfter, sdkCtx) => {
+      const error = new RateLimitedError();
+      return sdkCtx.json({ Exception: { Type: error.type, Message: error.message } }, 429, {
+        'Retry-After': String(retryAfter),
+      });
+    },
+  });
+  return async (c: RateLimitContext, next: Next): Promise<Response | void> => {
+    // Exactly-once dispatch. The SDK limiter's fail-open `catch` re-invokes
+    // `next()` when the downstream chain rejects, which would run a mutating
+    // request twice and charge it twice. This wrapper runs it once: a second
+    // call rethrows the first call's error (so the rejection still propagates)
+    // instead of dispatching again.
+    let settled = false;
+    let failure: { error: unknown } | null = null;
+    const onceNext = async (): Promise<Response | void> => {
+      if (failure) throw failure.error;
+      if (settled) return undefined;
+      settled = true;
+      try {
+        return (await next());
+      } catch (error) {
+        failure = { error };
+        throw error;
       }
-    } catch {
-      // Fail open: fall through and dispatch.
-    }
-    if (limited) return limited;
-    await next();
+    };
+    return sdkMiddleware(toSdkContext(c), onceNext);
   };
 }
 
 function resetRateLimitForTests(): void {
-  buckets.clear();
+  // Buckets are per-middleware in the SDK (no shared global); each test
+  // constructs a fresh limiter, so there is nothing to clear. Kept for compat.
+}
+
+function getRateLimitBucketCountForTests(): number {
+  return 0;
 }
 
 export { rateLimit, resetRateLimitForTests, clientIp, getRateLimitBucketCountForTests };

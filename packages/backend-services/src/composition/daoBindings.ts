@@ -1,6 +1,7 @@
 import { RouterBackendDAO, UserDAO, UserEmailDAO } from '@durable-dav-router/backend-data/dao';
-import { Container, memoizeAsync } from '@durable-dav-router/backend-runtime/di';
-import type { Token } from '@durable-dav-router/backend-runtime/di';
+import { Container } from '@rexezuge/runtime';
+import { memoizeAsync } from '@durable-dav-router/backend-runtime/di';
+import type { Token } from '@rexezuge/runtime';
 import { Tokens } from './tokens';
 import type { RequestScopeEnv } from './serviceFactory';
 

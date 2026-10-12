@@ -1,23 +1,6 @@
 import type { Hono } from 'hono';
-import {
-  bodylessMethods,
-  buildProxiedHeaders,
-  describeBackendFailure,
-  explicitBackendSlug,
-  fetchWithTimeout,
-  forwardAuthHeaders,
-  forwardDavRequest,
-  getProxyTimeoutMs,
-  invalidateCachedRoute,
-  isTimeoutError,
-  joinBackendUrl,
-  joinBackendUrlWithoutSelector,
-  markAsRouterRequest,
-  ROUTER_USER_AGENT,
-  selectBackend,
-  truncateSnippet,
-} from '@durable-dav-router/backend-services/router';
-import { NotFoundError } from '@durable-dav-router/backend-errors';
+import { bodylessMethods, buildProxiedHeaders, describeBackendFailure, explicitBackendSlug, fetchWithTimeout, forwardAuthHeaders, forwardDavRequest, getProxyTimeoutMs, invalidateCachedRoute, isTimeoutError, joinBackendUrl, joinBackendUrlWithoutSelector, markAsRouterRequest, ROUTER_USER_AGENT, selectBackend, truncateSnippet } from '@durable-dav-router/backend-services/router';
+import { NotFoundError } from '@rexezuge/errors';
 import { SUPPORT_METHODS } from '@durable-dav-router/webdav';
 import { BaseRoute, handleRoute } from '@/endpoints/IBaseRoute';
 import { resolveBackendService, resolveKvCache } from './scopeAccess';

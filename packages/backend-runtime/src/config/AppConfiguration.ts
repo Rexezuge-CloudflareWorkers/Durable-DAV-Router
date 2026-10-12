@@ -1,4 +1,4 @@
-import { EnvParser } from './EnvParser';
+import { EnvParser } from '@rexezuge/runtime';
 
 import { AuthConfig } from './sections/AuthConfig';
 import { RouterLimits } from './sections/RouterLimits';
@@ -71,13 +71,52 @@ function emptyConfiguration(): AppConfiguration {
  * `deps` seam; the free functions that read a single setting off an arbitrary
  * `env` go through `fromEnv`, which hands back the same instance for the same env.
  */
+/**
+ * Tri-state boolean read: unset — or a value that is not a boolean literal — is
+ * `null`, and only `true`/`false` answer.
+ *
+ * `BackendService` distinguishes an unset value ("follow the environment") from
+ * an explicit one, so coercing a typo to `false` here would report a setting
+ * the deployment never made. A lookup rather than two comparisons: `1`, `yes`,
+ * `on` and typos stay absent from the table instead of reading as "false".
+ *
+ * It lives here rather than in the kit because the kit's `EnvParser` reads with
+ * a default — the opposite contract, where absence collapses into a value.
+ */
+const BOOLEAN_LITERALS: Readonly<Record<string, boolean | undefined>> = Object.freeze({ true: true, false: false });
+
+function optionalBoolean(env: unknown, key: string): boolean | null {
+  const raw = EnvParser.readString(env, key)?.trim().toLowerCase();
+  return raw === undefined || raw.length === 0 ? null : BOOLEAN_LITERALS[raw] ?? null;
+}
+
+/**
+ * The kit ships an abstract `AppConfiguration` prototype a consumer extends
+ * for the two cross-cutting getters it converges (`getSiteUrl`,
+ * `getEnvironment`). This one deliberately does not: `fromEnv` here is
+ * memoized per environment and tolerates a `null` one, and the kit's
+ * prototype answers `fromEnv` with a generic bound to its own class — a
+ * subclass with its own factory therefore cannot override it, and this
+ * configuration is constructed on request paths (route-cache TTL, proxy
+ * timeout, auth bypass) where a fresh object per call would re-parse the
+ * environment every time.
+ *
+ * What the kit does provide is shared and used directly: `EnvParser`, and the
+ * error taxonomy the sections read through. Everything else below is this
+ * repo's, composed from its own sections.
+ */
 class AppConfiguration {
   private readonly router: RouterLimits;
   private readonly auth: AuthConfig;
 
   constructor(private readonly env: unknown) {
-    this.router = new RouterLimits(env);
-    this.auth = new AuthConfig(env);
+    // The kit's `EnvParser` reads properties off `env` directly, so a nullish
+    // env would throw where a default belongs. Fail-soft paths pass whatever
+    // they were given, so normalize once here rather than at every reader.
+    const bindings = env ?? {};
+    this.env = bindings;
+    this.router = new RouterLimits(bindings);
+    this.auth = new AuthConfig(bindings);
   }
 
   public static fromEnv(env: unknown): AppConfiguration {
@@ -118,10 +157,7 @@ class AppConfiguration {
    * report a contradictory setting at startup.
    */
   public getAllowPrivateBackendHosts(): boolean | null {
-    // Tri-state, not boolean-with-default: `BackendService` distinguishes an
-    // unset value ("follow the environment") from an explicit one, so coercing
-    // a typo to `false` here would report a setting the deployment never made.
-    return EnvParser.optionalBoolean(this.env, 'ALLOW_PRIVATE_BACKEND_HOSTS');
+    return optionalBoolean(this.env, 'ALLOW_PRIVATE_BACKEND_HOSTS');
   }
 
   public isDemoMode(): boolean {

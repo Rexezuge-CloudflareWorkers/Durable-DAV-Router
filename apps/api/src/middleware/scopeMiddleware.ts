@@ -1,5 +1,5 @@
 import type { Context, Next } from 'hono';
-import { asScopedContext, setRequestScope } from '@durable-dav-router/backend-runtime/di';
+import { asScopedContext, setRequestScope } from '@rexezuge/runtime';
 import { createRequestScope } from '@durable-dav-router/backend-services/composition';
 import type { RouterEnv } from '../requestContext';
 

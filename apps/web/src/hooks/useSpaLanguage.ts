@@ -5,7 +5,7 @@ import type { CurrentUser } from '../types';
 
 interface UseSpaLanguageInput {
   user: CurrentUser | null;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
   setUser: (user: CurrentUser) => void;
 }
 

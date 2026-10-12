@@ -1,21 +1,21 @@
 import { Route, Routes } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { CurrentUser } from '../../types';
-import Unauthorized from './Unauthorized';
 import { Card } from '../ui/Card';
-import { AppPage } from './AppPage';
+import { AppPage } from '@rexezuge/web';
 import { LandingView } from '../../views/LandingView';
 import { DashboardView } from '../../views/DashboardView';
 import { NewVolumeView } from '../../views/NewVolumeView';
 import { NewBackendView } from '../../views/NewBackendView';
 import { VolumeView } from '../../views/VolumeView';
 import { SettingsView } from '../../views/SettingsView';
+import { Unauthorized } from '@rexezuge/web';
 
 interface SpaViewRouterProps {
   user: CurrentUser | null;
   setUser: (user: CurrentUser) => void;
   authorized: boolean | null;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
   language: string;
   onLanguageChange: (lng: string) => void;
   languageDisabled?: boolean;
@@ -55,7 +55,11 @@ function SpaViewRouter({ user, setUser, authorized, showNotice, language, onLang
             <NewVolumeView showNotice={showNotice} />
           ) : (
             <AppPage>
-              <Unauthorized message={t('errors.signInToCreate', 'Sign In To Create Volumes.')} />
+              <Unauthorized
+                title={t('unauthorized.title', 'Access Required')}
+                message={t('errors.signInToCreate', 'Sign In To Create Volumes.')}
+                actionLabel={t('unauthorized.action', 'Sign In With Cloudflare Access')}
+              />
             </AppPage>
           )
         }
@@ -67,7 +71,11 @@ function SpaViewRouter({ user, setUser, authorized, showNotice, language, onLang
             <NewBackendView showNotice={showNotice} />
           ) : (
             <AppPage>
-              <Unauthorized message={t('errors.signInToManage', 'Sign In To Manage Backends.')} />
+              <Unauthorized
+                title={t('unauthorized.title', 'Access Required')}
+                message={t('errors.signInToManage', 'Sign In To Manage Backends.')}
+                actionLabel={t('unauthorized.action', 'Sign In With Cloudflare Access')}
+              />
             </AppPage>
           )
         }
@@ -87,7 +95,11 @@ function SpaViewRouter({ user, setUser, authorized, showNotice, language, onLang
             />
           ) : (
             <AppPage>
-              <Unauthorized message={t('errors.signInToManage', 'Sign In To Manage Settings.')} />
+              <Unauthorized
+                title={t('unauthorized.title', 'Access Required')}
+                message={t('errors.signInToManage', 'Sign In To Manage Settings.')}
+                actionLabel={t('unauthorized.action', 'Sign In With Cloudflare Access')}
+              />
             </AppPage>
           )
         }

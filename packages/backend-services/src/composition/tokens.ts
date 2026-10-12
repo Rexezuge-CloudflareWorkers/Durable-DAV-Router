@@ -1,6 +1,6 @@
 import type { RouterBackendDAO, UserDAO, UserEmailDAO } from '@durable-dav-router/backend-data/dao';
-import type { Token } from '@durable-dav-router/backend-runtime/di';
-import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
+import type { Token } from '@rexezuge/runtime';
+import type { KvCache } from '@rexezuge/runtime';
 import type { AccessAuthService } from '../auth/AccessAuthService';
 import type { UserIdentityService } from '../identity/UserIdentityService';
 import type { UserService } from '../user/UserService';

@@ -147,11 +147,11 @@
     "preferences": "Preferences",
     "profile": "Profile",
     "selectLanguage": "Select Language",
+    "unknownLanguage": "Unknown Language",
     "userSettings": "User Settings"
   },
   "unauthorized": {
     "action": "Sign In With Cloudflare Access",
-    "defaultMessage": "You Must Authenticate To Access This Page.",
     "title": "Access Required"
   },
   "errors": {

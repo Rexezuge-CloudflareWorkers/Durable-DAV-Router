@@ -6,7 +6,7 @@ import { parentDavPath, stripSlashes } from '../../lib/davXml';
 import { useBusyAction } from '../../hooks/useBusyAction';
 import { copyEntry, createDirectory, deleteEntry, downloadUrl, moveEntry, uploadFile } from '../../services/davClient';
 
-type NoticeFn = (type: 'success' | 'error', text: string) => void;
+type NoticeFn = (kind: 'success' | 'error', message: string) => void;
 
 /**
  * Reject a name that is empty, a traversal segment, or contains a path separator.

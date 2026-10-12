@@ -7,11 +7,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@durable-dav-router/backend-errors": "workspace:*",
     "@durable-dav-router/backend-runtime": "workspace:*",
     "@durable-dav-router/backend-services": "workspace:*",
     "@durable-dav-router/shared": "workspace:*",
     "@durable-dav-router/webdav": "workspace:*",
+    "@rexezuge/d1": "^1.2.0",
+    "@rexezuge/errors": "^1.2.0",
+    "@rexezuge/http": "^1.2.0",
+    "@rexezuge/i18n": "^1.2.0",
+    "@rexezuge/runtime": "^1.2.0",
+    "@rexezuge/shared": "^1.2.0",
     "chanfana": "3.4.0",
     "hono": "4.13.13"
   },

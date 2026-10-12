@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { securityHeaders, SECURITY_HEADERS, isSensitiveJsonPath } from '../apps/api/src/middleware/securityHeaders';
 import { rateLimit, clientIp, resetRateLimitForTests, getRateLimitBucketCountForTests } from '../apps/api/src/middleware/rateLimit';
 import { RATE_LIMIT_DEFS } from '../apps/api/src/middleware/rateLimitConfig';
-import { UnauthorizedError, ForbiddenError, BadRequestError, RateLimitedError } from '@durable-dav-router/backend-errors';
+import { UnauthorizedError, ForbiddenError, BadRequestError, RateLimitedError } from '@rexezuge/errors';
 
 // `securityHeaders()` takes no arguments and returns the middleware, so the
 // context type is the middleware's *first* parameter. Reaching for
@@ -191,11 +191,31 @@ describe('rateLimit', () => {
     const second = makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.8' } });
     const res = (await middleware(second as never, async () => undefined)) as Response;
     const body = (await res.json()) as { Exception: { Type: string; Message: string } };
-    expect(body.Exception.Type).toBe(new RateLimitedError().getErrorType());
-    expect(body.Exception.Message).toBe(new RateLimitedError().getErrorMessage());
+    expect(body.Exception.Type).toBe(new RateLimitedError().type);
+    expect(body.Exception.Message).toBe(new RateLimitedError().message);
+  });
+
+  it('keys the bucket on the account id, not the address or IP', async () => {
+    // A user who changes their email keeps their bucket, so a change cannot
+    // shed an exhausted limit; two accounts behind one NAT do not share one.
+    const middleware = rateLimit({ windowMs: 60_000, max: 1, keyPrefix: 'idkey' });
+    const asAccount = (id: string, ip: string) => {
+      const c = makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': ip } });
+      c.set('AuthenticatedAccount', { id } as never);
+      return c;
+    };
+    await middleware(asAccount('usr_a', '203.0.113.1') as never, async () => undefined);
+    // Same account, different IP: still exhausted.
+    const same = (await middleware(asAccount('usr_a', '203.0.113.2') as never, async () => undefined)) as Response | void;
+    expect((same as Response).status).toBe(429);
+    // Different account, same IP: unaffected.
+    await expect(middleware(asAccount('usr_b', '203.0.113.1') as never, async () => undefined)).resolves.toBeUndefined();
   });
 
   it('keeps separate budgets per identity', async () => {
+    // No authenticated account on these contexts, so the bucket falls back to
+    // the connecting IP: a different caller must not be affected by the first
+    // one's spend.
     const middleware = rateLimit({ windowMs: 60_000, max: 1, keyPrefix: 'sep' });
     const a = makeCtx('https://x/user/me', { headers: { 'CF-Connecting-IP': '203.0.113.1' } });
     await middleware(a as never, async () => undefined);
@@ -292,8 +312,8 @@ describe('error status mapping used by the auth guard', () => {
   it('maps auth failures to the right statuses', () => {
     // These are the classes `userAuthenticationHandler` distinguishes; the
     // statuses are what a client branches on.
-    expect(new UnauthorizedError('x').getErrorCode()).toBe(401);
-    expect(new ForbiddenError('x').getErrorCode()).toBe(403);
-    expect(new BadRequestError('x').getErrorCode()).toBe(400);
+    expect(new UnauthorizedError('x').status).toBe(401);
+    expect(new ForbiddenError('x').status).toBe(403);
+    expect(new BadRequestError('x').status).toBe(400);
   });
 });

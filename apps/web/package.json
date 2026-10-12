@@ -9,6 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@rexezuge/errors": "^1.2.0",
+    "@rexezuge/shared": "^1.2.0",
+    "@rexezuge/web": "^1.2.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "i18next": "^26.4.2",

@@ -1,12 +1,12 @@
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Logo } from '../components/layout/Logo';
 import { UserRound } from 'lucide-react';
 import type { CurrentUser } from '../types';
 import { LanguageSettingsCard } from '../components/settings/LanguageSettingsCard';
 import { ProfileSettingsCard } from '../components/settings/ProfileSettingsCard';
 import { BackendsSettingsCard } from '../components/settings/BackendsSettingsCard';
-import { ContextBar } from '../components/layout/ContextBar';
-import { AppPage } from '../components/layout/AppPage';
-import { PageHeaderCard } from '../components/layout/PageHeaderCard';
+import { ContextBar, AppPage, PageHeaderCard } from '@rexezuge/web';
 
 export function SettingsView({
   user,
@@ -18,7 +18,7 @@ export function SettingsView({
 }: {
   user: CurrentUser;
   setUser: (user: CurrentUser) => void;
-  showNotice: (type: 'success' | 'error', text: string) => void;
+  showNotice: (kind: 'success' | 'error', message: string) => void;
   language: string;
   onLanguageChange: (lng: string) => void;
   languageDisabled?: boolean;
@@ -27,6 +27,11 @@ export function SettingsView({
   return (
     <div>
       <ContextBar
+        home={
+          <Link to="/" aria-label={t('header.home', 'Durable-DAV-Router Home')}>
+            <Logo />
+          </Link>
+        }
         crumb={
           <span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">
             {t('settings.userSettings', 'User Settings')}

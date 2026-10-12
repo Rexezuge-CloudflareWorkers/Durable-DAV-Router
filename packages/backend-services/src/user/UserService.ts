@@ -1,6 +1,6 @@
-import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
-import { NotFoundError } from '@durable-dav-router/backend-errors';
-import { isValidEmailFormat } from '@durable-dav-router/shared/utils';
+import type { D1Queryable } from '@rexezuge/d1';
+import { DatabaseError, NotFoundError } from '@rexezuge/errors';
+import { isValidEmailFormat } from '@rexezuge/shared';
 import { UserIdentityService } from '../identity/UserIdentityService';
 import type { AccountIdentity } from '../identity/UserIdentityService';
 
@@ -49,7 +49,9 @@ class UserService {
     const normalized = email.trim().toLowerCase();
     if (!isValidEmailFormat(normalized)) throw new NotFoundError('User not found');
     const identity = await this.deps.userIdentity();
-    return identity.resolveOrRegister(normalized);
+    const account = await identity.resolveOrRegister(normalized);
+    if (!account) throw new DatabaseError('Failed to register account');
+    return account;
   }
 
   /**

@@ -1,20 +1,8 @@
 import type { Hono } from 'hono';
-import {
-  buildProxiedHeaders,
-  forwardDavRequest,
-  getCachedRoute,
-  getProxyTimeoutMs,
-  invalidateCachedRoute,
-  invalidateCachedRouteIfPresent,
-  joinBackendUrlWithoutSelector,
-  parseDestinationVolume,
-  probeCandidateBackends,
-  putCachedRoute,
-  stripSlashes,
-} from '@durable-dav-router/backend-services/router';
+import { buildProxiedHeaders, forwardDavRequest, getCachedRoute, getProxyTimeoutMs, invalidateCachedRoute, invalidateCachedRouteIfPresent, joinBackendUrlWithoutSelector, parseDestinationVolume, probeCandidateBackends, putCachedRoute, stripSlashes } from '@durable-dav-router/backend-services/router';
 import type { BackendService, CachedRoute } from '@durable-dav-router/backend-services/router';
-import type { KvCache } from '@durable-dav-router/backend-runtime/kv';
-import { DatabaseError } from '@durable-dav-router/backend-errors';
+import type { KvCache } from '@rexezuge/runtime';
+import { DatabaseError } from '@rexezuge/errors';
 import { SUPPORT_METHODS, applyCors } from '@durable-dav-router/webdav';
 import { BaseRoute, handleRoute } from '@/endpoints/IBaseRoute';
 import { resolveBackendService, resolveKvCache } from './scopeAccess';

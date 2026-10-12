@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UserIdentityService } from '@durable-dav-router/backend-services/identity';
 import type { AccountIdentity } from '@durable-dav-router/backend-services/identity';
-import { BadRequestError, ConflictError, NotFoundError } from '@durable-dav-router/backend-errors';
+import { BadRequestError } from '@rexezuge/errors';
 import type { UserDAO, UserEmailDAO } from '@durable-dav-router/backend-data/dao';
-import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
+import type { D1Queryable } from '@rexezuge/d1';
 
 interface UserRecord {
   id: string;
@@ -32,13 +32,16 @@ function harness() {
   const users = new Map<string, UserRecord>();
   const emails = new Map<string, EmailRecord>();
   const userDAO = {
-    createUser: vi.fn(async (input: { id?: string | null; anchor: string; loginEmail: string; now: number }) => {
+    createUser: vi.fn(async (input: { anchor: string; loginEmail: string; now: number }) => {
       const anchor = input.anchor.toLowerCase();
-      // `ON CONFLICT(email) DO NOTHING` — the anchor being taken is a no-op,
-      // not an error, and that is what makes the opaque retry safe.
-      if (users.has(anchor)) return;
-      const id = input.id ?? `usr_${anchor}`;
+      // `ON CONFLICT DO NOTHING` — the anchor being taken is a silent no-op,
+      // and the read-back is what makes that no-op detectable, so the caller
+      // can retry with an opaque anchor.
+      if (users.has(anchor)) return null;
+      const id = `usr_${anchor}`;
       users.set(anchor, { id, email: anchor, current_email: input.loginEmail.toLowerCase(), created_at: input.now });
+      const row = users.get(anchor);
+      return row?.id === id ? id : null;
     }),
     getById: vi.fn(async (id: string) => [...users.values()].find((u) => u.id === id) ?? null),
     getByEmail: vi.fn(async (email: string) => users.get(email.toLowerCase()) ?? null),
@@ -94,6 +97,7 @@ describe('UserIdentityService.resolveAccount', () => {
       id: 'usr_a',
       email: 'alice@corp.com',
       anchorEmail: 'alice@corp.com',
+      username: null,
     });
   });
 
@@ -159,28 +163,29 @@ describe('UserIdentityService.resolveAccount', () => {
   });
 });
 
-describe('UserIdentityService.resolveUserById', () => {
+describe('UserIdentityService.resolveAccountById', () => {
   it('inverts the direction: id to current address', async () => {
     const h = harness();
     const row = seedAccount(h, 'alice@corp.com', 'usr_a');
     row.current_email = 'alice@newcorp.com';
-    const byId = await h.identity.resolveUserById('usr_a');
+    const byId = await h.identity.resolveAccountById('usr_a');
     expect(byId).toEqual({
       id: 'usr_a',
       email: 'alice@newcorp.com',
       anchorEmail: 'alice@corp.com',
+      username: null,
     });
   });
 
   it('returns null for an unknown id', async () => {
-    expect(await harness().identity.resolveUserById('usr_missing')).toBeNull();
+    expect(await harness().identity.resolveAccountById('usr_missing')).toBeNull();
   });
 });
 
 describe('UserIdentityService.resolveOrRegister', () => {
   it('anchors a new account on its own address, keeping the pre-0004 shape', async () => {
     const h = harness();
-    const account = await h.identity.resolveOrRegister('Bob@Example.com');
+    const account = (await h.identity.resolveOrRegister('Bob@Example.com'))!;
     expect(account.anchorEmail).toBe('bob@example.com');
     expect(h.users.has('bob@example.com')).toBe(true);
   });
@@ -188,7 +193,7 @@ describe('UserIdentityService.resolveOrRegister', () => {
   it('does nothing when the address already identifies an account', async () => {
     const h = harness();
     seedAccount(h, 'bob@example.com', 'usr_b');
-    const existing = await h.identity.resolveOrRegister('bob@example.com');
+    const existing = (await h.identity.resolveOrRegister('bob@example.com'))!;
     expect(existing.id).toBe('usr_b');
     expect(h.userDAO.createUser).not.toHaveBeenCalled();
   });
@@ -200,7 +205,7 @@ describe('UserIdentityService.resolveOrRegister', () => {
     const h = harness();
     seedAccount(h, 'alice@corp.com', 'usr_a');
     h.emails.get('alice@corp.com')!.is_verified = 0;
-    const account = await h.identity.resolveOrRegister('alice@corp.com');
+    const account = (await h.identity.resolveOrRegister('alice@corp.com'))!;
     expect(account.id).not.toBe('usr_a');
     expect(account.anchorEmail).toMatch(/^anchor-[0-9a-f]{32}@users\.invalid$/);
     // Alice's anchor row is untouched — the cascade still resolves to her.
@@ -217,7 +222,7 @@ describe('UserIdentityService.setPrimaryEmail', () => {
     const h = harness();
     seedAccount(h, 'alice@corp.com', 'usr_a');
     const account = await h.identity.setPrimaryEmail('usr_a', 'Alice@NewCorp.com');
-    expect(account).toEqual({ id: 'usr_a', email: 'alice@newcorp.com', anchorEmail: 'alice@corp.com' });
+    expect(account).toEqual({ id: 'usr_a', email: 'alice@newcorp.com', anchorEmail: 'alice@corp.com', username: null });
     expect(h.users.get('alice@corp.com')?.current_email).toBe('alice@newcorp.com');
     // The anchor is frozen: `router_backends.owner_email` cascades from it, so
     // updating it would fail the FK or delete the user's backends.
@@ -249,7 +254,7 @@ describe('UserIdentityService.setPrimaryEmail', () => {
     const h = harness();
     seedAccount(h, 'alice@corp.com', 'usr_a');
     seedAccount(h, 'bob@corp.com', 'usr_b');
-    await expect(h.identity.setPrimaryEmail('usr_a', 'bob@corp.com')).rejects.toBeInstanceOf(ConflictError);
+    await expect(h.identity.setPrimaryEmail('usr_a', 'bob@corp.com')).rejects.toBeInstanceOf(BadRequestError);
     // Nothing was half-applied.
     expect(h.users.get('alice@corp.com')?.current_email).toBe('alice@corp.com');
   });
@@ -266,7 +271,7 @@ describe('UserIdentityService.setPrimaryEmail', () => {
   it('rejects an unknown account and a malformed address', async () => {
     const h = harness();
     seedAccount(h, 'alice@corp.com', 'usr_a');
-    await expect(h.identity.setPrimaryEmail('usr_missing', 'x@y.com')).rejects.toBeInstanceOf(NotFoundError);
+    await expect(h.identity.setPrimaryEmail('usr_missing', 'x@y.com')).rejects.toBeInstanceOf(BadRequestError);
     await expect(h.identity.setPrimaryEmail('usr_a', 'nope')).rejects.toBeInstanceOf(BadRequestError);
   });
 
@@ -307,7 +312,7 @@ describe('UserIdentityService.linkVerifiedEmail', () => {
     const h = harness();
     seedAccount(h, 'alice@corp.com', 'usr_a');
     seedAccount(h, 'bob@corp.com', 'usr_b');
-    await expect(h.identity.linkVerifiedEmail('usr_a', 'bob@corp.com')).rejects.toBeInstanceOf(ConflictError);
+    await expect(h.identity.linkVerifiedEmail('usr_a', 'bob@corp.com')).rejects.toBeInstanceOf(BadRequestError);
   });
 });
 
@@ -318,6 +323,6 @@ describe('account shape', () => {
     const h = harness();
     seedAccount(h, 'alice@corp.com', 'usr_a');
     const account: AccountIdentity = (await h.identity.resolveAccount('alice@corp.com'))!;
-    expect(Object.keys(account).sort()).toEqual(['anchorEmail', 'email', 'id']);
+    expect(Object.keys(account).sort()).toEqual(['anchorEmail', 'email', 'id', 'username']);
   });
 });

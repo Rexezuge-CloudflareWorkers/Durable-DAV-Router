@@ -1,10 +1,14 @@
-import { EnvParser } from '../EnvParser';
+import { EnvParser } from '@rexezuge/runtime';
 import { DEFAULT_BACKEND_FETCH_TIMEOUT_MS, DEFAULT_MAX_BACKENDS_PER_USER, DEFAULT_ROUTE_CACHE_TTL_SECONDS } from '../ConfigurationDefaults';
 
 // Router registry + reverse-proxy limits (Strategy: one section per
 // config concern so `AppConfiguration` stays a thin Facade).
 class RouterLimits {
-  constructor(private readonly env: unknown) {}
+  private readonly env: unknown;
+
+  constructor(env: unknown) {
+    this.env = env ?? {};
+  }
 
   public getMaxBackendsPerUser(): number {
     return EnvParser.positiveInt(this.env, 'MAX_BACKENDS_PER_USER', DEFAULT_MAX_BACKENDS_PER_USER);

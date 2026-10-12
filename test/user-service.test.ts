@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UserService } from '@durable-dav-router/backend-services/user';
-import { NotFoundError } from '@durable-dav-router/backend-errors';
+import { DatabaseError, NotFoundError } from '@rexezuge/errors';
 import { UserIdentityService } from '@durable-dav-router/backend-services/identity';
 import type { UserDAO, UserEmailDAO } from '@durable-dav-router/backend-data/dao';
-import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
+import type { D1Queryable } from '@rexezuge/d1';
 
 /**
  * `users` + `user_emails` as two maps, so the registry and the anchor table
@@ -31,11 +31,12 @@ function fakeIdentityDao(seed: Array<{ email: string; id?: string }> = []) {
 const svc = (seed: Array<{ email: string; id?: string }> = []) => {
   const { users, emails } = fakeIdentityDao(seed);
   const userDAO = {
-    createUser: vi.fn(async (input: { id?: string | null; anchor: string; loginEmail: string; now: number }) => {
+    createUser: vi.fn(async (input: { anchor: string; loginEmail: string; now: number }) => {
       const anchor = input.anchor.toLowerCase();
-      if (users.has(anchor)) return;
-      const id = input.id ?? `usr_${anchor}`;
+      if (users.has(anchor)) return null;
+      const id = `usr_${anchor}`;
       users.set(anchor, { id, email: anchor, current_email: input.loginEmail.toLowerCase(), created_at: input.now });
+      return id;
     }),
     getById: vi.fn(async (id: string) => [...users.values()].find((u) => u.id === id) ?? null),
     getByEmail: vi.fn(async (email: string) => users.get(email.toLowerCase()) ?? null),
@@ -105,6 +106,23 @@ describe('UserService.upsertUser', () => {
     const { service, users } = svc();
     await expect(service.upsertUser('not-an-email')).rejects.toBeInstanceOf(NotFoundError);
     expect(users.size).toBe(0);
+  });
+
+  it('surfaces a registration failure as a DatabaseError, not a null account', async () => {
+    // The SDK reports "no account could be produced" as `null` (a revoked
+    // address that registration could not place); the route needs an error to
+    // map, not a null it would 500 on while rendering.
+    const service = new UserService(
+      { DB: {} as D1Queryable },
+      {
+        userIdentity: () =>
+          Promise.resolve({
+            resolveOrRegister: async () => null,
+            resolveAccount: async () => null,
+          } as unknown as UserIdentityService),
+      },
+    );
+    await expect(service.upsertUser('user@example.com')).rejects.toBeInstanceOf(DatabaseError);
   });
 });
 

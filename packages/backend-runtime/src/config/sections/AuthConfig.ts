@@ -1,4 +1,4 @@
-import { EnvParser } from '../EnvParser';
+import { EnvParser } from '@rexezuge/runtime';
 import { DEFAULT_ENVIRONMENT } from '../ConfigurationDefaults';
 
 /**
@@ -10,7 +10,11 @@ const BYPASS_ALLOWED_ENVIRONMENTS: ReadonlySet<string> = new Set(['development',
 
 // Auth / environment identity. Centralizes TEAM_DOMAIN/POLICY_AUD/DEV+DEMO vars.
 class AuthConfig {
-  constructor(private readonly env: unknown) {}
+  private readonly env: unknown;
+
+  constructor(env: unknown) {
+    this.env = env ?? {};
+  }
 
   public getEnvironment(): string {
     const raw = EnvParser.string(this.env, 'ENVIRONMENT', DEFAULT_ENVIRONMENT);

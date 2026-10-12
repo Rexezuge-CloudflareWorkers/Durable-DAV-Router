@@ -1,15 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RouterBackendDAO } from '@durable-dav-router/backend-data/dao';
 import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
-import type { D1Queryable } from '@durable-dav-router/backend-data/utils';
+import type { D1Queryable } from '@rexezuge/d1';
 import { BackendService } from '@durable-dav-router/backend-services/router';
-import {
-  buildProxiedHeaders,
-  filterProxiedResponseHeaders,
-  getProxyTimeoutMs,
-  stripSlashes,
-  stripTrailingSlashes,
-} from '@durable-dav-router/backend-services/router';
+import { buildProxiedHeaders, filterProxiedResponseHeaders, getProxyTimeoutMs, stripSlashes, stripTrailingSlashes } from '@durable-dav-router/backend-services/router';
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
 import { Tokens, createRequestScope } from '@durable-dav-router/backend-services/composition';
 
@@ -143,7 +137,7 @@ describe('RouterBackendDAO', () => {
 });
 
 describe('BackendService extended', () => {
-  const account = { id: 'usr_u', email: 'u@e.com', anchorEmail: 'u@e.com' };
+  const account = { id: 'usr_u', email: 'u@e.com', anchorEmail: 'u@e.com', username: null };
 
   it('rejects invalid slug and baseUrl', async () => {
     const svc = new BackendService({ DB: fakeDb() });
@@ -167,19 +161,19 @@ describe('BackendService extended', () => {
     // frozen anchor and `owner_user_id` the identity, so moving `email` must
     // change nothing an owner-scoped read depends on.
     const svc = new BackendService({ DB: fakeDb() });
-    const before = { id: 'usr_u', email: 'old@e.com', anchorEmail: 'u@e.com' };
+    const before = { id: 'usr_u', email: 'old@e.com', anchorEmail: 'u@e.com', username: null };
     await svc.createBackend({ owner: before, slug: 'office', baseUrl: 'https://a.example.com' });
-    const after = { id: 'usr_u', email: 'new@e.com', anchorEmail: 'u@e.com' };
+    const after = { id: 'usr_u', email: 'new@e.com', anchorEmail: 'u@e.com', username: null };
     await expect(svc.listBackends(after)).resolves.toHaveLength(1);
     await expect(svc.getBackend(after, 'office')).resolves.toMatchObject({ slug: 'office' });
   });
 
   it('does not leak another account’s backends across a shared sign-in address', async () => {
     const svc = new BackendService({ DB: fakeDb() });
-    await svc.createBackend({ owner: { id: 'usr_a', email: 'shared@e.com', anchorEmail: 'alice@e.com' }, slug: 'a', baseUrl: 'https://a.example.com' });
-    await svc.createBackend({ owner: { id: 'usr_b', email: 'shared@e.com', anchorEmail: 'bob@e.com' }, slug: 'b', baseUrl: 'https://b.example.com' });
+    await svc.createBackend({ owner: { id: 'usr_a', email: 'shared@e.com', anchorEmail: 'alice@e.com', username: null }, slug: 'a', baseUrl: 'https://a.example.com' });
+    await svc.createBackend({ owner: { id: 'usr_b', email: 'shared@e.com', anchorEmail: 'bob@e.com', username: null }, slug: 'b', baseUrl: 'https://b.example.com' });
     // Same `email`, different accounts. Ownership is decided by id.
-    const asAlice = { id: 'usr_a', email: 'shared@e.com', anchorEmail: 'alice@e.com' };
+    const asAlice = { id: 'usr_a', email: 'shared@e.com', anchorEmail: 'alice@e.com', username: null };
     await expect(svc.listBackends(asAlice)).resolves.toMatchObject([{ slug: 'a' }]);
   });
 

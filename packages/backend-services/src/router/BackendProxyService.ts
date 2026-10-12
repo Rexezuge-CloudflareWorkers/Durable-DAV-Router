@@ -1,5 +1,5 @@
 import { AppConfiguration } from '@durable-dav-router/backend-runtime/config';
-import { stripTrailingSlashes } from '@durable-dav-router/shared/utils';
+import { stripTrailingSlashes } from '@durable-dav-router/shared/utils/Strip';
 
 // Request headers forwarded verbatim to the backend. `content-length` is
 // deliberately absent: the runtime recomputes it from the stream we hand it,
@@ -249,4 +249,4 @@ export {
 };
 export type { BackendResolution, RoutableBackend };
 
-export {stripTrailingSlashes} from '@durable-dav-router/shared/utils';
+export { stripTrailingSlashes } from '@durable-dav-router/shared/utils/Strip';

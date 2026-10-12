@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn } from '@rexezuge/web';
 import { Logo } from './Logo';
 
 export function Header({ userEmail }: { userEmail: string | null }) {
