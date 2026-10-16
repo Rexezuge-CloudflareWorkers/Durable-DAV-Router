@@ -55,8 +55,8 @@ export function NewVolumeView({ showNotice }: { showNotice: (kind: 'success' | '
     void getBackendIdentity(backend.trim())
       .then((identity) => {
         if (cancelled) return;
-        if (identity.username?.trim()) setOwnerState({ status: 'ready', username: identity.username.trim() });
-        else setOwnerState({ status: 'missing' });
+        const username = identity.username?.trim();
+        setOwnerState(username ? { status: 'ready', username } : { status: 'missing' });
       })
       .catch(() => {
         if (cancelled) return;

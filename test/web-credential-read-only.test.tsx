@@ -17,7 +17,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
  * under test. The other SPA tests here do not notice, because none of them
  * re-render after a write.
  */
-const translate = (key: string, fallback?: string) => fallback ?? key;
+const translate = (key: string, fallback = key) => fallback;
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: translate }),

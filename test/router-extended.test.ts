@@ -17,8 +17,8 @@ import { Tokens, createRequestScope } from '@durable-dav-router/backend-services
  * look correct, which is how a `lower(col) = lower(?)` survived a full suite
  * before the query plan caught it. The integration suite asserts the plans.
  */
-function fakeDb(rows: RouterBackendRow[] = []): D1Queryable {
-  const store = new Map(rows.map((r) => [r.id, { ...r }]));
+function fakeDb(): D1Queryable {
+  const store = new Map<string, RouterBackendRow>();
   return {
     prepare(query: string) {
       const state: { sql: string; values: unknown[] } = { sql: query, values: [] };

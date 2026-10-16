@@ -214,7 +214,7 @@ function parseDestinationVolume(routerOrigin: string, destination: string | null
     if (segs.length < 2) return null;
     const owner = safeDecode(segs[0]);
     const volume = safeDecode(segs[1]);
-    return !owner || !volume ? null : { owner, volume };
+    return owner && volume ? { owner, volume } : null;
   } catch {
     return null;
   }

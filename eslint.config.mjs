@@ -77,7 +77,9 @@ export default tseslint.config(
   },
 
   // --- Unicorn: modern JS/TS quality rules ---
-  unicorn.configs['flat/recommended'],
+  // unicorn v78 dropped the `flat/*` aliases (`configs['flat/recommended']`);
+  // `configs.recommended` is now the flat (object) config directly.
+  unicorn.configs.recommended,
   {
     rules: {
       // Codebase uses ctx, req, res, env, err, util, db, dao, etc. — too invasive to rename
@@ -104,6 +106,15 @@ export default tseslint.config(
       'unicorn/prefer-spread': 'off',
       // Entire codebase uses PascalCase for TS files; kebab-case would require mass renames
       'unicorn/filename-case': 'off',
+      // The ` * ` gutter is the conventional shape of a `/** … */` documentation
+      // block — it is what editors fold, what jsdoc renders, and what every
+      // module in this repo uses to document deliberately. The v78 fixer
+      // rewrites `/**\n * text\n */` into bare `/**\ntext\n*/` and strips the
+      // block's shared indentation; across this codebase that is ~90 files and
+      // ~1,900 lines of churn that de-aligns the documentation for no runtime
+      // value, and it can reflow indented content (tables, code samples) inside
+      // a comment. The style is a convention, not a defect.
+      'unicorn/no-asterisk-prefix-in-documentation-comments': 'off',
       // Established names (ApplicationContextDocument, BaseUrlUtil, etc.) should not be force-renamed
       'unicorn/name-replacements': 'off',
       // Zod schema builder chains and other deep method chains are intentional
@@ -128,6 +139,20 @@ export default tseslint.config(
       'unicorn/no-array-callback-reference': 'warn',
       // toSorted() is ES2023 and may not be in all tsconfig lib targets
       'unicorn/no-array-sort': 'warn',
+    },
+  },
+
+  // Vendor config modules are entry points the host tool evaluates for their
+  // side effects: module-scope plugin factories *are* the config. The rule
+  // cannot model this even via its `allow` option — a call nested inside
+  // `defineConfig({ plugins: [react()] })` is judged by the raw
+  // `hasSideEffect` walk, which reports every `CallExpression`, and the
+  // `allow`-listed names only apply to calls reached directly. Scoped off for
+  // exactly the two file shapes, not for config modules generally.
+  {
+    files: ['**/vite.config.{ts,mts,js,mjs}', '**/vitest.config.{ts,mts,js,mjs}'],
+    rules: {
+      'unicorn/no-top-level-side-effects': 'off',
     },
   },
 

@@ -10,7 +10,7 @@ import { render, screen } from '@testing-library/react';
  */
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, fallback = key) => fallback,
   }),
   initReactI18next: { type: '3rdParty', init: () => undefined },
 }));
@@ -70,8 +70,8 @@ function renderList(backend?: string | null, entries: DavEntry[] = [FILE_ENTRY])
 /**
 The `href` of the row's download link, or null when the row has none.
 */
-function downloadHref(name = 'Download'): string | null {
-  const link = screen.queryByLabelText(name);
+function downloadHref(): string | null {
+  const link = screen.queryByLabelText('Download');
   return link?.getAttribute('href') ?? null;
 }
 

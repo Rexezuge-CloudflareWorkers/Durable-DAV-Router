@@ -32,7 +32,7 @@ const BASE_DETAIL: VolumeDetail = {
   href: '/alice/photos/',
 };
 
-function renderCard(detail: VolumeDetail = BASE_DETAIL, backend?: string | null) {
+function renderCard(detail: VolumeDetail = BASE_DETAIL) {
   const onUpdated = vi.fn();
   const showNotice = vi.fn();
   render(
@@ -42,7 +42,6 @@ function renderCard(detail: VolumeDetail = BASE_DETAIL, backend?: string | null)
       detail={detail}
       showNotice={showNotice}
       onUpdated={onUpdated}
-      backend={backend}
     />,
   );
   return { onUpdated, showNotice };

@@ -31,10 +31,10 @@ afterEach(cleanup);
  */
 describe('useAsyncLoad', () => {
   function Probe({ load, onError, reloadKey }: { load: () => Promise<string>; onError?: (e: unknown) => void; reloadKey?: string }) {
-    const { data, loading, reload, patch } = useAsyncLoad(load, { onError, reloadKey });
+    const { data = 'none', loading, reload, patch } = useAsyncLoad(load, { onError, reloadKey });
     return (
       <div>
-        <span data-testid="value">{data ?? 'none'}</span>
+        <span data-testid="value">{data}</span>
         <span data-testid="loading">{loading ? 'yes' : 'no'}</span>
         <button onClick={reload}>reload</button>
         <button

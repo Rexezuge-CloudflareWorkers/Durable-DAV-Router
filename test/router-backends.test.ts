@@ -16,14 +16,14 @@ function account(email = 'user@example.com', id = 'usr_test1'): AccountIdentity 
   return { id, email, anchorEmail: email, username: null };
 }
 
-function row(slug: string, baseUrl = 'https://backend.example.com'): RouterBackendRow {
+function row(slug: string): RouterBackendRow {
   return {
     id: `id-${slug}`,
     owner_email: 'user@example.com',
     owner_user_id: 'usr_test1',
     slug,
     slug_ci: slug.toLowerCase(),
-    base_url: baseUrl,
+    base_url: 'https://backend.example.com',
     display_name: null,
     created_at: 1,
     updated_at: 1,
@@ -187,8 +187,8 @@ describe('classifyProbeStatus', () => {
 });
 
 describe('BackendService with fakes', () => {
-  function fakeDAO(seed: RouterBackendRow[] = []) {
-    const store = new Map(seed.map((r) => [r.id, { ...r }]));
+  function fakeDAO() {
+    const store = new Map<string, RouterBackendRow>();
     return {
       getByOwnerSlug: async (ownerUserId: string, slug: string) =>
         [...store.values()].find((r) => r.owner_user_id === ownerUserId && r.slug_ci === slug.toLowerCase()) ?? null,

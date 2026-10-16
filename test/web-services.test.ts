@@ -71,7 +71,7 @@ async function withFetch<T>(body: string, run: () => Promise<T>, status = 200): 
  */
 async function recordedJson(call: Call | undefined): Promise<unknown> {
   const body = call?.init.body;
-  if (typeof body !== 'string') throw new Error(`expected a string request body, received ${typeof body}`);
+  if (typeof body !== 'string') throw new TypeError(`expected a string request body, received ${typeof body}`);
   return JSON.parse(body);
 }
 

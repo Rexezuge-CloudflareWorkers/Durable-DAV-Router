@@ -5,8 +5,8 @@ import { buildKvKey, clampTtl, KV_DOMAINS, KvCache } from '@rexezuge/runtime';
 /**
 `KVNamespace` double that counts operations, so a test can assert cost.
 */
-function countingKv(initial: Record<string, string> = {}) {
-  const store = new Map(Object.entries(initial));
+function countingKv() {
+  const store = new Map<string, string>();
   const ops = { get: 0, put: 0, delete: 0 };
   return {
     store,
