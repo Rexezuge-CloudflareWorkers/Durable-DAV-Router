@@ -61,9 +61,10 @@ const probe = {
  * Renders the card with a route table, so the `/backends/new` link and the
  * navigation it performs are both real rather than asserted on the handler.
  */
-function renderCard(showNotice = vi.fn(), initialPath = '/') {
+function renderCard() {
+  const showNotice = vi.fn();
   const utils = render(
-    <MemoryRouter initialEntries={[initialPath]}>
+    <MemoryRouter initialEntries={['/']}>
       <BackendsSettingsCard showNotice={showNotice} />
       <Routes>
         <Route path="/backends/new" element={<div>new backend form</div>} />

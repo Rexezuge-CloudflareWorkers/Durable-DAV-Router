@@ -23,11 +23,11 @@ import type { RouterBackendRow } from '@durable-dav-router/backend-data/dao';
 
 afterEach(() => vi.restoreAllMocks());
 
-const backend = (id: string, baseUrl: string, slug = `s${id}`): RouterBackendRow => ({
+const backend = (id: string, baseUrl: string): RouterBackendRow => ({
   id,
   owner_email: 'u@example.com',
-  slug,
-  slug_ci: slug.toLowerCase(),
+  slug: `s${id}`,
+  slug_ci: `s${id}`.toLowerCase(),
   base_url: baseUrl,
   display_name: null,
   created_at: 1,

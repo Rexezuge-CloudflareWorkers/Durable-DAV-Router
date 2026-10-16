@@ -14,7 +14,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
  * here has to say so.
  */
 const i18nDouble = vi.hoisted(() => ({
-  translation: { t: (key: string, fallback?: string) => fallback ?? key },
+  translation: { t: (key: string, fallback = key) => fallback },
 }));
 
 /**

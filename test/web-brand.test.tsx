@@ -14,7 +14,7 @@ import indexHtml from '../apps/web/index.html?raw';
 // against each other and never against the source.
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, fallback = key) => fallback,
   }),
 }));
 

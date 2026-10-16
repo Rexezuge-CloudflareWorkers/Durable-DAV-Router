@@ -87,8 +87,7 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
               number,
             ];
             const owned = [...rows.values()].filter((r) => eq(r.owner_user_id, ownerForQuota));
-            if (owned.length >= max) return { success: true, meta: { changes: 0 } };
-            if (owned.some((r) => eq(r.slug_ci, slugCi))) {
+            if (owned.length >= max || owned.some((r) => eq(r.slug_ci, slugCi))) {
               return { success: true, meta: { changes: 0 } };
             }
             rows.set(id, {

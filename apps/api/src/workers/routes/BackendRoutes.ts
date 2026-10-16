@@ -126,9 +126,9 @@ async function readCreateBody(c: RouteContext): Promise<{ body: CreateBackendBod
   if (typeof body.baseUrl !== 'string' || body.baseUrl.trim().length === 0) {
     return { error: BaseRoute.jsonError(c, 'baseUrl is required', 400) };
   }
-  return body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== 'string'
-    ? { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) }
-    : { body };
+  return body.displayName === undefined || body.displayName === null || typeof body.displayName === 'string'
+    ? { body }
+    : { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) };
 }
 
 /**

@@ -459,8 +459,8 @@ describe('RouterDavProxyRoutes owner routing', () => {
 });
 
 // In-memory fake of the single CACHE binding (structural KvNamespaceLike).
-function makeFakeKv(initial: Record<string, string> = {}) {
-  const store = new Map(Object.entries(initial));
+function makeFakeKv() {
+  const store = new Map<string, string>();
   return {
     store,
     get(key: string): Promise<string | null> {
@@ -565,7 +565,7 @@ function stubEverythingAnswers207(): void {
  * refusal has upstream, so a test can assert the router relays it rather than
  * re-authoring or embellishing it.
  */
-function stubForwardStatus(status: number): CapturedFetch[] {
+function stubForwardStatus(): CapturedFetch[] {
   const calls: CapturedFetch[] = [];
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);
@@ -575,7 +575,7 @@ function stubForwardStatus(status: number): CapturedFetch[] {
       return new Response('<ok/>', { status: 207, headers: { 'Content-Type': 'application/xml' } });
     }
     return new Response('<?xml version="1.0" encoding="utf-8"?>\n<D:error xmlns:D="DAV:"><D:cannot-modify-protected-property/></D:error>', {
-      status,
+      status: 403,
       headers: { 'Content-Type': 'application/xml; charset=utf-8' },
     });
   });
@@ -786,7 +786,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // set, and `trackVolumeMutation` must skip it as it skips every non-2xx.
     // A client looping on a refused PUT is the exact shape that once spent the
     // daily write budget in ~40 minutes while answering every request correctly.
-    stubForwardStatus(403);
+    stubForwardStatus();
     const kv = countingKv({
       'metadata:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
     });
@@ -805,7 +805,7 @@ describe('RouterDavProxyRoutes KV write budget', () => {
     // not add `WWW-Authenticate` — that header on a 403 sends a native client
     // into a re-prompt loop it can never satisfy. Both are asserted because
     // either one would be invisible to a status-only test.
-    const calls = stubForwardStatus(403);
+    const calls = stubForwardStatus();
     const kv = countingKv({
       'metadata:v1:owner:photos': JSON.stringify({ backendId: '1', slug: 'a', baseUrl: 'https://a.example.com' }),
     });
@@ -1086,11 +1086,10 @@ describe('RouterDavProxyRoutes KV route cache', () => {
       const url = requestUrl(input);
       calls.push({ url, init: init ?? {} });
       const headers = new Headers((init?.headers ?? {}) as HeadersInit);
-      if ((init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0') {
-        return new Response('<ok/>', { status: 207 });
-      }
       // A valid backend that is briefly overloaded.
-      return new Response('upstream error', { status: 502 });
+      return (init?.method ?? 'GET') === 'PROPFIND' && headers.get('Depth') === '0'
+        ? new Response('<ok/>', { status: 207 })
+        : new Response('upstream error', { status: 502 });
     });
     const kv = makeFakeKv();
     const seeder = new KvCache(kv as never);

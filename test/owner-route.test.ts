@@ -17,12 +17,12 @@ import type { OwnerRouteInput, RoutableBackend } from '../apps/api/src/workers/r
  * produces those inputs still works.
  */
 
-const backend = (slug: string, baseUrl = `https://${slug}.example.com`): RoutableBackend => ({ id: slug, slug, base_url: baseUrl });
+const backend = (slug: string): RoutableBackend => ({ id: slug, slug, base_url: `https://${slug}.example.com` });
 
-const cachedFor = (slug: string, baseUrl = `https://${slug}.example.com`): CachedRoute => ({
+const cachedFor = (slug: string): CachedRoute => ({
   backendId: slug,
   slug,
-  baseUrl,
+  baseUrl: `https://${slug}.example.com`,
 });
 
 const input = (over: Partial<OwnerRouteInput> = {}): OwnerRouteInput => ({

@@ -28,7 +28,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, Var
 
 export function Button({ className, variant, size, loading, children, disabled, ...props }: ButtonProps) {
   return (
-    <button className={cn(buttonVariants({ variant, size }), className)} disabled={disabled || loading} {...props}>
+    <button className={cn(buttonVariants({ variant, size }), className)} disabled={loading || disabled} {...props}>
       {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
       {children}
     </button>

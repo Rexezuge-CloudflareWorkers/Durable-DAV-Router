@@ -123,11 +123,10 @@ abstract class BaseRoute {
       const header = c.req.header('Accept-Language');
       if (!header) return 'en';
       const first = header.split(',', 1)[0]?.split(';', 1)[0]?.trim();
-      if (!first) return 'en';
       // Canonicalize (`en_us` → `en-US`) so backend string lookup and logs see
       // one tag shape; unknown tags still fall back to `en` downstream via
       // `normalizeLocale` (the kit's i18n).
-      return canonicalizeLanguageTag(first);
+      return first ? canonicalizeLanguageTag(first) : 'en';
     } catch {
       return 'en';
     }
