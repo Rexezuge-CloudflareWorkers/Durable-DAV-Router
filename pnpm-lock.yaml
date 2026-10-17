@@ -19,8 +19,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.0
       '@rexezuge/errors':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       '@rexezuge/http':
         specifier: ^1.9.0
         version: 1.9.0
@@ -148,8 +148,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.0
       '@rexezuge/errors':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       '@rexezuge/http':
         specifier: ^1.9.0
         version: 1.9.0
@@ -179,8 +179,8 @@ importers:
   apps/web:
     dependencies:
       '@rexezuge/errors':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       '@rexezuge/shared':
         specifier: ^1.9.0
         version: 1.9.0
@@ -293,8 +293,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.0
       '@rexezuge/errors':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       '@rexezuge/http':
         specifier: ^1.9.0
         version: 1.9.0
