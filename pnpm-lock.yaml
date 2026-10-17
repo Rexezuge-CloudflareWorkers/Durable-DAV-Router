@@ -34,8 +34,8 @@ importers:
         specifier: ^1.9.0
         version: 1.9.0
       '@rexezuge/shared':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       '@rexezuge/tooling':
         specifier: ^1.2.0
         version: 1.2.0(eslint@10.12.0(jiti@2.7.0))(jsonc-parser@3.3.1)(prettier@3.9.9)(typescript-eslint@8.71.2(eslint@10.12.0(jiti@2.7.0))(typescript@6.0.3))(typescript@6.0.3)(vitest@4.1.11)
@@ -160,8 +160,8 @@ importers:
         specifier: ^1.9.0
         version: 1.9.0
       '@rexezuge/shared':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       chanfana:
         specifier: 3.4.0
         version: 3.4.0
@@ -182,8 +182,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.0
       '@rexezuge/shared':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       '@rexezuge/web':
         specifier: ^1.9.0
         version: 1.9.0(lucide-react@1.57.0(@types/react@19.3.0)(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -308,8 +308,8 @@ importers:
         specifier: ^1.9.0
         version: 1.9.0
       '@rexezuge/shared':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.9.0
+        version: 1.9.0
       jose:
         specifier: 6.2.12
         version: 6.2.12
