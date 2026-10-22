@@ -14,7 +14,10 @@
  *   partially cleaned or half-copied `dist/`, which serves a shell whose JS
  *   404s and therefore renders no bucket browser at all);
  * - `spa-shell.ts` and `apps/web/dist/index.html` disagreeing, i.e. only one of
- *   the two halves of the build was refreshed.
+ *   the two halves of the build was refreshed;
+ * - the built CSS missing the Tailwind utilities the kit's primitives are made
+ *   of, which is the failure where every control renders its markup and none
+ *   of its styling (see `scripts/spa-shell-checks.ts`).
  *
  * Known limit, deliberately stated rather than papered over: this cannot detect a
  * *stale but self-consistent* pair. A `dist/` and a `spa-shell.ts` built together
@@ -26,9 +29,15 @@
  * level by `test/web-davxml.test.ts` and `test/web-davclient.test.ts`. The
  * remaining duty is operational: run `pnpm run build` after touching `apps/web`,
  * before `wrangler deploy`.
+ *
+ * The rules live in `scripts/spa-shell-checks.ts` so they can be unit tested;
+ * this entrypoint only does I/O and reporting. The import is the `.ts` file
+ * because Node ≥ 22.6 strips types, which is how `scripts/validate_locales.ts`
+ * is run too.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { checkCss } from './spa-shell-checks.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SHELL_PATH = join(ROOT, 'apps/api/src/generated/spa-shell.ts');
@@ -88,6 +97,24 @@ function readEmbeddedHtml() {
   return html;
 }
 
+/**
+ * The built CSS, as one string.
+ *
+ * Every `.css` file in `dist/assets` is concatenated rather than picking one:
+ * a chunked build emits more than one, and a check that only looked at the
+ * first would report a kit utility as missing because it landed in the second.
+ * `null` means there is no bundle at all, which is a build that did not run.
+ */
+function readCssBundle(dir) {
+  try {
+    const cssFiles = readdirSync(dir).filter((file) => file.endsWith('.css'));
+    if (cssFiles.length === 0) return null;
+    return cssFiles.map((file) => readFileSync(join(dir, file), 'utf8')).join('\n');
+  } catch {
+    return null;
+  }
+}
+
 const html = readEmbeddedHtml();
 
 if (html !== null) {
@@ -113,9 +140,18 @@ if (html !== null) {
   }
 }
 
+// The SPA shell check cannot see CSS class names (they are hashed in at build
+// time, not bundled into the shell), so the kit's utilities are verified here
+// from the on-disk bundle rather than from the served HTML.
+for (const problem of checkCss(readCssBundle(DIST_ASSETS))) {
+  fail(`[${problem.code}] ${problem.detail}`);
+}
+
 if (problems.length > 0) {
   console.error('SPA shell check failed:');
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
 }
-console.log('SPA shell check passed (apps/api/src/generated/spa-shell.ts matches apps/web/dist).');
+console.log(
+  'SPA shell check passed (apps/api/src/generated/spa-shell.ts matches apps/web/dist, and the built CSS carries the kit utilities).',
+);

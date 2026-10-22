@@ -13,6 +13,8 @@
     "@durable-dav-router/backend-services": "workspace:*",
     "@durable-dav-router/shared": "workspace:*",
     "@durable-dav-router/webdav": "workspace:*",
+    "@rexezuge/errors": "^1.9.0",
+    "@rexezuge/http": "^1.9.0",
     "@rexezuge/web": "^1.9.0",
     "lucide-react": "1.57.0",
     "vitest": "4.1.11"

@@ -77,6 +77,23 @@ jobs:
       - name: Build Web App
         run: pnpm --filter @durable-dav-router/web build
 
+      # The build above is the precondition of this check, not a convenience:
+      # `apps/web/dist/` and `apps/api/src/generated/spa-shell.ts` are gitignored
+      # build artifacts, so verifying without building cannot pass.
+      #
+      # It runs in this job rather than a `spa-shell` job of its own because the
+      # build is already here — a second job would mean a second Vite build and a
+      # second install to say the same thing.
+      #
+      # What it catches beyond the shell itself: the built CSS missing the
+      # Tailwind utilities the `@rexezuge/web` primitives are made of. Tailwind
+      # v4 scans only the Vite project root, so without the `@source` line in
+      # `apps/web/src/globals.css` every shared control ships with its markup and
+      # none of its styling — a failure that is quiet in the build output and
+      # loud on screen.
+      - name: Verify SPA Shell
+        run: node scripts/verify-spa-shell.mjs
+
   dependabot-auto-merge:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.state == 'open' && !github.event.repository.fork }}
     name: Auto-Merge Dependabot PR
