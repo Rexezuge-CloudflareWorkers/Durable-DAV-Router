@@ -12,12 +12,47 @@ allowBuilds:
   workerd: true
 minimumReleaseAgeExclude:
   - '@cloudflare/workers-types@5.20260915.1'
-  - '@rexezuge/d1@1.2.0'
-  - '@rexezuge/errors@1.2.0'
-  - '@rexezuge/http@1.2.0'
-  - '@rexezuge/i18n@1.2.0'
-  - '@rexezuge/identity@1.2.0'
-  - '@rexezuge/runtime@1.2.0'
-  - '@rexezuge/shared@1.2.0'
-  - '@rexezuge/tooling@1.2.0'
-  - '@rexezuge/web@1.2.0'
+  - '@rexezuge/d1@1.9.0'
+  - '@rexezuge/errors@1.9.0'
+  - '@rexezuge/http@1.9.0'
+  - '@rexezuge/i18n@1.9.0'
+  - '@rexezuge/identity@1.9.0'
+  - '@rexezuge/runtime@1.9.0'
+  - '@rexezuge/shared@1.9.0'
+  - '@rexezuge/tooling@1.9.0'
+  - '@rexezuge/web@1.9.0'
+
+# pnpm 11 reads settings from this file, not `.npmrc`, so the
+# `minimum-release-age=0` in `.npmrc` is doing nothing and pnpm's 24-hour
+# default applies instead — which is what the `minimumReleaseAgeExclude` list
+# above exists to work around. The list is left in place, rather than the
+# setting being made effective here, because turning the delay off is a
+# supply-chain policy decision and not one this change should make silently.
+overrides:
+  # One copy of every kit package, always.
+  #
+  # The kit versions in lockstep, but a publish does not reach the registry
+  # atomically, and this repository's own manifests named some of them at
+  # `^1.2.0` while others already asked for `^1.9.0`. The resolver was free to
+  # satisfy both with two different resolutions — and it did: the tree carried
+  # `@rexezuge/errors` at both 1.2.0 and 1.9.0, and `@rexezuge/shared` at both.
+  #
+  # Two copies of a package that identifies its types with `instanceof` is a
+  # silent correctness bug. The error taxonomy is exactly that shape: a
+  # `ServiceError` thrown inside the kit stops being a `ServiceError` at this
+  # repository's boundary, so every `catch` that narrows on the taxonomy falls
+  # through to a masked 500, and the failure names no package.
+  #
+  # `packages/backend-services/src/errors/ErrorMapper.ts` is where it shows:
+  # `toServiceError` comes from `@rexezuge/http` (errors 1.9.0) and the
+  # `instanceof ServiceError` beside it was this repository's own copy
+  # (errors 1.2.0).
+  '@rexezuge/d1': '1.9.0'
+  '@rexezuge/errors': '1.9.0'
+  '@rexezuge/http': '1.9.0'
+  '@rexezuge/i18n': '1.9.0'
+  '@rexezuge/identity': '1.9.0'
+  '@rexezuge/runtime': '1.9.0'
+  '@rexezuge/shared': '1.9.0'
+  '@rexezuge/tooling': '1.9.0'
+  '@rexezuge/web': '1.9.0'

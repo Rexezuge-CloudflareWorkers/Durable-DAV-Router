@@ -1,5 +1,28 @@
 @import 'tailwindcss';
 
+/* Scan `@rexezuge/web` for class names.
+ *
+ * Tailwind ignores `node_modules` entirely, and the kit's primitives live
+ * there, so without this line a control adopted from the kit renders its markup
+ * with none of its styling. The utilities this app also uses survive the
+ * deletion anyway, which is what makes the failure quiet: the build looks
+ * almost right, and the modal backdrop, the notice banner and the sign-in
+ * button are the parts that stop looking right.
+ *
+ * A **directory**, not `dist/*.js`. The glob is the more obvious thing to
+ * write and is quietly narrower — it misses any file the kit ships that is not
+ * `.js`, so a kit release that changed its build output would drop half the
+ * primitives with nothing failing anywhere. The directory form is the one
+ * Tailwind documents for this and needs no update when that output moves.
+ *
+ * Do not spell a Tailwind utility class name in a comment in this file. This
+ * file is inside the scan root, so a class named in a comment is a class the
+ * scanner finds — which would satisfy the build gate in `scripts/` without the
+ * kit being styled at all. Name the control that stops working, not the
+ * utility.
+ */
+@source '../node_modules/@rexezuge/web/dist';
+
 @theme {
   /* Warm dark palette (ported from Edge-Git web shell) */
   --color-surface-base: #100f0d;

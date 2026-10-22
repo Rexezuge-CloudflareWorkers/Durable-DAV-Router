@@ -16,8 +16,8 @@
   },
   "dependencies": {
     "@durable-dav-router/shared": "workspace:*",
-    "@rexezuge/d1": "^1.2.0",
-    "@rexezuge/identity": "^1.2.0"
+    "@rexezuge/d1": "^1.9.0",
+    "@rexezuge/identity": "^1.9.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261014.1",
