@@ -26,6 +26,12 @@ export const REPLICATION_INTERVALS = [15, 60, 360, 720, 1440, 10_080] as const;
  * `pull-only` is the one-way import: the remote is the sole writer, nothing is
  * ever pushed back, and — with `mirrorDeletions` — local paths the remote lacks
  * are removed rather than kept.
+ *
+ * `copy-only` is the one-way export: this bucket is the sole writer and the
+ * remote is a mirror of it. What the *remote* does with a file this bucket does
+ * not have depends on the backend's version — a current one copies the file
+ * back, an older one leaves the mirror short — so the router's copy promises
+ * only what every version agrees on: nothing here is ever changed by a sync.
  */
 export const REPLICATION_MODES = ['keep-both', 'sync', 'pull-only', 'copy-only'] as const;
 

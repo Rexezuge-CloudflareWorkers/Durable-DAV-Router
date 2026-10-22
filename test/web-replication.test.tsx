@@ -182,6 +182,23 @@ describe('replication card: listing targets', () => {
     expect(screen.getByText('https://remote.example.com/dav')).toBeTruthy();
   });
 
+  it('says where the copied files land, because the target line alone does not', async () => {
+    // The target line names the *container*; it does not say what happens to a
+    // file. The answer has to be worked out from the subdirectory plus the path
+    // the file has here, which is the commonest reason a replication looks like
+    // it did nothing: the file went somewhere the owner did not look.
+    listReplications.mockResolvedValue({
+      supported: true,
+      replications: [
+        replication({ targetKind: 'dav-volume', remoteOwner: 'alice', remoteVolume: 'backup', remotePath: 'nightly' }),
+      ],
+      allowedIntervals: [60],
+    });
+    renderCard();
+    await waitFor(() => expect(button('Sync Now')).toBeTruthy());
+    expect(screen.getByText('Copied Files Land At alice/backup/nightly/<Path Inside This Bucket>')).toBeTruthy();
+  });
+
   it('explains an open pass rather than leaving the owner to guess replication is broken', async () => {
     // `passInFlight` is the backend's deletion gate, so it is the reason a
     // deletion has *not* propagated. Rendering nothing here is what produces
@@ -389,6 +406,37 @@ describe('replication card: adding a target', () => {
     // from treating it as an HTTP remote.
     expect(input['remoteUrl']).toBe('');
     expect(input['authKind']).toBe('none');
+  });
+
+  it('explains what the subdirectory is for, because the copied files land inside it', async () => {
+    // The field is optional and its effect is invisible until a file lands
+    // somewhere unexpected, so the form has to say what it does rather than
+    // leave the owner to infer it from a placeholder.
+    renderCard();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+
+    expect(
+      screen.getByText('A Subdirectory Inside The Target. Copied Files Land In It, At The Same Path They Have Here.'),
+    ).toBeTruthy();
+  });
+
+  it('promises only what every backend version keeps, for the one-way export', async () => {
+    // The router does not know the backend's version, so the copy must not claim
+    // what the remote does with a change made there: a current backend copies
+    // this bucket's version back over it, an older one leaves the mirror short.
+    // What both agree on is that nothing here is ever changed by a sync.
+    renderCard();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add Replication' })).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Sync Mode'), { target: { value: 'copy-only' } });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'One Way: This Bucket Is The Only Writer. Nothing Here Is Ever Changed By A Sync, And Deletions Here Remove Them There.',
+        ),
+      ).toBeTruthy(),
+    );
   });
 
   it('does not render the external-server fields for a bucket target', async () => {

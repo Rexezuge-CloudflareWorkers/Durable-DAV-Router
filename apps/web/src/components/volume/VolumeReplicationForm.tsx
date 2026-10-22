@@ -14,6 +14,15 @@ In the form rather than behind a docs link, because `copy-only` and `keep-both`
 differ in a way a user has to be told about *before* choosing: one of them will
 delete files on the remote, and the other will never overwrite anything.
 
+## Why the `copy-only` wording is deliberately narrow
+
+The router does not know which backend version is behind it, so a claim about
+what a *particular* backend does with a remote-side change is a claim that can
+be wrong. A backend that repairs a diverged mirror overwrites the remote's
+version; one that predates that leaves it alone. Both agree that **nothing here
+is ever changed by a sync**, so that is what this says — the true part, with no
+promise about the remote that only one of them keeps.
+
 A `{ mode: { key, text } }` shape rather than a `[key, text]` tuple: the coverage
 extractor recognises a key only when it follows a colon, so the tuple form reads
 as three orphans and fails `pnpm run validate:locales`.
@@ -25,7 +34,7 @@ as three orphans and fails `pnpm run validate:locales`.
 const MODE_HELP: Record<ReplicationMode, { key: string; text: string }> = {
   'copy-only': {
     key: 'replication.modeHelpCopyOnly',
-    text: 'One Way: This Bucket Is The Only Writer. Changes On The Remote Are Ignored, And Deletions Here Remove Them There.',
+    text: 'One Way: This Bucket Is The Only Writer. Nothing Here Is Ever Changed By A Sync, And Deletions Here Remove Them There.',
   },
   sync: {
     key: 'replication.modeHelpSync',
@@ -194,6 +203,16 @@ export function VolumeReplicationForm({
       <div className="space-y-1.5">
         <Label htmlFor="replication-remote-path">{t('replication.remotePath', 'Subdirectory (Optional)')}</Label>
         <Input id="replication-remote-path" value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="backups/bucket" />
+        {/*
+          What the subdirectory is *for*. Without it the answer is not obvious:
+          the copied files do not replace the target's contents, they land inside
+          the subdirectory at the same path they have here — so a target with a
+          subdirectory set holds the copies one level deeper than its own listing
+          suggests, which is a common reason to conclude that nothing was copied.
+        */}
+        <p className="text-xs text-[var(--color-text-muted)]">
+          {t('replication.remotePathHelp', 'A Subdirectory Inside The Target. Copied Files Land In It, At The Same Path They Have Here.')}
+        </p>
       </div>
 
       {targetKind === 'dav' && (
