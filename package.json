@@ -25,7 +25,7 @@
     "@rexezuge/http": "^1.9.0",
     "@rexezuge/i18n": "^1.9.0",
     "@rexezuge/identity": "^1.9.2",
-    "@rexezuge/runtime": "^1.9.0",
+    "@rexezuge/runtime": "^1.9.2",
     "@rexezuge/shared": "^1.9.0",
     "@rexezuge/tooling": "^1.9.0",
     "@rexezuge/web": "^1.9.0",
