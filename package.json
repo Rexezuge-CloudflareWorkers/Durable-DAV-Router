@@ -57,7 +57,7 @@
     "vite": "8.3.4",
     "vitest": "4.1.11",
     "wrangler": "4.160.1",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "packageManager": "pnpm@11.2.2",
   "dependencies": {
