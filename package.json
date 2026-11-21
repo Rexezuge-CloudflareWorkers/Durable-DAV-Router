@@ -56,7 +56,7 @@
     "typescript-eslint": "8.72.2",
     "vite": "8.3.8",
     "vitest": "4.1.11",
-    "wrangler": "4.160.1",
+    "wrangler": "4.164.0",
     "zod": "4.6.7"
   },
   "packageManager": "pnpm@11.2.2",
