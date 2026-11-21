@@ -2216,10 +2216,6 @@ packages:
   hermes-parser@0.25.1:
     resolution: {integrity: sha512-6pEjquH3rqaI6cYAXYPcz9MS4rY6R4ngRgrgfDshRptUZIc3lw0MCIJIGDj9++mfySOuPTHB4nrSW99BCvOPIA==}
 
-  hono@4.13.13:
-    resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
-    engines: {node: '>=16.9.0'}
-
   hono@4.13.16:
     resolution: {integrity: sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==}
     engines: {node: '>=16.9.0'}
@@ -2315,9 +2311,6 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
-
-  jose@6.2.12:
-    resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
 
   jose@6.2.17:
     resolution: {integrity: sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==}
@@ -3847,8 +3840,8 @@ snapshots:
       '@rexezuge/errors': 1.9.0
       '@rexezuge/shared': 1.9.0
       chanfana: 3.4.0
-      hono: 4.13.13
-      jose: 6.2.12
+      hono: 4.13.16
+      jose: 6.2.17
 
   '@rexezuge/i18n@1.9.0': {}
 
@@ -4682,8 +4675,6 @@ snapshots:
     dependencies:
       hermes-estree: 0.25.1
 
-  hono@4.13.13: {}
-
   hono@4.13.16: {}
 
   hookified@1.15.1: {}
@@ -4755,8 +4746,6 @@ snapshots:
       istanbul-lib-report: 3.0.1
 
   jiti@2.7.0: {}
-
-  jose@6.2.12: {}
 
   jose@6.2.17: {}
 
