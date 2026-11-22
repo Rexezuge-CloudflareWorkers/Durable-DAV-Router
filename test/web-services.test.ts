@@ -141,7 +141,7 @@ describe('credentialService', () => {
     const listed = await withFetch('{}', () => listBucketCredentials(owner, volume, 'office'));
     expect(target(only(listed.calls).url)).toBe(`${base}?backend=office`);
 
-    const created = await withFetch('{"credential_id":"c1"}', () => createBucketCredential(owner, volume, 'laptop', 30, false, 'office'));
+    const created = await withFetch('{"credential_id":"c1"}', () => createBucketCredential(owner, volume, 'laptop', 30, false, undefined, 'office'));
     expect(target(only(created.calls).url)).toBe(`${base}?backend=office`);
     expect(await recordedJson(created.calls[0])).toEqual({ name: 'laptop', expiresInDays: 30, readOnly: false });
   });
@@ -152,10 +152,29 @@ describe('credentialService', () => {
     // `?backend=true` — a bucket that does not exist, reported as a 404 rather
     // than as the access level the owner asked for.
     const created = await withFetch('{"credential_id":"c1","readOnly":true}', () =>
-      createBucketCredential(owner, volume, 'backup', undefined, true, 'office'),
+      createBucketCredential(owner, volume, 'backup', undefined, true, undefined, 'office'),
     );
     expect(target(only(created.calls).url)).toBe(`${base}?backend=office`);
     expect(await recordedJson(created.calls[0])).toEqual({ name: 'backup', expiresInDays: undefined, readOnly: true });
+  });
+
+  it('sends the server flag and no expiry without disturbing the selector', async () => {
+    // Same positional hazard as `readOnly`, and the body is the other half of
+    // the contract: the backend mints never-expiring credentials only when the
+    // strict `server` boolean is actually present.
+    const created = await withFetch('{"credential_id":"c1","isServer":true,"expiresAt":null}', () =>
+      createBucketCredential(owner, volume, 'daemon', undefined, false, true, 'office'),
+    );
+    expect(target(only(created.calls).url)).toBe(`${base}?backend=office`);
+    expect(await recordedJson(created.calls[0])).toEqual({ name: 'daemon', expiresInDays: undefined, readOnly: false, server: true });
+  });
+
+  it('omits the server flag for a plain credential', async () => {
+    // The flag is sent only when true, so an existing caller's body shape stays
+    // exactly what it was and a normal credential keeps its ordinary expiry.
+    const created = await withFetch('{"credential_id":"c1"}', () => createBucketCredential(owner, volume, 'laptop', 30, false, false));
+    expect(only(created.calls).url).toBe(base);
+    expect(await recordedJson(created.calls[0])).toEqual({ name: 'laptop', expiresInDays: 30, readOnly: false });
   });
 
   it('flips the flag with PATCH, keeping the selector as the only query', async () => {
@@ -454,7 +473,8 @@ describe('the ?backend= selector, as a contract rather than as five shapes', () 
       ['updateVolume', () => updateVolume('test', 'photos', { description: 'x' }, SLUG)],
       ['deleteVolume', () => deleteVolume('test', 'photos', SLUG)],
       ['listBucketCredentials', () => listBucketCredentials('test', 'photos', SLUG)],
-      ['createBucketCredential', () => createBucketCredential('test', 'photos', 'c', 30, true, SLUG)],
+      ['createBucketCredential', () => createBucketCredential('test', 'photos', 'c', 30, true, false, SLUG)],
+      ['createBucketCredential (server)', () => createBucketCredential('test', 'photos', 'c', undefined, false, true, SLUG)],
       ['setBucketCredentialReadOnly', () => setBucketCredentialReadOnly('test', 'photos', 'cred 1', true, SLUG)],
       ['revokeBucketCredential', () => revokeBucketCredential('test', 'photos', 'cred 1', SLUG)],
       ['listReplications', () => listReplications('test', 'photos', SLUG)],

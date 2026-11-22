@@ -93,7 +93,9 @@
     "allowWrites": "Allow Writes",
     "bucketCredentials": "Bucket Credentials",
     "create": "Create Credential",
+    "createServer": "Create Server Credential",
     "created": "Credential Created. Copy The Password Now — It Will Not Be Shown Again.",
+    "createdServer": "Server Credential Created. Copy The Password Now — It Will Not Be Shown Again.",
     "empty": "No Credentials Yet.",
     "expiryPlaceholder": "Expiry (days)",
     "hint": "Each Credential Unlocks Only This Bucket. Use The Generated Username And Password As WebDAV Basic Auth.",
@@ -109,7 +111,10 @@
     "readOnlyHint": "Can Browse And Download, But Cannot Upload, Delete, Or Rename.",
     "revoke": "Revoke",
     "revokeCredential": "Revoke Credential",
-    "revoked": "Credential Revoked."
+    "revoked": "Credential Revoked.",
+    "serverBadge": "Server Credential · Never Expires",
+    "serverHint": "Server Credentials Never Expire. Use Them For Long-Lived Servers And Automation.",
+    "serverTitle": "Server Credentials"
   },
   "files": {
     "binaryPreview": "Binary File — Not Previewed.",

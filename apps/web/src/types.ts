@@ -72,7 +72,10 @@ export interface BucketCredential {
   passwordPrefix: string;
   passwordLastFour: string;
   createdAt: number;
-  expiresAt: number;
+  /**
+  `null` for a server credential, which never expires.
+  */
+  expiresAt: number | null;
   lastUsedAt: number | null;
   /**
    * Backend-enforced. The router stores no credentials of its own, so this is
@@ -80,6 +83,10 @@ export interface BucketCredential {
    * credential may do. See `VolumeCredentialsCard` for the toggle.
    */
   readOnly: boolean;
+  /**
+  A long-lived credential minted for a server or other unattended client.
+  */
+  isServer: boolean;
 }
 
 export interface CreatedBucketCredential {
@@ -87,7 +94,10 @@ export interface CreatedBucketCredential {
   username: string;
   password: string;
   name: string;
-  expiresAt: number;
+  /**
+  `null` for a server credential, which never expires.
+  */
+  expiresAt: number | null;
   passwordPrefix: string;
   passwordLastFour: string;
   /**
@@ -96,6 +106,10 @@ export interface CreatedBucketCredential {
    * value here is always one the caller asked for.
    */
   readOnly: boolean;
+  /**
+  Echoed back so the copy-once reveal can badge a server credential.
+  */
+  isServer: boolean;
 }
 
 export interface DavEntry {

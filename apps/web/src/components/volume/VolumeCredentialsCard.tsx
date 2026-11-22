@@ -1,16 +1,15 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { KeyRound } from 'lucide-react';
-import type { BucketCredential } from '../../types';
+import type { BucketCredential, CreatedBucketCredential } from '../../types';
 import { useAsyncLoad } from '../../hooks/useAsyncLoad';
-import { createBucketCredential, listBucketCredentials, revokeBucketCredential, setBucketCredentialReadOnly } from '../../services/credentialService';
+import { listBucketCredentials, revokeBucketCredential, setBucketCredentialReadOnly } from '../../services/credentialService';
 import { formatExpiryTimestamp } from '../../lib/format';
 import { toLocalizedErrorMessage } from '../../lib/backendErrors';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card, CardHeader, CardTitle } from '../ui/Card';
-import { Input } from '../ui/Input';
 import { RefreshButton, ReadOnlyField, ConfirmDeleteModal } from '@rexezuge/web';
+import { CredentialCreateForm } from './CredentialCreateForm';
 
 export function VolumeCredentialsCard({
   owner,
@@ -24,11 +23,7 @@ export function VolumeCredentialsCard({
   backend?: string | null;
 }) {
   const { t } = useTranslation();
-  const [name, setName] = useState('');
-  const [expiresInDays, setExpiresInDays] = useState('');
-  const [readOnly, setReadOnly] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [lastCreated, setLastCreated] = useState<{ username: string; password: string; readOnly: boolean } | null>(null);
+  const [lastCreated, setLastCreated] = useState<{ username: string; password: string; readOnly: boolean; isServer: boolean } | null>(null);
   const [revoking, setRevoking] = useState<BucketCredential | null>(null);
   const [flipping, setFlipping] = useState<string | null>(null);
 
@@ -47,27 +42,12 @@ export function VolumeCredentialsCard({
   // naming it once keeps every `credentials?.` out of the markup.
   const rows = credentials ?? [];
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const expiry = expiresInDays.trim() === '' ? undefined : Number(expiresInDays);
-    if (expiry !== undefined && (!Number.isSafeInteger(expiry) || expiry <= 0)) {
-      showNotice('error', t('credentials.invalidExpiry', 'Expiry Must Be A Positive Number Of Days.'));
-      return;
-    }
-    setSaving(true);
-    try {
-      const created = await createBucketCredential(owner, volume, name.trim(), expiry, readOnly, backend);
-      setLastCreated({ username: created.username, password: created.password, readOnly: created.readOnly });
-      setName('');
-      setExpiresInDays('');
-      setReadOnly(false);
-      showNotice('success', t('credentials.created', 'Credential Created. Copy The Password Now — It Will Not Be Shown Again.'));
-      reload();
-    } catch (error) {
-      showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToCreateCredential', 'Failed To Create Credential.'));
-    } finally {
-      setSaving(false);
-    }
+  // Both create forms share the copy-once reveal and the refresh. The flag is
+  // echoed from the backend's answer, so the badge reflects what was minted and
+  // not which form the owner happened to submit.
+  const handleCreated = (created: CreatedBucketCredential) => {
+    setLastCreated({ username: created.username, password: created.password, readOnly: created.readOnly, isServer: created.isServer });
+    reload();
   };
 
   /**
@@ -125,41 +105,18 @@ const toggleReadOnly = async (cred: BucketCredential) => {
       <p className="text-sm text-[var(--color-text-secondary)] mb-3">
         {t('credentials.hint', 'Each Credential Unlocks Only This Bucket. Use The Generated Username And Password As WebDAV Basic Auth.')}
       </p>
-      <form onSubmit={submit} className="space-y-3">
-        <div className="flex gap-3 flex-wrap">
-          <div className="flex-1 min-w-48">
-            <Input
-              placeholder={t('credentials.namePlaceholder', 'Credential Name (e.g. laptop)')}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-          </div>
-          <div className="w-32">
-            <Input
-              placeholder={t('credentials.expiryPlaceholder', 'Expiry (days)')}
-              value={expiresInDays}
-              onChange={(e) => setExpiresInDays(e.target.value)}
-              inputMode="numeric"
-            />
-          </div>
-          <label
-            className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]"
-            title={t('credentials.readOnlyHint', 'Can Browse And Download, But Cannot Upload, Delete, Or Rename.')}
-          >
-            <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
-            {t('credentials.readOnly', 'Read-Only')}
-          </label>
-          <Button type="submit" variant="primary" size="sm" loading={saving}>
-            <KeyRound className="h-3.5 w-3.5" />
-            {t('credentials.create', 'Create Credential')}
-          </Button>
+      <div className="space-y-3">
+        <CredentialCreateForm owner={owner} volume={volume} server={false} backend={backend} showNotice={showNotice} onCreated={handleCreated} />
+        <div className="border-t border-[var(--color-border)] pt-3 space-y-2">
+          <p className="text-sm font-medium text-[var(--color-text-primary)]">{t('credentials.serverTitle', 'Server Credentials')}</p>
+          <CredentialCreateForm owner={owner} volume={volume} server backend={backend} showNotice={showNotice} onCreated={handleCreated} />
         </div>
-      </form>
+      </div>
       {lastCreated && (
         <div className="mt-4 space-y-2">
           <ReadOnlyField label={t('credentials.newUsername', 'New Username')} value={lastCreated.username} showCopy copyLabel={t('common.copyToClipboard', 'Copy To Clipboard')} />
           <ReadOnlyField label={t('credentials.newPassword', 'New Password (Copy Once)')} value={lastCreated.password} showCopy copyLabel={t('common.copyToClipboard', 'Copy To Clipboard')} />
+          {lastCreated.isServer && <Badge variant="info">{t('credentials.serverBadge', 'Server Credential · Never Expires')}</Badge>}
           {lastCreated.readOnly && <Badge variant="info">{t('credentials.readOnlyBadge', 'Read-Only Access')}</Badge>}
         </div>
       )}
@@ -174,7 +131,7 @@ const toggleReadOnly = async (cred: BucketCredential) => {
                 </span>
               </p>
               <p className="text-xs text-[var(--color-text-muted)]">
-                {formatExpiryTimestamp(cred.expiresAt)}
+                {cred.isServer ? t('credentials.serverBadge', 'Server Credential · Never Expires') : formatExpiryTimestamp(cred.expiresAt)}
                 {cred.readOnly && <span className="ml-2">{t('credentials.readOnlyBadge', 'Read-Only Access')}</span>}
               </p>
             </div>

@@ -62,6 +62,7 @@ function credential(overrides: Partial<BucketCredential> = {}): BucketCredential
     expiresAt: 1_800_000_000,
     lastUsedAt: null,
     readOnly: false,
+    isServer: false,
     ...overrides,
   };
 }
@@ -72,13 +73,18 @@ function renderCard(rows: BucketCredential[], backend?: string | null) {
   return { showNotice };
 }
 
-const readOnlyCheckbox = () => screen.getByLabelText('Read-Only') as HTMLInputElement;
+// The card renders two independent forms — ordinary and server — so the shared
+// name field and read-only checkbox exist twice. Index 0 is the ordinary form
+// throughout; the server form is reached by its distinct button and by index 1.
+const readOnlyCheckbox = () => screen.getAllByLabelText('Read-Only')[0] as HTMLInputElement;
+const nameInput = (index = 0) => screen.getAllByPlaceholderText('Credential Name (e.g. laptop)')[index] as HTMLInputElement;
 const createButton = () => screen.getByRole('button', { name: 'Create Credential' });
+const createServerButton = () => screen.getByRole('button', { name: 'Create Server Credential' });
 const toggleFor = (name: string) => screen.getByRole('button', { name });
 
 beforeEach(() => {
   listBucketCredentials.mockReset().mockResolvedValue([]);
-  createBucketCredential.mockReset().mockResolvedValue({ username: 'u', password: 'p', readOnly: false });
+  createBucketCredential.mockReset().mockResolvedValue({ username: 'u', password: 'p', readOnly: false, isServer: false });
   revokeBucketCredential.mockReset().mockResolvedValue(undefined);
   setBucketCredentialReadOnly.mockReset().mockResolvedValue(undefined);
 });
@@ -98,12 +104,12 @@ describe('credentials card: creating a read-only credential', () => {
     createBucketCredential.mockResolvedValue({ username: 'u', password: 'p', readOnly: true });
     renderCard([], 'office');
 
-    fireEvent.change(screen.getByPlaceholderText('Credential Name (e.g. laptop)'), { target: { value: 'backup' } });
+    fireEvent.change(nameInput(), { target: { value: 'backup' } });
     fireEvent.click(readOnlyCheckbox());
     fireEvent.click(createButton());
 
     await waitFor(() =>
-      expect(createBucketCredential).toHaveBeenCalledWith('alice', 'photos', 'backup', undefined, true, 'office'),
+      expect(createBucketCredential).toHaveBeenCalledWith('alice', 'photos', 'backup', undefined, true, false, 'office'),
     );
   });
 
@@ -112,7 +118,7 @@ describe('credentials card: creating a read-only credential', () => {
     createBucketCredential.mockResolvedValue({ username: 'photos-quiet-otter-1', password: 'ddav_secret', readOnly: true });
     renderCard([]);
 
-    fireEvent.change(screen.getByPlaceholderText('Credential Name (e.g. laptop)'), { target: { value: 'backup' } });
+    fireEvent.change(nameInput(), { target: { value: 'backup' } });
     fireEvent.click(readOnlyCheckbox());
     fireEvent.click(createButton());
 
@@ -186,5 +192,71 @@ describe('credentials card: flipping the flag', () => {
 
     await waitFor(() => expect(showNotice).toHaveBeenCalledWith('success', 'Credential Is Now Read-Only.'));
     expect(screen.getByText('Read-Only Access')).toBeTruthy();
+  });
+});
+
+describe('credentials card: server credentials', () => {
+  it('renders a second form without an expiry field', async () => {
+    renderCard([]);
+    await waitFor(() => expect(createButton()).toBeTruthy());
+    expect(createServerButton()).toBeTruthy();
+    expect(screen.getByText('Server Credentials')).toBeTruthy();
+    expect(screen.getByText('Server Credentials Never Expire. Use Them For Long-Lived Servers And Automation.')).toBeTruthy();
+    // Only the ordinary form asks for an expiry; the server form mints a
+    // never-expiring credential and must not send an `expiresInDays`.
+    expect(screen.getAllByPlaceholderText('Expiry (days)')).toHaveLength(1);
+  });
+
+  it('sends server before the backend selector and omits an expiry', async () => {
+    renderCard([], 'office');
+    await waitFor(() => expect(createServerButton()).toBeTruthy());
+
+    fireEvent.change(nameInput(1), { target: { value: 'daemon' } });
+    fireEvent.click(createServerButton());
+
+    // `server` precedes the trailing `backend`, like `readOnly`: placing it
+    // after would turn `true` into `?backend=true` and 404 the create.
+    await waitFor(() => expect(createBucketCredential).toHaveBeenCalledWith('alice', 'photos', 'daemon', undefined, false, true, 'office'));
+  });
+
+  it('badges the copy-once reveal from the backend answer', async () => {
+    createBucketCredential.mockResolvedValue({
+      username: 'photos-still-otter-1',
+      password: 'ddav_secret',
+      expiresAt: null,
+      readOnly: false,
+      isServer: true,
+    });
+    const { showNotice } = renderCard([]);
+    await waitFor(() => expect(createServerButton()).toBeTruthy());
+
+    fireEvent.change(nameInput(1), { target: { value: 'daemon' } });
+    fireEvent.click(createServerButton());
+
+    await waitFor(() => expect(screen.getByDisplayValue('ddav_secret')).toBeTruthy());
+    expect(screen.getByText('Server Credential · Never Expires')).toBeTruthy();
+    expect(showNotice).toHaveBeenCalledWith('success', 'Server Credential Created. Copy The Password Now — It Will Not Be Shown Again.');
+  });
+
+  it('shows the server badge instead of an expiry in the list', async () => {
+    // A real projection maps the sentinel to `expiresAt: null`, but keeping a
+    // timestamp here catches the subtler bug: rendering the badge *in addition
+    // to* the expiry would still publish a false expiry date.
+    listBucketCredentials.mockResolvedValue([credential({ isServer: true, expiresAt: 1_800_000_000 })]);
+    renderCard([]);
+
+    await waitFor(() => expect(screen.getByText('Server Credential · Never Expires')).toBeTruthy());
+    expect(screen.queryByText(/^Expires /)).toBeNull();
+  });
+
+  it('keeps the read-only toggle available on a server credential', async () => {
+    listBucketCredentials.mockResolvedValue([credential({ isServer: true, expiresAt: null })]);
+    renderCard([], 'office');
+    await waitFor(() => expect(toggleFor('Make Read-Only')).toBeTruthy());
+
+    fireEvent.click(toggleFor('Make Read-Only'));
+
+    await waitFor(() => expect(setBucketCredentialReadOnly).toHaveBeenCalledWith('alice', 'photos', 'c1', true, 'office'));
+    expect(screen.getByText('Server Credential · Never Expires')).toBeTruthy();
   });
 });
