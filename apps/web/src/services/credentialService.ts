@@ -13,11 +13,14 @@ export async function listBucketCredentials(owner: string, volume: string, backe
 }
 
 /**
-`readOnly` sits before `backend` because the selector is the trailing argument
-throughout this file. Putting it last would let a caller's `readOnly` land in
-`backend` and become a `?backend=true` selector, which resolves to no backend
-and 404s the request — a wrong access level would be reported as a missing
-bucket.
+`readOnly` and `server` sit before `backend` because the selector is the
+trailing argument throughout this file. Putting either last would let a
+caller's `true` land in `backend` and become a `?backend=true` selector, which
+resolves to no backend and 404s the request — a wrong access level or the wrong
+credential type would be reported as a missing bucket.
+
+`server` is sent only when true, so a plain credential's body is unchanged and
+keeps its ordinary expiry; the backend rejects a non-boolean flag.
 */
 export async function createBucketCredential(
   owner: string,
@@ -25,9 +28,15 @@ export async function createBucketCredential(
   name: string,
   expiresInDays?: number,
   readOnly?: boolean,
+  server?: boolean,
   backend?: string | null,
 ): Promise<CreatedBucketCredential> {
-  return apiPost<CreatedBucketCredential>(credentialBase(owner, volume, backend), { name, expiresInDays, readOnly });
+  return apiPost<CreatedBucketCredential>(credentialBase(owner, volume, backend), {
+    name,
+    expiresInDays,
+    readOnly,
+    ...(server && { server: true }),
+  });
 }
 
 /**
