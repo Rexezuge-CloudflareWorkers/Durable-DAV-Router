@@ -45,7 +45,7 @@ function VolumeFileModals({
     <>
       {mkdirOpen && (
         <ModalShell onClose={onCloseMkdir} ariaLabel={t('files.newFolder', 'New Folder')} closeLabel={t('common.close', 'Close')}>
-          <ModalHeader title={t('files.newFolder', 'New Folder')} onClose={onCloseMkdir} />
+          <ModalHeader title={t('files.newFolder', 'New Folder')} />
           <ModalBody>
             <form onSubmit={onMkdirSubmit} className="space-y-3">
               <Input
@@ -63,7 +63,7 @@ function VolumeFileModals({
       )}
       {renaming && (
         <ModalShell onClose={onCloseRename} ariaLabel={t('files.rename', 'Rename')} closeLabel={t('common.close', 'Close')}>
-          <ModalHeader title={t('files.rename', 'Rename')} onClose={onCloseRename} />
+          <ModalHeader title={t('files.rename', 'Rename')} />
           <ModalBody>
             <form onSubmit={onRenameSubmit} className="space-y-3">
               <Input value={renameValue} onChange={(e) => onRenameValue(e.target.value)} autoFocus />
@@ -86,7 +86,7 @@ function VolumeFileModals({
       )}
       {preview && (
         <ModalShell onClose={onClosePreview} widthClass="w-full max-w-2xl max-h-[82vh] overflow-hidden mx-4" ariaLabel={preview.entry.name} closeLabel={t('common.close', 'Close')}>
-          <ModalHeader title={preview.entry.name} onClose={onClosePreview} />
+          <ModalHeader title={preview.entry.name} />
           <ModalBody>
             {preview.text === null ? (
               <p className="text-sm text-[var(--color-text-muted)]">{t('files.binaryPreview', 'Binary File — Not Previewed.')}</p>

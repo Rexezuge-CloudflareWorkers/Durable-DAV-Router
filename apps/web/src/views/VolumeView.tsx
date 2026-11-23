@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Logo } from '../components/layout/Logo';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, Plus, Upload } from 'lucide-react';
+import { ChevronRight, Files, FolderUp, Plus, Settings2, Upload } from 'lucide-react';
+import { cn } from '@rexezuge/web';
 import type { VolumeDetail } from '../types';
 import { parentDavPath, stripSlashes } from '../lib/davXml';
 import { withBackendSelector } from '../lib/backendSelector';
 import { clampPage, readStoredPageSize, storePageSize } from '../lib/davPage';
 import { Button } from '../components/ui/Button';
-import { Card, CardHeader, CardTitle } from '../components/ui/Card';
+import { Card } from '../components/ui/Card';
+import { Tabs } from '../components/ui/Tabs';
+import { BreadcrumbBar } from '../components/layout/BreadcrumbBar';
 import { VolumeSettingsTab } from '../components/volume/VolumeSettingsTab';
 import { VisibilityBadge } from '../components/ui/Badge';
 import { useVolumeFiles } from './volume/useVolumeFiles';
@@ -16,7 +18,7 @@ import { useVolumeMutations } from './volume/useVolumeMutations';
 import { VolumeFileList } from './volume/VolumeFileList';
 import { VolumeFileModals } from './volume/VolumeFileModals';
 import { VolumeFilePager } from './volume/VolumeFilePager';
-import { ContextBar, AppPage, RefreshButton } from '@rexezuge/web';
+import { AppPage, RefreshButton } from '@rexezuge/web';
 
 /**
  * Normalise a `?path=` query value into a safe volume-relative path.
@@ -42,13 +44,7 @@ function cleanPath(raw: string | null): string {
 }
 
 // Thin composition root: routing + hook slices + presentational children.
-function VolumeView({
-  authorized,
-  showNotice,
-}: {
-  authorized: boolean | null;
-  showNotice: (kind: 'success' | 'error', message: string) => void;
-}) {
+function VolumeView({ authorized, showNotice }: { authorized: boolean | null; showNotice: (kind: 'success' | 'error', message: string) => void }) {
   const { owner = '', volume = '' } = useParams<{ owner: string; volume: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -62,6 +58,7 @@ function VolumeView({
   const page = clampPage(params.get('page'));
   const [pageSize, setPageSizeState] = useState(readStoredPageSize);
   const [volumeDetail, setVolumeDetail] = useState<VolumeDetail | null>(null);
+  const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const { entries, status, refresh, crumbs, notice, consumeNotice, paging } = useVolumeFiles(owner, volume, path, authorized, backend, page, pageSize);
@@ -142,7 +139,7 @@ function VolumeView({
   // The bucket-name crumb is a real link, so its `to` is the whole fix. It used
   // to point at a bare `/${owner}/${volume}`, which drops the selector every
   // `davClient` call carries, and `useVolumeFiles` re-keys on `backend`: the
-  // PROPFIND then goes out with no selector and the router answers
+  // PROPFIND then went out with no selector and the router answered
   // `409 Multiple backends match`, so a trip back to the bucket home failed
   // the listing instead. A single-backend account never sees it, which is how
   // it survived review.
@@ -153,27 +150,23 @@ function VolumeView({
   // middle-click, where the link declines to navigate but the handler does not:
   // the open tab would be navigated away while the new tab opened.
   const crumbHref = withBackendSelector(`/${owner}/${volume}`, backend);
+  const title = path === '' ? t('files.root', 'Files') : (path.split('/').pop() ?? path);
 
   return (
     <div>
-      <ContextBar
-        home={
-          <Link to="/" aria-label={t('header.home', 'Durable-DAV-Router Home')}>
-            <Logo />
-          </Link>
-        }
+      <BreadcrumbBar
         crumb={
-          <span className="text-xl font-semibold text-[var(--color-text-primary)] truncate">
-            <Link to={crumbHref} className="hover:text-[var(--color-accent)]">
+          <>
+            <Link to={crumbHref} className="font-semibold hover:text-[var(--color-accent)]">
               {owner}/{volume}
             </Link>
             {activeTab === 'files' &&
               crumbs.map((segment, index) => (
                 <span key={`${segment}-${index}`}>
-                  <ChevronRight className="inline h-4 w-4 mx-1 text-[var(--color-text-muted)]" />
+                  <ChevronRight className="mx-1 inline h-3.5 w-3.5 text-[var(--color-text-muted)]" />
                   <button
                     type="button"
-                    className="hover:text-[var(--color-accent)]"
+                    className="rounded font-medium hover:text-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/50"
                     onClick={() => setPath(crumbs.slice(0, index + 1).join('/'))}
                   >
                     {segment}
@@ -185,18 +178,23 @@ function VolumeView({
                 <VisibilityBadge isPrivate={volumeDetail.isPrivate} />
               </span>
             )}
-          </span>
+          </>
         }
         actions={<RefreshButton onRefresh={refresh} loading={status === 'loading'} label={t('common.refresh', 'Refresh')} />}
       />
-      <div className="max-w-7xl mx-auto px-6 pt-4 flex gap-2">
-        <Button variant={activeTab === 'files' ? 'primary' : 'secondary'} size="sm" onClick={() => setTab('files')}>
-          {t('volumes.filesTab', 'Files')}
-        </Button>
-        <Button variant={activeTab === 'settings' ? 'primary' : 'secondary'} size="sm" onClick={() => setTab('settings')}>
-          {t('volumes.settingsTab', 'Settings')}
-        </Button>
+
+      <div className="mx-auto flex max-w-7xl gap-2 px-4 pt-4 sm:px-6">
+        <Tabs
+          label={t('volumes.bucketSections', 'Bucket Sections')}
+          value={activeTab}
+          onChange={setTab}
+          items={[
+            { value: 'files', label: t('volumes.filesTab', 'Files'), icon: <Files className="h-3.5 w-3.5" /> },
+            { value: 'settings', label: t('volumes.settingsTab', 'Settings'), icon: <Settings2 className="h-3.5 w-3.5" /> },
+          ]}
+        />
       </div>
+
       {activeTab === 'settings' ? (
         <AppPage>
           <VolumeSettingsTab
@@ -210,55 +208,85 @@ function VolumeView({
         </AppPage>
       ) : (
         <AppPage>
-          <Card>
-            <CardHeader>
-              <CardTitle>{path === '' ? t('files.root', 'Files') : (path.split('/').pop() ?? path)}</CardTitle>
-              <div className="flex gap-2 flex-wrap">
-                <input
-                  ref={fileRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    void mutations.doUpload(e.target.files);
-                    if (fileRef.current) fileRef.current.value = '';
-                  }}
-                />
-                <Button variant="secondary" size="sm" disabled={mutations.busy} onClick={() => fileRef.current?.click()}>
-                  <Upload className="h-3.5 w-3.5" />
-                  {t('files.upload', 'Upload')}
-                </Button>
-                <Button variant="secondary" size="sm" disabled={mutations.busy} onClick={() => mutations.setMkdirOpen(true)}>
-                  <Plus className="h-3.5 w-3.5" />
-                  {t('files.newFolder', 'New Folder')}
-                </Button>
-              </div>
-            </CardHeader>
-            {path !== '' && (
-              <button
-                type="button"
-                className="text-sm text-[var(--color-accent)] hover:underline mb-3"
-                onClick={() => setPath(parentDavPath(path) ?? '')}
-              >
-                {t('files.up', 'Up To Parent Folder')}
-              </button>
-            )}
-            <VolumeFileList
-              owner={owner}
-              volume={volume}
-              backend={backend}
-              entries={entries}
-              status={status}
-              busy={mutations.busy}
-              onPreview={(e) => void mutations.openPreview(e, setPath)}
-              onRename={(e) => {
-                mutations.setRenaming(e);
-                mutations.setRenameValue(e.name);
+          <Card
+            className={cn('relative', dragging && 'ring-2 ring-[var(--color-accent)]/60')}
+          >
+            <div
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes('Files')) return;
+                event.preventDefault();
+                setDragging(true);
               }}
-              onDuplicate={(e) => void mutations.doDuplicate(e)}
-              onDelete={(e) => mutations.setDeleting(e)}
-            />
-            {activeTab === 'files' && (
+              onDragLeave={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                setDragging(false);
+              }}
+              onDrop={(event) => {
+                if (event.dataTransfer.files.length === 0) return;
+                event.preventDefault();
+                setDragging(false);
+                void mutations.doUpload(event.dataTransfer.files);
+              }}
+              className="space-y-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="truncate text-base font-semibold text-[var(--color-text-primary)]">{title}</h2>
+                  <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                    {paging.total === null
+                      ? t('files.itemCount', '{{count}} Items', { count: entries.length })
+                      : t('files.itemCountTotal', '{{count}} Items', { count: paging.total })}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      void mutations.doUpload(e.target.files);
+                      if (fileRef.current) fileRef.current.value = '';
+                    }}
+                  />
+                  <Button variant="primary" size="sm" disabled={mutations.busy} onClick={() => fileRef.current?.click()}>
+                    <Upload className="h-3.5 w-3.5" />
+                    {t('files.upload', 'Upload')}
+                  </Button>
+                  <Button variant="secondary" size="sm" disabled={mutations.busy} onClick={() => mutations.setMkdirOpen(true)}>
+                    <Plus className="h-3.5 w-3.5" />
+                    {t('files.newFolder', 'New Folder')}
+                  </Button>
+                </div>
+              </div>
+
+              {path !== '' && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/50"
+                  onClick={() => setPath(parentDavPath(path) ?? '')}
+                >
+                  <FolderUp className="h-3.5 w-3.5" />
+                  {t('files.up', 'Up To Parent Folder')}
+                </button>
+              )}
+
+              <VolumeFileList
+                owner={owner}
+                volume={volume}
+                backend={backend}
+                entries={entries}
+                status={status}
+                busy={mutations.busy}
+                onPreview={(e) => void mutations.openPreview(e, setPath)}
+                onRename={(e) => {
+                  mutations.setRenaming(e);
+                  mutations.setRenameValue(e.name);
+                }}
+                onDuplicate={(e) => void mutations.doDuplicate(e)}
+                onDelete={(e) => mutations.setDeleting(e)}
+              />
+
               <VolumeFilePager
                 page={paging.page}
                 limit={pageSize}
@@ -267,7 +295,16 @@ function VolumeView({
                 onPageChange={setPage}
                 onPageSizeChange={changePageSize}
               />
-            )}
+
+              {dragging && (
+                <div className="pointer-events-none absolute left-0 top-0 flex h-full w-full items-center justify-center rounded-xl bg-[var(--color-surface-base)]/80">
+                  <p className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-accent)]/40 bg-[var(--color-surface-2)] px-4 py-2 text-sm text-[var(--color-text-primary)]">
+                    <Upload className="h-4 w-4 text-[var(--color-accent)]" />
+                    {t('files.dropToUpload', 'Drop Files To Upload Here.')}
+                  </p>
+                </div>
+              )}
+            </div>
           </Card>
           <VolumeFileModals
             busy={mutations.busy}

@@ -92,7 +92,12 @@ export function CredentialCreateForm({
           className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]"
           title={t('credentials.readOnlyHint', 'Can Browse And Download, But Cannot Upload, Delete, Or Rename.')}
         >
-          <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={readOnly}
+            onChange={(e) => setReadOnly(e.target.checked)}
+            className="h-4 w-4 rounded border-[var(--color-border)] bg-[var(--color-surface-base)] accent-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40"
+          />
           {t('credentials.readOnly', 'Read-Only')}
         </label>
         <Button type="submit" variant="primary" size="sm" loading={saving}>

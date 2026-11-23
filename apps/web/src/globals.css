@@ -24,33 +24,40 @@
 @source '../node_modules/@rexezuge/web/dist';
 
 @theme {
-  /* Warm dark palette (ported from Edge-Git web shell) */
-  --color-surface-base: #100f0d;
-  --color-surface-1: #1a1814;
-  --color-surface-2: #201e1b;
-  --color-surface-3: #2a2722;
-  --color-surface-4: #332f29;
-  --color-border: #2e2a24;
-  --color-border-muted: #3a3530;
-  --color-text-primary: #f5f0eb;
-  --color-text-secondary: #b0a89a;
-  --color-text-muted: #7a7068;
+  /* Neutral dark palette. The `@rexezuge/web` primitives read these same
+   * custom properties, so one set of tokens re-themes both the local controls
+   * and every control adopted from the kit. */
+  --color-surface-base: #0b0c0f;
+  --color-surface-1: #121318;
+  --color-surface-2: #171922;
+  --color-surface-3: #1e212b;
+  --color-surface-4: #272b37;
+  --color-border: #262a35;
+  --color-border-muted: #333846;
+  --color-text-primary: #e8eaf0;
+  --color-text-secondary: #a2a9b8;
+  --color-text-muted: #6f7686;
 
   /* Semantic status colors */
-  --color-success-bg: #0e2d22;
-  --color-success-text: #6ee7b7;
-  --color-error-bg: #2d1214;
-  --color-error-text: #fca5a5;
-  --color-warning-bg: #2d2007;
+  --color-success-bg: #0f2a1e;
+  --color-success-text: #4ade80;
+  --color-error-bg: #2a1215;
+  --color-error-text: #f87171;
+  --color-warning-bg: #2a2010;
   --color-warning-text: #fbbf24;
-  --color-info-bg: #0e1e3a;
-  --color-info-text: #93c5fd;
-  --color-neutral-bg: #252219;
-  --color-neutral-text: #b0a89a;
+  --color-info-bg: #101f33;
+  --color-info-text: #7aa2f7;
+  --color-neutral-bg: #1e212b;
+  --color-neutral-text: #a2a9b8;
 
   /* Accent */
-  --color-accent: #6ee7b7;
-  --color-accent-dim: #4fd1a0;
+  --color-accent: #7aa2f7;
+  --color-accent-dim: #5f8ae8;
+
+  /* Typography: system stacks only, so a deploy never waits on a webfont. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
   /* Animations */
   --animate-fade-in: fade-in 0.2s ease-out both;
@@ -115,21 +122,48 @@
   }
 }
 
+html {
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-surface-base);
+  color: var(--color-text-primary);
+}
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3a3530;
-  border-radius: 4px;
+  background: var(--color-surface-4);
+  border: 2px solid var(--color-surface-base);
+  border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4a4540;
+  background: #3b4150;
 }
 
 ::selection {
-  background: rgba(110, 231, 183, 0.2);
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: var(--color-text-primary);
+}
+
+/* The motion in this shell is decoration. Anyone who asked their platform for
+ * less of it gets none of it, including the staggered card entrances. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

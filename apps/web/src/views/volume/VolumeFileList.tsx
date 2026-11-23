@@ -1,9 +1,19 @@
 import { useTranslation } from 'react-i18next';
-import { Download, File as FileIcon, Folder as FolderIcon, Pencil, Trash2 } from 'lucide-react';
+import { Copy, Download, File as FileIcon, Folder as FolderIcon, Pencil, Trash2 } from 'lucide-react';
 import type { DavEntry } from '../../types';
 import { formatBytes } from '../../lib/format';
 import { downloadUrl } from '../../services/davClient';
 import { EmptyState, LoadingSpinner } from '@rexezuge/web';
+import { IconButton } from '../../components/ui/IconButton';
+
+/**
+Render a WebDAV RFC 1123 timestamp as something a person reads.
+*/
+function formatModified(value: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
 
 function VolumeFileList({
   owner,
@@ -47,65 +57,63 @@ function VolumeFileList({
     return <EmptyState message={t('files.emptyFolder', 'Empty Folder. Upload A File Or Create A Subfolder.')} />;
   }
   return (
-    <ul className="divide-y divide-[var(--color-border)]">
-      {entries.map((entry) => (
-        <li key={entry.path} className="py-2.5 flex items-center gap-3 first:pt-0 last:pb-0">
-          <span className="shrink-0">
-            {entry.isCollection ? (
-              <FolderIcon className="h-4 w-4 text-[var(--color-accent)]" />
-            ) : (
-              <FileIcon className="h-4 w-4 text-[var(--color-text-muted)]" />
-            )}
-          </span>
-          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onPreview(entry)}>
-            <span className="block font-medium text-[var(--color-text-primary)] hover:text-[var(--color-accent)] truncate">
-              {entry.name}
-              {entry.isCollection ? '/' : ''}
-            </span>
-            <span className="block text-xs text-[var(--color-text-muted)] truncate">
-              {entry.isCollection ? t('files.folder', 'Folder') : formatBytes(entry.size)}
-              {entry.lastModified ? ` · ${entry.lastModified}` : ''}
-            </span>
-          </button>
-          {!entry.isCollection && (
-            <a
-              href={downloadUrl(owner, volume, entry.path, backend)}
-              download={entry.name}
-              aria-label={t('files.download', 'Download')}
-              className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-3)]"
+    <ul className="-mx-2 divide-y divide-[var(--color-border)]">
+      {entries.map((entry) => {
+        const modified = formatModified(entry.lastModified);
+        return (
+          <li
+            key={entry.path}
+            className="group flex items-center gap-2 rounded-lg px-2 py-2.5 transition-colors duration-150 hover:bg-[var(--color-surface-2)]"
+          >
+            <span
+              className={
+                entry.isCollection
+                  ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-3)] text-[var(--color-accent)]'
+                  : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-3)] text-[var(--color-text-muted)]'
+              }
             >
-              <Download className="h-4 w-4" />
-            </a>
-          )}
-          <button
-            type="button"
-            aria-label={t('files.rename', 'Rename')}
-            disabled={busy}
-            onClick={() => onRename(entry)}
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-3)]"
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            aria-label={t('files.duplicate', 'Duplicate')}
-            disabled={busy}
-            onClick={() => onDuplicate(entry)}
-            className="hidden sm:block px-2 py-1.5 rounded-lg text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-3)]"
-          >
-            {t('files.duplicate', 'Duplicate')}
-          </button>
-          <button
-            type="button"
-            aria-label={t('common.delete', 'Delete')}
-            disabled={busy}
-            onClick={() => onDelete(entry)}
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-error-text)] hover:bg-[var(--color-surface-3)]"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </li>
-      ))}
+              {entry.isCollection ? <FolderIcon className="h-4 w-4" /> : <FileIcon className="h-4 w-4" />}
+            </span>
+            <button
+              type="button"
+              className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/50"
+              onClick={() => onPreview(entry)}
+            >
+              <span className="block truncate text-sm font-medium text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)]">
+                {entry.name}
+                {entry.isCollection ? '/' : ''}
+              </span>
+              <span className="mt-0.5 block truncate text-xs tabular-nums text-[var(--color-text-muted)]">
+                {entry.isCollection ? t('files.folder', 'Folder') : formatBytes(entry.size)}
+                {modified ? ` · ${modified}` : ''}
+              </span>
+            </button>
+
+            <span className="flex shrink-0 items-center gap-0.5 sm:opacity-60 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+              {!entry.isCollection && (
+                <a
+                  href={downloadUrl(owner, volume, entry.path, backend)}
+                  download={entry.name}
+                  aria-label={t('files.download', 'Download')}
+                  title={t('files.download', 'Download')}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-colors duration-150 hover:bg-[var(--color-surface-3)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/50"
+                >
+                  <Download className="h-4 w-4" />
+                </a>
+              )}
+              <IconButton label={t('files.rename', 'Rename')} disabled={busy} onClick={() => onRename(entry)}>
+                <Pencil className="h-4 w-4" />
+              </IconButton>
+              <IconButton label={t('files.duplicate', 'Duplicate')} disabled={busy} onClick={() => onDuplicate(entry)}>
+                <Copy className="h-4 w-4" />
+              </IconButton>
+              <IconButton label={t('common.delete', 'Delete')} tone="danger" disabled={busy} onClick={() => onDelete(entry)}>
+                <Trash2 className="h-4 w-4" />
+              </IconButton>
+            </span>
+          </li>
+        );
+      })}
     </ul>
   );
 }
