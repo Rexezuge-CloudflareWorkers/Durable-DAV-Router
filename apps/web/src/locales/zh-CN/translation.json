@@ -38,11 +38,8 @@
     "webdavDescription": "使用任何 WebDAV 客户端挂载、同步和编辑。"
   },
   "dashboard": {
-    "connect": "连接",
-    "connectHelp": "每个存储桶都有自己的凭证。打开一个存储桶，进入设置，创建凭证，然后使用以下内容连接：{{example}}。",
     "empty": "还没有存储桶。请先注册一个后端。",
     "manageBackends": "管理后端",
-    "mountAnyVolume": "挂载任意存储桶",
     "new": "新建",
     "title": "仪表盘",
     "volumes": "存储桶",

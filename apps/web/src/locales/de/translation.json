@@ -38,11 +38,8 @@
     "webdavDescription": "Einhängen, synchronisieren und bearbeiten mit jedem WebDAV-Client."
   },
   "dashboard": {
-    "connect": "Verbinden",
-    "connectHelp": "Jeder Bucket hat eigene Zugangsdaten. Öffnen Sie einen Bucket, gehen Sie zu den Einstellungen, erstellen Sie Zugangsdaten und verbinden Sie sich mit: {{example}}.",
     "empty": "Noch keine Buckets. Registrieren Sie zuerst ein Backend.",
     "manageBackends": "Backends verwalten",
-    "mountAnyVolume": "Jeden Bucket einhängen",
     "new": "Neu",
     "title": "Dashboard",
     "volumes": "Buckets",

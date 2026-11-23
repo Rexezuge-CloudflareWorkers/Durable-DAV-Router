@@ -38,11 +38,8 @@
     "webdavDescription": "Montuj, synchronizuj i edytuj z dowolnego klienta WebDAV."
   },
   "dashboard": {
-    "connect": "Połącz",
-    "connectHelp": "Każdy koszyk ma własne poświadczenia. Otwórz koszyk, przejdź do ustawień, utwórz poświadczenie, a następnie połącz się za pomocą: {{example}}.",
     "empty": "Brak koszyków. Najpierw zarejestruj backend.",
     "manageBackends": "Zarządzaj backendami",
-    "mountAnyVolume": "Montuj dowolny koszyk",
     "new": "Nowy",
     "title": "Panel",
     "volumes": "Koszyki",

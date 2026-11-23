@@ -38,11 +38,8 @@
     "webdavDescription": "모든 WebDAV 클라이언트에서 마운트, 동기화, 편집할 수 있습니다."
   },
   "dashboard": {
-    "connect": "연결",
-    "connectHelp": "각 버킷에는 자체 자격 증명이 있습니다. 버킷을 열고 설정으로 이동한 뒤 자격 증명을 만들고 {{example}}(으)로 연결하세요.",
     "empty": "버킷이 없습니다. 먼저 백엔드를 등록하세요.",
     "manageBackends": "백엔드 관리",
-    "mountAnyVolume": "모든 버킷 마운트",
     "new": "새 항목",
     "title": "대시보드",
     "volumes": "버킷",
