@@ -33,8 +33,8 @@ KV free plan: 1,000 writes + 1,000 deletes per day against 100,000 reads, plus 1
 
 ## Routes
 
-- Backends: `GET|POST /user/backends` · `GET|PATCH|DELETE /user/backends/:slug` · `GET /user/backends/:slug/me` → `{slug, username}` · `GET /user/backends/:slug/probe`.
-- Volumes: `GET /user/volumes(?backend=)` → `{volumes, backends: [{slug, ok, status}]}` · `POST /user/volumes?backend=` · `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` · `ALL /user/volumes/:owner/:volume/*`.
+- Backends: `GET|POST /user/backends` · `GET|PATCH|DELETE /user/backends/:slug` · `GET /user/backends/:slug/me` → `{slug, username}` · `GET /user/backends/:slug/probe`. Every backend JSON carries `replicaOf: string | null` (0005); create and patch accept it as a string or null. It is a presentation hint — no route branches on it.
+- Volumes: `GET /user/volumes(?backend=)` → `{volumes, backends: [{slug, ok, status, replicaOf}]}` · `POST /user/volumes?backend=` · `GET|PATCH|DELETE /user/volumes/:owner/:volume?backend=` · `ALL /user/volumes/:owner/:volume/*`. `replicaOf` rides along on both fulfilled and failed fan-out paths so the dashboard can group sections without a second request.
 - WebDAV proxy: the 12 `SUPPORT_METHODS` on `/:owner/:volume` + `/:owner/:volume/*`; anything else → `405` with `Allow`.
 - **`OPTIONS` is a supported DAV method, so the CORS preflight shortcut must not shadow it.** `app.options('*')` is terminal, so answering *every* `OPTIONS` there also swallowed the RFC 4918 §9.1 capability probe and replied `204` with no `DAV:` header; clients that probe on connect aborted with "No Content". The shortcut is therefore gated on `Access-Control-Request-Method` (present on every Fetch-spec preflight, absent on a DAV probe) and everything else calls `next()` into the proxy, which forwards the backend's own `DAV:`/`Allow:` (`PASSTHROUGH_RESPONSE_HEADERS` already allowlists both). Assert the probe reaches the backend — a `204` on a DAV `OPTIONS` is the bug, not the fix.
 - Users: `GET /user/me` → `{email, id}`. `email` is `users.current_email`, never the frozen anchor — an anchor can be an opaque `anchor-<hex>@users.invalid` and must not be reported.

@@ -369,6 +369,7 @@ describe('router authenticated API (integration)', () => {
         slug: mixed,
         baseUrl: 'https://b.example.com',
         displayName: null,
+        replicaOf: null,
         now,
       });
       const row = await db.prepare('SELECT owner_email FROM router_backends WHERE id = ?').bind(id).first<{ owner_email: string }>();

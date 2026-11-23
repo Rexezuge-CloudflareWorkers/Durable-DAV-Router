@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Server } from 'lucide-react';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
-import { createBackend } from '../services/backendService';
+import { useAsyncLoad } from '../hooks/useAsyncLoad';
+import { createBackend, listBackends } from '../services/backendService';
 import { Button } from '../components/ui/Button';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
-import { FieldHint, Input, Label } from '../components/ui/Input';
+import { FieldHint, Input, Label, Select } from '../components/ui/Input';
 import { BreadcrumbBar } from '../components/layout/BreadcrumbBar';
 import { AppPage, PageHeaderCard } from '@rexezuge/web';
 
@@ -16,7 +17,28 @@ export function NewBackendView({ showNotice }: { showNotice: (kind: 'success' | 
   const [slug, setSlug] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [replicaOf, setReplicaOf] = useState('');
   const [saving, setSaving] = useState(false);
+
+  /**
+   * Existing backends are the candidate parents for the new one. Only live
+   * backends are offered: the service rejects a replica of a replica so the UI
+   * must not invite that choice. A failed load still leaves "Live Backend"
+   * usable — grouping is optional and purely presentational.
+   */
+  const { data: backends } = useAsyncLoad(listBackends, {
+    onError: (error) => showNotice('error', toLocalizedErrorMessage(t, error, 'errors.failedToLoadBackends', 'Failed To Load Backends.')),
+  });
+  const replicaOptions = useMemo(
+    () =>
+      (backends ?? [])
+        .filter((backend) => !backend.replicaOf)
+        .map((backend) => ({
+          slug: backend.slug,
+          label: backend.displayName ? `${backend.displayName} (${backend.slug})` : backend.slug,
+        })),
+    [backends],
+  );
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,6 +48,7 @@ export function NewBackendView({ showNotice }: { showNotice: (kind: 'success' | 
         slug: slug.trim().toLowerCase(),
         baseUrl: baseUrl.trim(),
         displayName: displayName.trim() === '' ? null : displayName.trim(),
+        replicaOf: replicaOf || null,
       });
       showNotice('success', t('backends.created', 'Backend {{slug}} Registered.', { slug: created.slug }));
       void navigate('/');
@@ -89,6 +112,22 @@ export function NewBackendView({ showNotice }: { showNotice: (kind: 'success' | 
                 autoComplete="off"
               />
               <FieldHint>{t('backends.displayNameHint', 'Shown Instead Of The Slug In Settings And Bucket Cards.')}</FieldHint>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-backend-replica-of">{t('backends.replicaOf', 'Replica Of')}</Label>
+              <Select
+                id="new-backend-replica-of"
+                value={replicaOf}
+                onChange={(e) => setReplicaOf(e.target.value)}
+              >
+                <option value="">{t('backends.liveBackend', 'Live Backend')}</option>
+                {replicaOptions.map((option) => (
+                  <option key={option.slug} value={option.slug}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+              <FieldHint>{t('backends.replicaOfHint', 'Replicas Stay Collapsed Until Expanded.')}</FieldHint>
             </div>
             <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
               <Button type="submit" variant="primary" loading={saving}>

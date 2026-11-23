@@ -61,6 +61,12 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
             return (found ?? null) as T | null;
           }
           if (state.sql.includes('WHERE id = ?')) return (rows.get(v0) ?? null) as T | null;
+          if (state.sql.includes('replica_of_slug = ?')) {
+            const [, parentSlug] = state.values as string[];
+            return {
+              cnt: [...rows.values()].filter((r) => eq(r.owner_user_id, v0) && eq(r.replica_of_slug ?? null, parentSlug)).length,
+            } as T;
+          }
           return state.sql.includes('COUNT(*)') ? ({ cnt: [...rows.values()].filter((r) => eq(r.owner_user_id, v0)).length } as T) : null;
         },
         async all<T>(): Promise<{ results: T[] }> {
@@ -73,19 +79,19 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
             // Mirrors the real guarded insert: a `SELECT ... WHERE` supplies
             // the row only when the owner is under quota, and a duplicate is
             // dropped by the unique index rather than raising.
-            const [id, ownerEmail, ownerUserId, slug, slugCi, baseUrl, displayName, createdAt, updatedAt, ownerForQuota, max] = state.values as [
-              string,
-              string,
-              string,
-              string,
-              string,
-              string,
-              string | null,
-              number,
-              number,
-              string,
-              number,
-            ];
+            const values = state.values as [string, string, string, string, string, string, string | null, string | null, number, number, string, number];
+            const id = values[0];
+            const ownerEmail = values[1];
+            const ownerUserId = values[2];
+            const slug = values[3];
+            const slugCi = values[4];
+            const baseUrl = values[5];
+            const displayName = values[6];
+            const replicaOf = values[7];
+            const createdAt = values[8];
+            const updatedAt = values[9];
+            const ownerForQuota = values[10];
+            const max = values[11];
             const owned = [...rows.values()].filter((r) => eq(r.owner_user_id, ownerForQuota));
             if (owned.length >= max || owned.some((r) => eq(r.slug_ci, slugCi))) {
               return { success: true, meta: { changes: 0 } };
@@ -104,10 +110,26 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
               last_status: null,
               backend_username: null,
               backend_username_ci: null,
+              replica_of_slug: replicaOf ?? null,
             });
             return { success: true, meta: { changes: 1 } };
           }
           if (sql.startsWith('UPDATE router_backends')) {
+            // Promotion has no trailing id: it clears a whole group by parent
+            // slug in one statement.
+            if (sql.includes('replica_of_slug = NULL')) {
+              const [, ownerUserId, parentSlug] = state.values as [number, string, string];
+              let changes = 0;
+              for (const row of rows.values()) {
+                if (!(eq(row.owner_user_id, ownerUserId) && eq(row.replica_of_slug ?? null, parentSlug))) {
+                  continue;
+                }
+
+                row.replica_of_slug = null;
+                changes += 1;
+              }
+              return { success: true, meta: { changes } };
+            }
             // Column names come from the SET clause, values from the bindings
             // in the same order; the trailing binding is the id.
             const sets = sql
@@ -280,6 +302,28 @@ describe('POST /user/backends', () => {
     expect(res.status).toBe(400);
   });
 
+  it('rejects a non-string replicaOf with 400', async () => {
+    const { routes, env } = setup();
+    const res = await call(
+      routes,
+      'POST /user/backends',
+      fakeContext({ method: 'POST', env, body: { slug: 'a', baseUrl: 'https://b.com', replicaOf: 7 } }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('registers a replica against an existing live backend and reports the link', async () => {
+    const { routes, env } = setup();
+    await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, body: { slug: 'live', baseUrl: 'https://live.example.com' } }));
+    const res = await call(
+      routes,
+      'POST /user/backends',
+      fakeContext({ method: 'POST', env, body: { slug: 'replica-1', baseUrl: 'https://one.example.com', replicaOf: 'LIVE' } }),
+    );
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { replicaOf: string | null }).replicaOf).toBe('live');
+  });
+
   it('rejects a malformed JSON body with 400', async () => {
     const { routes, env } = setup();
     const res = await call(routes, 'POST /user/backends', fakeContext({ method: 'POST', env, rawBody: '{not json' }));
@@ -371,6 +415,7 @@ describe('GET /user/backends', () => {
       last_status: null,
       backend_username: 'alice',
       backend_username_ci: 'alice',
+      replica_of_slug: null,
     });
     const { app, routes } = stubApp();
     registerBackendRoutes(app as never);
@@ -378,7 +423,13 @@ describe('GET /user/backends', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { backends: Array<Record<string, unknown>> };
     expect(body.backends).toHaveLength(1);
-    expect(body.backends[0]).toMatchObject({ slug: 'office', baseUrl: 'https://b.com', displayName: 'Office', backendUsername: 'alice' });
+    expect(body.backends[0]).toMatchObject({
+      slug: 'office',
+      baseUrl: 'https://b.com',
+      displayName: 'Office',
+      backendUsername: 'alice',
+      replicaOf: null,
+    });
   });
 
   it('returns an empty list rather than an error for a new account', async () => {
@@ -414,6 +465,7 @@ function oneBackendRow() {
     last_status: null,
     backend_username: null,
     backend_username_ci: null,
+    replica_of_slug: null,
   });
   const { app, routes } = stubApp();
   registerBackendRoutes(app as never);
@@ -472,10 +524,38 @@ describe('GET/PATCH/DELETE /user/backends/:slug', () => {
 
   it('rejects a non-string patch field with 400', async () => {
     const { routes, env } = withBackend();
-    for (const body of [{ baseUrl: 5 }, { displayName: [] }]) {
+    for (const body of [{ baseUrl: 5 }, { displayName: [] }, { replicaOf: false }]) {
       const res = await call(routes, 'PATCH /user/backends/:slug', fakeContext({ method: 'PATCH', env, params: { slug: 'office' }, body }));
       expect(res.status, JSON.stringify(body)).toBe(400);
     }
+  });
+
+  it('patches the replica link and reports it in the response', async () => {
+    const { routes, env, rows } = withBackend();
+    rows.set('2', {
+      id: '2',
+      owner_email: 'test@example.com',
+      owner_user_id: 'usr_test_example_com',
+      slug: 'live',
+      slug_ci: 'live',
+      base_url: 'https://live.example.com',
+      display_name: null,
+      created_at: 1,
+      updated_at: 1,
+      last_seen_at: null,
+      last_status: null,
+      backend_username: null,
+      backend_username_ci: null,
+      replica_of_slug: null,
+    });
+    const res = await call(
+      routes,
+      'PATCH /user/backends/:slug',
+      fakeContext({ method: 'PATCH', env, params: { slug: 'office' }, body: { replicaOf: 'live' } }),
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { replicaOf: string | null }).replicaOf).toBe('live');
+    expect(rows.get('1')?.replica_of_slug).toBe('live');
   });
 
   it('deletes a backend', async () => {
@@ -572,6 +652,7 @@ describe('GET /user/volumes fan-out', () => {
       last_status: null,
       backend_username: null,
       backend_username_ci: null,
+      replica_of_slug: 'a',
     });
     const { app, routes } = stubApp();
     registerAggregatedVolumeRoutes(app as never);
@@ -585,10 +666,18 @@ describe('GET /user/volumes fan-out', () => {
     });
     const { routes, env } = twoBackends();
     const res = await call(routes, 'GET /user/volumes', fakeContext({ env }));
-    const body = (await res.json()) as { volumes: Array<Record<string, unknown>>; backends: Array<{ slug: string; ok: boolean }> };
+    const body = (await res.json()) as { volumes: Array<Record<string, unknown>>; backends: Array<{ slug: string; ok: boolean; replicaOf: string | null }> };
     expect(body.volumes).toHaveLength(2);
     expect(body.volumes.every((v) => typeof v.backend === 'string')).toBe(true);
     expect(body.backends.every((b) => b.ok)).toBe(true);
+    // The dashboard groups on this field without a second request to the
+    // registry, so it must ride along on both the fulfilled and failed paths.
+    expect(body.backends).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ slug: 'a', replicaOf: null }),
+        expect.objectContaining({ slug: 'b', replicaOf: 'a' }),
+      ]),
+    );
   });
 
   it('fails soft per backend so one outage does not blank the dashboard', async () => {
@@ -600,10 +689,11 @@ describe('GET /user/volumes fan-out', () => {
     });
     const { routes, env } = twoBackends();
     const res = await call(routes, 'GET /user/volumes', fakeContext({ env }));
-    const body = (await res.json()) as { volumes: unknown[]; backends: Array<{ slug: string; ok: boolean }> };
+    const body = (await res.json()) as { volumes: unknown[]; backends: Array<{ slug: string; ok: boolean; replicaOf: string | null }> };
     expect(res.status).toBe(200);
     expect(body.volumes).toHaveLength(1);
     expect(body.backends.filter((b) => b.ok)).toHaveLength(1);
+    expect(body.backends).toEqual(expect.arrayContaining([expect.objectContaining({ slug: 'b', ok: false, replicaOf: 'a' })]));
   });
 
   it('restricts the fan-out to one backend with ?backend=', async () => {

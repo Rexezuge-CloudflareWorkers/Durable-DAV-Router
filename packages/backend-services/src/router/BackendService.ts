@@ -198,16 +198,43 @@ class BackendService {
     return d1Read(() => dao.getByOwnerSlug(owner.id, slug), 'lookup router backend', null);
   }
 
+  /**
+   * Resolve a `replicaOf` value to the canonical slug of a live backend.
+   *
+   * Grouping is deliberately one level deep. A chain (replica of a replica)
+   * would need recursive expansion in both the registry and the dashboard, and a
+   * cycle would expand forever — so a parent must itself be live. The lookup is
+   * owner-scoped, so a slug registered by another account is simply "not found"
+   * rather than a way to attach to someone else's group.
+   */
+  private async normalizeReplicaOf(
+    owner: AccountIdentity,
+    raw: string | null | undefined,
+    selfSlug?: string,
+  ): Promise<string | null> {
+    if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return null;
+    const slug = normalizeSlug(raw);
+    if (selfSlug !== undefined && slug === selfSlug) {
+      throw new ConflictError('A backend cannot be a replica of itself');
+    }
+    const parent = await this.findBackend(owner, slug);
+    if (!parent) throw new NotFoundError('Replica parent backend not found');
+    if (parent.replica_of_slug) throw new ConflictError('A replica cannot be the parent of another replica');
+    return parent.slug;
+  }
+
   public async createBackend(input: {
     owner: AccountIdentity;
     slug: string;
     baseUrl: string;
     displayName?: string | null;
+    replicaOf?: string | null;
   }): Promise<RouterBackendRow> {
     const account = input.owner;
     const slug = normalizeSlug(input.slug);
     const baseUrl = normalizeBaseUrl(input.baseUrl, this.allowPrivateHosts);
     const displayName = input.displayName === undefined || input.displayName === null ? null : normalizeDisplayName(input.displayName);
+    const replicaOf = await this.normalizeReplicaOf(account, input.replicaOf, slug);
     const dao = await this.deps.backendDAO();
     // The uniqueness and quota checks below exist only to produce a friendly
     // error; the database constraints are the actual enforcement, so they are
@@ -219,7 +246,7 @@ class BackendService {
     if (count >= max) throw new ForbiddenError(`Backend limit reached (${max})`);
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     const id = UUIDUtil.getRandomUUID();
-    const created = await dao.createGuarded({ id, owner: toBackendOwner(account), slug, baseUrl, displayName, now }, max);
+    const created = await dao.createGuarded({ id, owner: toBackendOwner(account), slug, baseUrl, displayName, replicaOf, now }, max);
     if (created === 'duplicate') throw new ConflictError('Backend slug already exists');
     if (created === 'quota-exceeded') throw new ForbiddenError(`Backend limit reached (${max})`);
     const row = await dao.getById(id);
@@ -255,14 +282,24 @@ class BackendService {
   public async updateBackend(
     owner: AccountIdentity,
     slug: string,
-    patch: { baseUrl?: string; displayName?: string | null },
+    patch: { baseUrl?: string; displayName?: string | null; replicaOf?: string | null },
   ): Promise<RouterBackendRow> {
     const dao = await this.deps.backendDAO();
     const row = await this.getBackend(owner, slug);
-    const updates: { baseUrl?: string; displayName?: string | null } = {};
+    const updates: { baseUrl?: string; displayName?: string | null; replicaOf?: string | null } = {};
     if (patch.baseUrl !== undefined) updates.baseUrl = normalizeBaseUrl(patch.baseUrl, this.allowPrivateHosts);
     if (patch.displayName !== undefined) {
       updates.displayName = patch.displayName === null ? null : normalizeDisplayName(patch.displayName);
+    }
+    if (patch.replicaOf !== undefined) {
+      const replicaOf = await this.normalizeReplicaOf(owner, patch.replicaOf, row.slug);
+      // A backend that already has replicas must stay the head of its group. If
+      // it became a replica itself, its children would point one level too deep
+      // and the flat collapsing the UI does would silently drop them.
+      if (replicaOf && (await dao.countReplicasByParent(owner.id, row.slug)) > 0) {
+        throw new ConflictError('A backend with replicas cannot itself be a replica');
+      }
+      updates.replicaOf = replicaOf;
     }
     const now = TimestampUtil.getCurrentUnixTimestampInSeconds();
     await dao.update(row.id, { ...updates, now });
@@ -274,6 +311,11 @@ class BackendService {
   public async deleteBackend(owner: AccountIdentity, slug: string): Promise<void> {
     const row = await this.getBackend(owner, slug);
     const dao = await this.deps.backendDAO();
+    // Promote this backend's replicas before removing it. Chains are forbidden,
+    // so its direct children are the whole group; clearing their link in one
+    // UPDATE leaves no row pointing at a slug that no longer exists. If the
+    // backend being removed is itself a replica, no other row points at it.
+    await dao.clearReplicaOfForParent(owner.id, row.slug, TimestampUtil.getCurrentUnixTimestampInSeconds());
     await dao.deleteById(row.id);
   }
 

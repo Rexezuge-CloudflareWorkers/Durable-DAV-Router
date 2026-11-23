@@ -33,6 +33,7 @@ function toBackendJson(r: {
   last_seen_at: number | null;
   last_status: number | null;
   backend_username?: string | null;
+  replica_of_slug?: string | null;
 }) {
   return {
     slug: r.slug,
@@ -43,6 +44,7 @@ function toBackendJson(r: {
     lastSeenAt: r.last_seen_at,
     lastStatus: r.last_status,
     backendUsername: r.backend_username ?? null,
+    replicaOf: r.replica_of_slug ?? null,
   };
 }
 
@@ -102,6 +104,7 @@ interface CreateBackendBody {
   slug?: unknown;
   baseUrl?: unknown;
   displayName?: unknown;
+  replicaOf?: unknown;
 }
 
 /**
@@ -126,9 +129,12 @@ async function readCreateBody(c: RouteContext): Promise<{ body: CreateBackendBod
   if (typeof body.baseUrl !== 'string' || body.baseUrl.trim().length === 0) {
     return { error: BaseRoute.jsonError(c, 'baseUrl is required', 400) };
   }
-  return body.displayName === undefined || body.displayName === null || typeof body.displayName === 'string'
+  if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== 'string') {
+    return { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) };
+  }
+  return body.replicaOf === undefined || body.replicaOf === null || typeof body.replicaOf === 'string'
     ? { body }
-    : { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) };
+    : { error: BaseRoute.jsonError(c, 'replicaOf must be a string or null', 400) };
 }
 
 /**
@@ -140,8 +146,8 @@ async function readCreateBody(c: RouteContext): Promise<{ body: CreateBackendBod
  */
 async function readPatchBody(
   c: RouteContext,
-): Promise<{ patch: { baseUrl?: string; displayName?: string | null } } | { error: Response }> {
-  const parsed = await BaseRoute.readJson<{ baseUrl?: unknown; displayName?: unknown }>(c);
+): Promise<{ patch: { baseUrl?: string; displayName?: string | null; replicaOf?: string | null } } | { error: Response }> {
+  const parsed = await BaseRoute.readJson<{ baseUrl?: unknown; displayName?: unknown; replicaOf?: unknown }>(c);
   if (parsed.oversized) return { error: BaseRoute.jsonError(c, 'Request body too large', 413) };
   if (parsed.malformed) return { error: BaseRoute.jsonError(c, 'Malformed JSON body', 400) };
   const body = parsed.body ?? {};
@@ -151,9 +157,13 @@ async function readPatchBody(
   if (body.displayName !== undefined && body.displayName !== null && typeof body.displayName !== 'string') {
     return { error: BaseRoute.jsonError(c, 'displayName must be a string or null', 400) };
   }
-  const patch: { baseUrl?: string; displayName?: string | null } = {};
+  if (body.replicaOf !== undefined && body.replicaOf !== null && typeof body.replicaOf !== 'string') {
+    return { error: BaseRoute.jsonError(c, 'replicaOf must be a string or null', 400) };
+  }
+  const patch: { baseUrl?: string; displayName?: string | null; replicaOf?: string | null } = {};
   if (body.baseUrl !== undefined) patch.baseUrl = body.baseUrl;
   if (body.displayName !== undefined) patch.displayName = body.displayName;
+  if (body.replicaOf !== undefined) patch.replicaOf = body.replicaOf;
   return { patch };
 }
 
@@ -171,6 +181,7 @@ const createBackend = handleRoute(async (c: RouteContext): Promise<Response> => 
     slug: parsed.body.slug as string,
     baseUrl: parsed.body.baseUrl as string,
     displayName: (parsed.body.displayName as string | null | undefined) ?? null,
+    replicaOf: (parsed.body.replicaOf as string | null | undefined) ?? null,
   });
   return c.json(toBackendJson(await probeAndRefresh(c, owner, created)), 201);
 });

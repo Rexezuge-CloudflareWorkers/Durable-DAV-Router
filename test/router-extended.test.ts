@@ -36,6 +36,10 @@ function fakeDb(): D1Queryable {
           if (state.sql.includes('WHERE id = ?')) {
             return (store.get(v0) ?? null) as T | null;
           }
+          if (state.sql.includes('replica_of_slug = ?')) {
+            const n = [...store.values()].filter((r) => r.owner_user_id === v0 && r.replica_of_slug === v1).length;
+            return { cnt: n } as T;
+          }
           if (state.sql.includes('COUNT(*)')) {
             const n = [...store.values()].filter((r) => r.owner_user_id === v0).length;
             return { cnt: n } as T;
@@ -53,17 +57,17 @@ function fakeDb(): D1Queryable {
         },
         async run(): Promise<{ success: boolean; meta?: { changes?: number } }> {
           if (state.sql.startsWith('INSERT INTO router_backends')) {
-            const [id, ownerEmail, ownerUserId, slug, slugCi, baseUrl, displayName, createdAt, updatedAt] = state.values as [
-              string,
-              string,
-              string,
-              string,
-              string,
-              string,
-              string | null,
-              number,
-              number,
-            ];
+            const values = state.values as [string, string, string, string, string, string, string | null, string | null, number, number];
+            const id = values[0];
+            const ownerEmail = values[1];
+            const ownerUserId = values[2];
+            const slug = values[3];
+            const slugCi = values[4];
+            const baseUrl = values[5];
+            const displayName = values[6];
+            const replicaOf = values[7];
+            const createdAt = values[8];
+            const updatedAt = values[9];
             store.set(id, {
               id,
               owner_email: ownerEmail,
@@ -78,10 +82,18 @@ function fakeDb(): D1Queryable {
               last_status: null,
               backend_username: null,
               backend_username_ci: null,
+              replica_of_slug: replicaOf ?? null,
             });
             return { success: true, meta: { changes: 1 } };
           }
           if (state.sql.startsWith('UPDATE router_backends')) {
+            if (state.sql.includes('replica_of_slug = NULL')) {
+              const [, ownerUserId, parentSlug] = state.values as [number, string, string];
+              for (const row of store.values()) {
+                if (row.owner_user_id === ownerUserId && row.replica_of_slug === parentSlug) row.replica_of_slug = null;
+              }
+              return { success: true, meta: { changes: 1 } };
+            }
             const id = String(state.values.at(-1));
             const cur = store.get(id);
             if (cur) {
@@ -110,6 +122,7 @@ describe('RouterBackendDAO', () => {
       slug: 'Office',
       baseUrl: 'https://b.example.com',
       displayName: null,
+      replicaOf: null,
       now: 7,
     });
     // The anchor is stored lowercased (it is both an FK target and part of the
@@ -127,12 +140,29 @@ describe('RouterBackendDAO', () => {
     // here may be decided by an address: `owner_email` is a frozen anchor that
     // is 1:1 with the id, and the id is what ownership means.
     const dao = new RouterBackendDAO(fakeDb());
-    await dao.create({ id: 'a', owner: { userId: 'usr_a', anchorEmail: 'alice@corp.com' }, slug: 'x', baseUrl: 'https://a.example.com', displayName: null, now: 1 });
-    await dao.create({ id: 'b', owner: { userId: 'usr_b', anchorEmail: 'bob@corp.com' }, slug: 'x', baseUrl: 'https://b.example.com', displayName: null, now: 1 });
+    await dao.create({ id: 'a', owner: { userId: 'usr_a', anchorEmail: 'alice@corp.com' }, slug: 'x', baseUrl: 'https://a.example.com', displayName: null, replicaOf: null, now: 1 });
+    await dao.create({ id: 'b', owner: { userId: 'usr_b', anchorEmail: 'bob@corp.com' }, slug: 'x', baseUrl: 'https://b.example.com', displayName: null, replicaOf: null, now: 1 });
     await expect(dao.listByOwnerUserId('usr_a')).resolves.toHaveLength(1);
     await expect(dao.listByOwnerUserId('usr_a')).resolves.toMatchObject([{ id: 'a' }]);
     await expect(dao.getByOwnerSlug('usr_a', 'x')).resolves.toMatchObject({ id: 'a' });
     await expect(dao.getByOwnerSlug('usr_b', 'x')).resolves.toMatchObject({ id: 'b' });
+  });
+
+  it('stores the replica link, counts children and promotes them with one UPDATE', async () => {
+    const dao = new RouterBackendDAO(fakeDb());
+    const owner = { userId: 'usr_1', anchorEmail: 'user@example.com' };
+    await dao.create({ id: 'live', owner, slug: 'live', baseUrl: 'https://live.example.com', displayName: null, replicaOf: null, now: 1 });
+    for (const [id, slug] of [['r1', 'r-1'], ['r2', 'r-2']]) {
+      await dao.create({ id, owner, slug, baseUrl: `https://${slug}.example.com`, displayName: null, replicaOf: 'live', now: 1 });
+    }
+    // The DAO lowercases the parameter, never the column.
+    await expect(dao.countReplicasByParent('usr_1', 'LIVE')).resolves.toBe(2);
+    await dao.clearReplicaOfForParent('usr_1', 'live', 2);
+    await expect(dao.countReplicasByParent('usr_1', 'live')).resolves.toBe(0);
+    await expect(dao.getById('r1')).resolves.toMatchObject({ replica_of_slug: null });
+    await expect(dao.getById('r2')).resolves.toMatchObject({ replica_of_slug: null });
+    // Unrelated rows are untouched.
+    await expect(dao.getById('live')).resolves.toMatchObject({ replica_of_slug: null });
   });
 });
 

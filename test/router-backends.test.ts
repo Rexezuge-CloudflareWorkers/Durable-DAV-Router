@@ -198,7 +198,7 @@ describe('BackendService with fakes', () => {
         [...store.values()].filter((r) => (r.backend_username_ci ?? '').toLowerCase() === usernameCi.toLowerCase()),
       countByOwnerUserId: async (ownerUserId: string) => [...store.values()].filter((r) => r.owner_user_id === ownerUserId).length,
       createGuarded: async (
-        input: { id: string; owner: BackendOwner; slug: string; baseUrl: string; displayName: string | null; now: number },
+        input: { id: string; owner: BackendOwner; slug: string; baseUrl: string; displayName: string | null; replicaOf: string | null; now: number },
         max: number,
       ): Promise<'ok' | 'duplicate' | 'quota-exceeded'> => {
         // Mirror the real statement: the quota check and the insert are one
@@ -224,10 +224,11 @@ describe('BackendService with fakes', () => {
           last_status: null,
           backend_username: null,
           backend_username_ci: null,
+          replica_of_slug: input.replicaOf ?? null,
         });
         return 'ok';
       },
-      create: async (input: { id: string; owner: BackendOwner; slug: string; baseUrl: string; displayName: string | null; now: number }) => {
+      create: async (input: { id: string; owner: BackendOwner; slug: string; baseUrl: string; displayName: string | null; replicaOf: string | null; now: number }) => {
         store.set(input.id, {
           id: input.id,
           owner_email: input.owner.anchorEmail.toLowerCase(),
@@ -242,11 +243,12 @@ describe('BackendService with fakes', () => {
           last_status: null,
           backend_username: null,
           backend_username_ci: null,
+          replica_of_slug: input.replicaOf ?? null,
         });
       },
       update: async (
         id: string,
-        patch: { baseUrl?: string; displayName?: string | null; now: number; backendUsername?: string | null },
+        patch: { baseUrl?: string; displayName?: string | null; now: number; backendUsername?: string | null; replicaOf?: string | null },
       ) => {
         const cur = store.get(id);
         if (!cur) return;
@@ -265,8 +267,23 @@ describe('BackendService with fakes', () => {
           display_name: patch.displayName ?? cur.display_name,
           backend_username: patch.backendUsername ?? cur.backend_username,
           backend_username_ci: usernameCi,
+          replica_of_slug: patch.replicaOf === undefined ? cur.replica_of_slug ?? null : patch.replicaOf,
           updated_at: patch.now,
         });
+      },
+      countReplicasByParent: async (ownerUserId: string, parentSlug: string) =>
+        [...store.values()].filter(
+          (r) => r.owner_user_id === ownerUserId && (r.replica_of_slug ?? '').toLowerCase() === parentSlug.toLowerCase(),
+        ).length,
+      clearReplicaOfForParent: async (ownerUserId: string, parentSlug: string, now: number) => {
+        for (const [id, current] of store) {
+          if (
+            current.owner_user_id === ownerUserId &&
+            (current.replica_of_slug ?? '').toLowerCase() === parentSlug.toLowerCase()
+          ) {
+            store.set(id, { ...current, replica_of_slug: null, updated_at: now });
+          }
+        }
       },
       deleteById: async (id: string) => {
         store.delete(id);
@@ -365,5 +382,90 @@ describe('BackendService with fakes', () => {
     const svc = new BackendService({ DB: {} as never, MAX_BACKENDS_PER_USER: '1' }, { backendDAO: () => Promise.resolve(dao as never) });
     await svc.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'a', baseUrl: 'https://a.example.com' });
     await expect(svc.createBackend({ owner: account('u@example.com', 'usr_u'), slug: 'b', baseUrl: 'https://b.example.com' })).rejects.toThrow();
+  });
+
+  describe('replica grouping', () => {
+    const owner = () => account('u@example.com', 'usr_u');
+
+    it('stores the canonical parent slug and treats an absent or empty replicaOf as live', async () => {
+      const dao = fakeDAO();
+      const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
+      await svc.createBackend({ owner: owner(), slug: 'live', baseUrl: 'https://live.example.com' });
+      const replica = await svc.createBackend({
+        owner: owner(),
+        slug: 'replica-1',
+        baseUrl: 'https://one.example.com',
+        replicaOf: 'LIVE',
+      });
+      expect(replica.replica_of_slug).toBe('live');
+      const empties: Array<[string, string | null | undefined]> = [
+        ['live-a', undefined],
+        ['live-b', null],
+        ['live-c', ' '.repeat(3)],
+      ];
+      for (const [slug, empty] of empties) {
+        const live = await svc.createBackend({
+          owner: owner(),
+          slug,
+          baseUrl: 'https://live.example.com',
+          replicaOf: empty,
+        });
+        expect(live.replica_of_slug).toBeNull();
+      }
+    });
+
+    it('rejects a missing parent, a self-reference and a chain', async () => {
+      const dao = fakeDAO();
+      const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
+      await svc.createBackend({ owner: owner(), slug: 'live', baseUrl: 'https://live.example.com' });
+      await expect(
+        svc.createBackend({ owner: owner(), slug: 'orphan', baseUrl: 'https://o.example.com', replicaOf: 'missing' }),
+      ).rejects.toBeInstanceOf(NotFoundError);
+      await expect(
+        svc.createBackend({ owner: owner(), slug: 'self', baseUrl: 'https://s.example.com', replicaOf: 'self' }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await svc.createBackend({ owner: owner(), slug: 'replica-1', baseUrl: 'https://one.example.com', replicaOf: 'live' });
+      await expect(
+        svc.createBackend({ owner: owner(), slug: 'replica-2', baseUrl: 'https://two.example.com', replicaOf: 'replica-1' }),
+      ).rejects.toThrow(/cannot be the parent/i);
+    });
+
+    it('cannot point another account\'s backend at this account\'s group', async () => {
+      const dao = fakeDAO();
+      const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
+      await svc.createBackend({ owner: owner(), slug: 'live', baseUrl: 'https://live.example.com' });
+      await expect(
+        svc.createBackend({
+          owner: account('other@example.com', 'usr_other'),
+          slug: 'replica',
+          baseUrl: 'https://one.example.com',
+          replicaOf: 'live',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('refuses to turn a backend that has replicas into a replica', async () => {
+      const dao = fakeDAO();
+      const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
+      for (const slug of ['live', 'other', 'replica-1']) {
+        await svc.createBackend({ owner: owner(), slug, baseUrl: `https://${slug}.example.com` });
+      }
+      await svc.updateBackend(owner(), 'replica-1', { replicaOf: 'live' });
+      await expect(svc.updateBackend(owner(), 'live', { replicaOf: 'other' })).rejects.toThrow(/with replicas/i);
+      // Clearing the link works: it is a promotion, not a new child.
+      await expect(svc.updateBackend(owner(), 'replica-1', { replicaOf: '' })).resolves.toMatchObject({ replica_of_slug: null });
+    });
+
+    it('promotes every replica when the live backend is deleted', async () => {
+      const dao = fakeDAO();
+      const svc = new BackendService({ DB: {} as never }, { backendDAO: () => Promise.resolve(dao as never) });
+      await svc.createBackend({ owner: owner(), slug: 'live', baseUrl: 'https://live.example.com' });
+      await svc.createBackend({ owner: owner(), slug: 'replica-1', baseUrl: 'https://one.example.com', replicaOf: 'live' });
+      await svc.createBackend({ owner: owner(), slug: 'replica-2', baseUrl: 'https://two.example.com', replicaOf: 'live' });
+      await svc.deleteBackend(owner(), 'live');
+      const remaining = await svc.listBackends(owner());
+      expect(remaining.map((row) => row.slug).sort()).toEqual(['replica-1', 'replica-2']);
+      expect(remaining.every((row) => row.replica_of_slug === null)).toBe(true);
+    });
   });
 });

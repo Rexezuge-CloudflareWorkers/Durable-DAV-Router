@@ -24,6 +24,13 @@ export interface RouterBackendRow {
   last_status: number | null;
   backend_username: string | null;
   backend_username_ci: string | null;
+  /**
+   * The slug of the live backend this one mirrors (0005+). NULL means this is
+   * itself a live backend. Optional because rows written before 0005 have no
+   * value for the column; the migration backfills nothing on purpose — every
+   * pre-existing backend was live.
+   */
+  replica_of_slug?: string | null;
 }
 
 /**
@@ -58,19 +65,21 @@ class RouterBackendDAO extends BaseDAO {
     slug: string;
     baseUrl: string;
     displayName: string | null;
+    replicaOf: string | null;
     now: number;
   }): Promise<void> {
     // Normalize here rather than trusting callers: `owner_email` is both a
     // foreign key into `users(email)` (exact-match, and that column is BINARY)
     // and part of the `(owner_email, slug_ci)` uniqueness constraint, so an
     // un-normalized write is an FK violation rather than a helpful duplicate.
-    await this.run('INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [input.id,
+    await this.run('INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, replica_of_slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [input.id,
             input.owner.anchorEmail.toLowerCase(),
             input.owner.userId,
             input.slug,
             input.slug.toLowerCase(),
             input.baseUrl,
             input.displayName,
+            input.replicaOf,
             input.now,
             input.now,]);
   }
@@ -87,6 +96,7 @@ class RouterBackendDAO extends BaseDAO {
       slug: string;
       baseUrl: string;
       displayName: string | null;
+      replicaOf: string | null;
       now: number;
     },
     max: number,
@@ -100,8 +110,8 @@ class RouterBackendDAO extends BaseDAO {
     // `ON CONFLICT DO NOTHING` covers the `(owner_user_id, slug_ci)` index; the
     // `SELECT ... WHERE` makes the quota part of the same statement, so a
     // concurrent insert cannot overshoot it.
-    const result = await this.run(`INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, created_at, updated_at)
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+    const result = await this.run(`INSERT INTO router_backends (id, owner_email, owner_user_id, slug, slug_ci, base_url, display_name, replica_of_slug, created_at, updated_at)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE (SELECT COUNT(*) FROM router_backends WHERE owner_user_id = ?) < ?
              ON CONFLICT (owner_user_id, slug_ci) DO NOTHING`, [input.id,
             input.owner.anchorEmail.toLowerCase(),
@@ -110,6 +120,7 @@ class RouterBackendDAO extends BaseDAO {
             input.slug.toLowerCase(),
             input.baseUrl,
             input.displayName,
+            input.replicaOf,
             input.now,
             input.now,
             input.owner.userId,
@@ -168,11 +179,13 @@ class RouterBackendDAO extends BaseDAO {
       lastSeenAt?: number | null;
       lastStatus?: number | null;
       backendUsername?: string | null;
+      replicaOf?: string | null;
     },
   ): Promise<void> {
     const assignments: SetAssignment[] = [{ column: 'updated_at', value: patch.now }];
     if (patch.baseUrl !== undefined) assignments.push({ column: 'base_url', value: patch.baseUrl });
     if (patch.displayName !== undefined) assignments.push({ column: 'display_name', value: patch.displayName });
+    if (patch.replicaOf !== undefined) assignments.push({ column: 'replica_of_slug', value: patch.replicaOf });
     if (patch.lastSeenAt !== undefined) assignments.push({ column: 'last_seen_at', value: patch.lastSeenAt });
     if (patch.lastStatus !== undefined) assignments.push({ column: 'last_status', value: patch.lastStatus });
     if (patch.backendUsername !== undefined) {
@@ -191,6 +204,34 @@ class RouterBackendDAO extends BaseDAO {
       .bind(usernameCi.toLowerCase(), limit)
       .all<RouterBackendRow>();
     return result.results ?? [];
+  }
+
+  /**
+   * How many backends of this account point at `parentSlug` as their replica
+   * parent. Used to refuse turning a backend with children into a replica, which
+   * would otherwise strand those children pointing at a row that is no longer a
+   * live backend (and create a chain the UI cannot collapse in one step).
+   */
+  public async countReplicasByParent(ownerUserId: string, parentSlug: string): Promise<number> {
+    const row = await this.database
+      .prepare('SELECT COUNT(*) AS cnt FROM router_backends WHERE owner_user_id = ? AND replica_of_slug = ?')
+      .bind(ownerUserId, parentSlug.toLowerCase())
+      .first<{ cnt: number }>();
+    return row?.cnt ?? 0;
+  }
+
+  /**
+   * Promote a live backend's replicas: clear their `replica_of_slug` before the
+   * parent row is deleted, so the surviving rows render as standalone backends
+   * instead of orphans pointing at a slug that no longer exists. One UPDATE for
+   * the whole group — the index on `(owner_user_id, replica_of_slug)` keeps it
+   * scoped to this account.
+   */
+  public async clearReplicaOfForParent(ownerUserId: string, parentSlug: string, now: number): Promise<void> {
+    await this.run(
+      'UPDATE router_backends SET replica_of_slug = NULL, updated_at = ? WHERE owner_user_id = ? AND replica_of_slug = ?',
+      [now, ownerUserId, parentSlug.toLowerCase()],
+    );
   }
 
   public async deleteById(id: string): Promise<void> {

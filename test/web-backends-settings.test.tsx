@@ -46,6 +46,7 @@ function backend(overrides: Partial<RouterBackend> = {}): RouterBackend {
     updatedAt: 1_700_000_000,
     lastSeenAt: null,
     lastStatus: null,
+    replicaOf: null,
     ...overrides,
   };
 }
@@ -82,6 +83,8 @@ describe('BackendsSettingsCard', () => {
     backendService.probeBackend.mockResolvedValue(probe);
     backendService.deleteBackend.mockReset();
     backendService.deleteBackend.mockResolvedValue({ ok: true });
+    backendService.updateBackend.mockReset();
+    backendService.updateBackend.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -190,5 +193,52 @@ describe('BackendsSettingsCard', () => {
     backendService.listBackends.mockResolvedValue([]);
     renderCard();
     expect(await screen.findByText('No Backends Registered.')).toBeTruthy();
+  });
+
+  describe('replica grouping', () => {
+    const replicas = [
+      backend({ slug: 'live', displayName: 'Live' }),
+      backend({ slug: 'replica-1', displayName: 'Replica One', baseUrl: 'https://one.example.com', replicaOf: 'live' }),
+      backend({ slug: 'replica-2', displayName: 'Replica Two', baseUrl: 'https://two.example.com', replicaOf: 'live' }),
+    ];
+
+    it('shows the live row only until the replica expander is clicked', async () => {
+      backendService.listBackends.mockResolvedValue(replicas);
+      renderCard();
+      await screen.findByText('Live (live)');
+      const expander = screen.getByRole('button', { name: 'Replicas (2)' });
+      expect(expander.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByText('https://one.example.com')).toBeNull();
+      expect(screen.queryByText('https://two.example.com')).toBeNull();
+
+      fireEvent.click(expander);
+      expect(expander.getAttribute('aria-expanded')).toBe('true');
+      expect(await screen.findByText('https://one.example.com')).toBeTruthy();
+      expect(screen.getByText('https://two.example.com')).toBeTruthy();
+      expect(screen.getAllByText('Replica')).toHaveLength(2);
+      // Collapsing is display-only: each replica keeps a working Check button.
+      expect(screen.getAllByRole('button', { name: 'Check' })).toHaveLength(3);
+      fireEvent.click(expander);
+      expect(screen.queryByText('https://one.example.com')).toBeNull();
+    });
+
+    it('saves the replica relationship from the inline edit', async () => {
+      backendService.listBackends.mockResolvedValue([backend({ slug: 'live' }), backend({ slug: 'other', displayName: 'Other' })]);
+      renderCard();
+      await screen.findByText('Other (other)');
+      fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[1]!);
+      fireEvent.change(screen.getByLabelText('Replica Of'), { target: { value: 'live' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => {
+        expect(backendService.updateBackend).toHaveBeenCalledWith('other', { displayName: 'Other', replicaOf: 'live' });
+      });
+    });
+
+    it('renders a replica whose parent is missing as a standalone row', async () => {
+      backendService.listBackends.mockResolvedValue([backend({ slug: 'orphan', replicaOf: 'gone' })]);
+      renderCard();
+      expect(await screen.findByText('Office (orphan)')).toBeTruthy();
+      expect(screen.getByText('Replica')).toBeTruthy();
+    });
   });
 });
