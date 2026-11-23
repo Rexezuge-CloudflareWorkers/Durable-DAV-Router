@@ -133,6 +133,13 @@ export default tseslint.config(
       'unicorn/no-non-function-verb-prefix': 'off',
       // forEach is used intentionally throughout the codebase in provider and utility layers
       'unicorn/no-for-each': 'off',
+      // Several signatures here implement external, positional interfaces —
+      // i18next's `t(key, fallback, options)` in test mocks and the SDK's
+      // `json(body, status, headers)` in the rate-limit adapter — where an
+      // options object would no longer satisfy the interface. The remaining
+      // hits are long-standing helpers with call sites throughout the SPA and
+      // its tests. Rewriting them all is churn with no runtime benefit.
+      'unicorn/prefer-options-parameter': 'off',
       // .then() chains in DAO and provider layers are often intentional — warn, don't block
       'unicorn/prefer-await': 'warn',
       // Callback references (e.g. .map(Number)) are sometimes intentional

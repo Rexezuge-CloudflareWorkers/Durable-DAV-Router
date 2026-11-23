@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
 import { applyMigrations, applyMigrationsAfter, applyMigrationsUpTo, migrationFiles } from '../helpers/migrations';
 
-type TestEnv = Record<string, unknown> & { DB: D1Database };
 
 const SEED_OWNER = 'owner@example.com';
 
@@ -22,6 +21,7 @@ const SEED_OWNER = 'owner@example.com';
  * could never detect.
  */
 describe('migrations preserve registered backends', () => {
+  type TestEnv = Record<string, unknown> & { DB: D1Database };
   const db = (): D1Database => (env as unknown as TestEnv).DB;
 
   async function countBackends(): Promise<number> {

@@ -4,14 +4,13 @@ import { rateLimit, clientIp, resetRateLimitForTests, getRateLimitBucketCountFor
 import { RATE_LIMIT_DEFS } from '../apps/api/src/middleware/rateLimitConfig';
 import { UnauthorizedError, ForbiddenError, BadRequestError, RateLimitedError } from '@rexezuge/errors';
 
-// `securityHeaders()` takes no arguments and returns the middleware, so the
-// context type is the middleware's *first* parameter. Reaching for
-// `Parameters<typeof securityHeaders>[0]` instead resolved to the empty
-// parameter tuple of the factory, which collapsed `Ctx` to `never` and turned
-// every `c.get(...)` below into a type error.
-type Ctx = Parameters<ReturnType<typeof securityHeaders>>[0];
-
 function makeCtx(url: string, options: { method?: string; contentType?: string; headers?: Record<string, string> } = {}) {
+  // `securityHeaders()` takes no arguments and returns the middleware, so the
+  // context type is the middleware's *first* parameter. Reaching for
+  // `Parameters<typeof securityHeaders>[0]` instead resolved to the empty
+  // parameter tuple of the factory, which collapsed `Ctx` to `never` and turned
+  // every `c.get(...)` below into a type error.
+  type Ctx = Parameters<ReturnType<typeof securityHeaders>>[0];
   const resHeaders = new Headers();
   if (options.contentType) resHeaders.set('content-type', options.contentType);
   const set = new Map<string, string>();

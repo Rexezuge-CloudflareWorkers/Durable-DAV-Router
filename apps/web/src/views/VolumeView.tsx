@@ -39,7 +39,7 @@ import { AppPage, RefreshButton } from '@rexezuge/web';
 function cleanPath(raw: string | null): string {
   const segments = stripSlashes(raw ?? '')
     .split('/')
-    .filter((segment) => segment !== '' && segment !== '.' && segment !== '..');
+    .filter((segment) => !['', '.', '..'].includes(segment));
   return segments.every((segment) => !/[/\\]/.test(segment)) ? segments.join('/') : '';
 }
 

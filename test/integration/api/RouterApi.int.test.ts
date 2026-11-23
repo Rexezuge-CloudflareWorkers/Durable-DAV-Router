@@ -2,7 +2,6 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import { env, SELF } from 'cloudflare:test';
 import { setupIntegrationTest, seedBackend } from '../helpers/setup';
 
-type TestEnv = Record<string, unknown> & { DB: D1Database };
 
 const OWNER = 'test@example.com';
 
@@ -16,6 +15,7 @@ const OWNER = 'test@example.com';
  * scan.
  */
 describe('router authenticated API (integration)', () => {
+  type TestEnv = Record<string, unknown> & { DB: D1Database };
   beforeAll(async () => {
     await setupIntegrationTest(env as unknown as TestEnv, OWNER);
   });
