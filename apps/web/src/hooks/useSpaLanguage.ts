@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LANGUAGE_STORAGE_KEY, detectInitialLanguage, loadLanguage, normalizeLanguage } from '../i18n';
+import { LANGUAGE_STORAGE_KEY, detectInitialLanguage, detectLanguageForUser, loadLanguage, normalizeLanguage } from '../i18n';
 import type { CurrentUser } from '../types';
 
 interface UseSpaLanguageInput {
@@ -11,8 +11,9 @@ interface UseSpaLanguageInput {
 
 /**
  * Language state slice extracted from `SpaApp` so the shell stays thin.
- * Owns detection precedence (localStorage > navigator > en), `<html lang>`
- * sync, and the manual-change flow (local-only persistence).
+ * Owns detection precedence (cached choice > localStorage > navigator > en,
+ * via `lib/language`), `<html lang>` sync, and the manual-change flow
+ * (local-only persistence).
  */
 function useSpaLanguage({ user, showNotice, setUser }: UseSpaLanguageInput) {
   const [language, setLanguage] = useState<string>(() => detectInitialLanguage());
@@ -36,16 +37,7 @@ function useSpaLanguage({ user, showNotice, setUser }: UseSpaLanguageInput) {
 
   useEffect(() => {
     if (!user || languagePendingRef.current) return;
-    const preferred = normalizeLanguage(
-      user.preferredLanguage ??
-        (() => {
-          try {
-            return localStorage.getItem(LANGUAGE_STORAGE_KEY);
-          } catch {
-            return null;
-          }
-        })(),
-    );
+    const preferred = detectLanguageForUser(user.preferredLanguage);
     // Already on this language with its bundle loaded: reloading would still
     // call changeLanguage, mint a new `t` identity, and refire every data
     // effect that (correctly) lists `t` in deps — skip it.

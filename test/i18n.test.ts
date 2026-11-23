@@ -13,15 +13,18 @@ import {
   normalizeLocale,
   resolveLocalizedStrings,
 } from '@rexezuge/i18n';
+// The SPA derives its own supported list from the kit's shared table. Aliased
+// so the backend table above and the web table here cannot be confused.
+import { SUPPORTED_LOCALES as WEB_LOCALES } from '@rexezuge/shared';
 
 // NOTE: `apps/web/src/i18n.ts` is not importable in this node unit-test env —
 // it pulls `i18next`/`react-i18next` (web-only deps, not resolvable from the repo
 // root) and a Vite `import.meta.glob` locale chunk map. Web-side
 // `normalizeLanguage`/`detectInitialLanguage` are therefore covered by
 // `pnpm run validate:locales` (key parity of all bundles + bundle-dir parity
-// with `SUPPORTED_LANGUAGES`, plus code-to-bundle key coverage) and by the
-// `web locale key coverage` suite below for the pure helpers that have no
-// web-only dependency.
+// with the kit's `SUPPORTED_LOCALES`, plus code-to-bundle key coverage), by
+// `test/web-i18n.test.ts` for the pure resolver, and by the
+// `web locale key coverage` suite below.
 
 describe('backend strings (en)', () => {
   it('serves Title Case English strings', () => {
@@ -139,6 +142,20 @@ describe('locale fallback', () => {
 });
 
 /**
+Every leaf in a bundle as a dotted key. Shared by the key-coverage and
+bundle-parity suites so they cannot disagree about what a key is.
+*/
+function flatten(node: Record<string, unknown>, prefix = '', out: [string, unknown][] = []): [string, unknown][] {
+  const entries = Object.entries(node);
+  for (const [key, value] of entries) {
+    const dotted = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) flatten(value as Record<string, unknown>, dotted, out);
+    else out.push([dotted, value]);
+  }
+  return out;
+}
+
+/**
  * Web locale key coverage, in both directions.
  *
  * `validate_locales.mjs` compared every bundle against `en`, which answers "are
@@ -154,19 +171,6 @@ describe('locale fallback', () => {
  */
 describe('web locale key coverage', () => {
   const WEB_SRC = path.join(import.meta.dirname, '..', 'apps', 'web', 'src');
-
-  /**
-  Every leaf in the bundle as a dotted key.
-  */
-  function flatten(node: Record<string, unknown>, prefix = '', out: [string, unknown][] = []): [string, unknown][] {
-    const entries = Object.entries(node);
-    for (const [key, value] of entries) {
-      const dotted = prefix ? `${prefix}.${key}` : key;
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) flatten(value as Record<string, unknown>, dotted, out);
-      else out.push([dotted, value]);
-    }
-    return out;
-  }
 
   const enBundle = JSON.parse(readFileSync(path.join(WEB_SRC, 'locales', 'en', 'translation.json'), 'utf8')) as Record<string, unknown>;
   const referenced = referencedKeys(WEB_SRC);
@@ -204,5 +208,70 @@ describe('web locale key coverage', () => {
       const other = JSON.parse(readFileSync(path.join(localesDir, tag, 'translation.json'), 'utf8')) as Record<string, unknown>;
       expect({ tag, keys: flatten(other).map(([key]) => key).sort() }).toEqual({ tag, keys: [...bundleKeys].sort() });
     }
+  });
+});
+
+/**
+ * Every language the selector offers must carry a real catalog. The selector
+ * takes its list from the kit, so a missing directory is not a silent English
+ * fallback in production — `loadLanguage` throws and the language card reports
+ * the failure. These assertions keep the 12 bundles honest in the unit suite
+ * as well as in `validate:locales`.
+ */
+describe('web locale bundles', () => {
+  const WEB_SRC = path.join(import.meta.dirname, '..', 'apps', 'web', 'src');
+  const localesDir = path.join(WEB_SRC, 'locales');
+  const tags = readdirSync(localesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const read = (tag: string): [string, unknown][] =>
+    flatten(JSON.parse(readFileSync(path.join(localesDir, tag, 'translation.json'), 'utf8')) as Record<string, unknown>);
+  const en = read('en');
+  const placeholders = (value: unknown): string[] => {
+    if (typeof value !== 'string') return [];
+    const found = new Set<string>();
+    let rest = value;
+    for (;;) {
+      const start = rest.indexOf('{{');
+      if (start === -1) break;
+      const end = rest.indexOf('}}', start + 2);
+      if (end === -1) break;
+      found.add(rest.slice(start, end + 2));
+      rest = rest.slice(end + 2);
+    }
+    return [...found].sort();
+  };
+
+  it('offers exactly the kit-supported languages, each with a catalog', () => {
+    expect([...WEB_LOCALES].sort()).toEqual(tags);
+  });
+
+  it('keeps keys, order, and placeholders identical to English', () => {
+    for (const tag of tags) {
+      if (tag === 'en') continue;
+      const entries = read(tag);
+      expect(entries.map(([key]) => key), tag).toEqual(en.map(([key]) => key));
+      for (const [key, value] of entries) {
+        const expected = en.find(([enKey]) => enKey === key)?.[1];
+        expect(typeof value, `${tag}:${key}`).toBe('string');
+        expect((value as string).length, `${tag}:${key}`).toBeGreaterThan(0);
+        expect(placeholders(value), `${tag}:${key}`).toEqual(placeholders(expected));
+      }
+    }
+  });
+
+  it('actually translates rather than echoing English back', () => {
+    const englishCancel = en.find(([key]) => key === 'common.cancel')?.[1];
+    for (const tag of tags) {
+      if (tag === 'en') continue;
+      const cancel = read(tag).find(([key]) => key === 'common.cancel')?.[1];
+      expect(cancel, tag).not.toBe(englishCancel);
+    }
+    // The two Chinese catalogs are distinct products of the same build step;
+    // an accidental copy would leave every Traditional reader with Simplified text.
+    const simplified = read('zh-CN');
+    const traditional = read('zh-TW');
+    expect(simplified.some(([, value], index) => value !== traditional[index]?.[1])).toBe(true);
   });
 });

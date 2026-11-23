@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { NoticeBar, EmptyState, LoadingSpinner, ReadOnlyField, LanguageSelector, Unauthorized } from '@rexezuge/web';
+import { NoticeBar, EmptyState, LoadingSpinner, ReadOnlyField, Unauthorized } from '@rexezuge/web';
+import { LocaleUtil, SUPPORTED_LOCALES } from '@rexezuge/shared';
 import { LanguageSettingsCard } from '../apps/web/src/components/settings/LanguageSettingsCard';
 import { ProfileSettingsCard } from '../apps/web/src/components/settings/ProfileSettingsCard';
 import { TypeToConfirmModal } from '@rexezuge/web';
@@ -85,16 +86,16 @@ describe('layout composition', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('offers the languages the bundle ships, and reports a choice', () => {
+  it('offers every shipped language, and reports a choice', () => {
     const onChange = vi.fn();
-    render(<LanguageSelector value="en" onChange={onChange} label="Select Language" unknownLabel="Unknown Language" supported={['en']} />);
+    render(<LanguageSettingsCard language="en" onLanguageChange={onChange} />);
     const select = screen.getByRole('combobox') as unknown as HTMLSelectElement;
-    // English-only today; the list grows bundle by bundle and is asserted against
-    // `SUPPORTED_LANGUAGES` so an option cannot appear without a bundle behind it.
-    expect([...select.options].map((option) => option.value)).toEqual(['en']);
-    expect([...select.options].map((option) => option.textContent)).toEqual(['English']);
-    fireEvent.change(select, { target: { value: 'en' } });
-    expect(onChange).toHaveBeenCalledWith('en');
+    // The card takes its list from the SPA's i18n module, which derives it from
+    // the kit's support table; every option must have a catalog behind it.
+    expect([...select.options].map((option) => option.value)).toEqual([...SUPPORTED_LOCALES]);
+    expect([...select.options].map((option) => option.textContent)).toEqual([...SUPPORTED_LOCALES].map((tag) => LocaleUtil.displayName(tag)));
+    fireEvent.change(select, { target: { value: 'de' } });
+    expect(onChange).toHaveBeenCalledWith('de');
   });
 
   it('sends the user to the Access sign-in path', () => {

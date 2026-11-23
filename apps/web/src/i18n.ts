@@ -1,8 +1,18 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { LocaleUtil, SUPPORTED_LOCALES } from '@rexezuge/shared';
+import { resolvePreferredLanguage } from './lib/language';
 import en from './locales/en/translation.json';
 
-export const SUPPORTED_LANGUAGES = ['en'] as const;
+/**
+ * The languages the selector offers.
+ *
+ * Derived from the kit's support table rather than declared here: a local list
+ * and the kit's list are two sources of truth that can disagree, and the
+ * validator checks the shipped catalogs against this one. A locale added to the
+ * kit is offered here only once its catalog ships.
+ */
+export const SUPPORTED_LANGUAGES = SUPPORTED_LOCALES;
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
@@ -12,51 +22,46 @@ const baseResources = {
   en: { translation: en },
 } as const;
 
-/**
- * The one canonicalizer for BCP 47-ish tags (`en_us` → `en-US`).
- *
- * Deliberately a local copy of `@durable-dav-router/shared/utils`'s
- * `canonicalizeLanguageTag`, which is byte-identical: the SPA ships with no
- * `@durable-dav-router/*` runtime dependency, and `shared` is a Workers package
- * that pulls Node types in with it. `test/web-lib.test.ts` and
- * `packages/shared`'s own suite pin both, and `AGENTS.md` names this pair as a
- * duplication to keep in step — a change to one has to change the other.
- */
-function canonicalizeTag(tag: string): string {
-  const normalized = tag.trim().replaceAll('_', '-');
-  const parts = normalized.split('-').filter(Boolean);
-  if (parts.length === 0) return 'en';
-  const language = (parts[0] ?? 'en').toLowerCase();
-  if (parts.length === 1) return language;
-  const rest = parts.slice(1).map((part: string) => (part.length === 2 ? part.toUpperCase() : part.toLowerCase()));
-  return [language, ...rest].join('-');
-}
-
 export function normalizeLanguage(tag: string | null | undefined): SupportedLanguage {
-  if (!tag || typeof tag !== 'string') return 'en';
-  const canonical = canonicalizeTag(tag);
-  if ((SUPPORTED_LANGUAGES as readonly string[]).includes(canonical)) {
-    return canonical as SupportedLanguage;
-  }
-  const base = canonical.split('-', 1)[0]?.toLowerCase() ?? 'en';
-  const match = (SUPPORTED_LANGUAGES as readonly string[]).find((l) => l.toLowerCase() === base);
-  return (match || 'en') as SupportedLanguage;
+  return LocaleUtil.normalize(tag);
 }
 
+/**
+ * The stored language choice, or `null` when there is none or storage is
+ * unavailable (private mode throws on access).
+ */
+export function readStoredLanguage(): string | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function readNavigatorLanguage(): string | null {
+  try {
+    return typeof navigator === 'undefined' ? null : navigator.language;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The language before the cached preference has been read: stored choice, then
+ * the browser's, then `en`. The precedence itself is `resolvePreferredLanguage`
+ * in `lib/language`.
+ */
 export function detectInitialLanguage(): SupportedLanguage {
-  try {
-    const stored = typeof localStorage === 'undefined' ? null : localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    if (stored) return normalizeLanguage(stored);
-  } catch {
-    // Ignore storage errors (private mode) and fall through.
-  }
-  try {
-    const nav = typeof navigator === 'undefined' ? null : navigator.language;
-    if (nav) return normalizeLanguage(nav);
-  } catch {
-    // Ignore and fall through to default.
-  }
-  return 'en';
+  return resolvePreferredLanguage({ stored: readStoredLanguage(), navigatorLanguage: readNavigatorLanguage() });
+}
+
+/**
+ * The language once the cached preference has been read: the client-cached
+ * `user.preferredLanguage` (if any) wins, and the same stored/browser chain
+ * applies underneath it.
+ */
+export function detectLanguageForUser(preferred?: string | null): SupportedLanguage {
+  return resolvePreferredLanguage({ stored: preferred ?? readStoredLanguage(), navigatorLanguage: readNavigatorLanguage() });
 }
 
 const loadedLanguages = new Set<string>(['en']);
@@ -74,9 +79,9 @@ export async function loadLanguage(lng: string): Promise<void> {
   }
   const loader = localeModules[`./locales/${normalized}/translation.json`];
   if (!loader) {
-    // Bundle not shipped yet — stay on English instead of failing.
-    await i18n.changeLanguage('en');
-    return;
+    // A listed language with no catalog is a build defect — `validate:locales`
+    // checks directory parity — so report it instead of silently using English.
+    throw new Error(`Unsupported language bundle: ${normalized}`);
   }
   let dict: Record<string, unknown>;
   try {
