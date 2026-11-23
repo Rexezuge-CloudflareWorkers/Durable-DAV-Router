@@ -163,11 +163,9 @@
     "uploaded": "アップロードが完了しました。"
   },
   "settings": {
-    "email": "メール",
     "language": "言語",
     "languageDescription": "表示言語を選択してください。",
     "preferences": "設定",
-    "profile": "プロファイル",
     "selectLanguage": "言語を選択",
     "unknownLanguage": "不明な言語",
     "userSettings": "ユーザー設定"

@@ -23,7 +23,6 @@ export default function SpaApp() {
 
       <SpaViewRouter
         user={user}
-        setUser={setUser}
         authorized={authorized}
         showNotice={showNotice}
         language={languageStatus === 'error' ? 'unknown' : language}

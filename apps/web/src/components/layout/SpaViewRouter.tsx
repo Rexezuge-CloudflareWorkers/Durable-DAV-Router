@@ -13,7 +13,6 @@ import { Unauthorized } from '@rexezuge/web';
 
 interface SpaViewRouterProps {
   user: CurrentUser | null;
-  setUser: (user: CurrentUser) => void;
   authorized: boolean | null;
   showNotice: (kind: 'success' | 'error', message: string) => void;
   language: string;
@@ -25,7 +24,7 @@ interface SpaViewRouterProps {
  * Route switch extracted from `SpaApp` so the shell stays a thin composition
  * root. Props are the already-composed hook slices; no data fetching here.
  */
-function SpaViewRouter({ user, setUser, authorized, showNotice, language, onLanguageChange, languageDisabled }: SpaViewRouterProps) {
+function SpaViewRouter({ user, authorized, showNotice, language, onLanguageChange, languageDisabled }: SpaViewRouterProps) {
   const { t } = useTranslation();
   // Auth is still resolving — volume routes render speculatively with public
   // data, but owner-gated routes stay on a spinner to avoid flashing
@@ -87,7 +86,6 @@ function SpaViewRouter({ user, setUser, authorized, showNotice, language, onLang
           user ? (
             <SettingsView
               user={user}
-              setUser={setUser}
               showNotice={showNotice}
               language={language}
               onLanguageChange={onLanguageChange}

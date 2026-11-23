@@ -163,11 +163,9 @@
     "uploaded": "Upload voltooid."
   },
   "settings": {
-    "email": "E-mail",
     "language": "Taal",
     "languageDescription": "Kies uw gewenste weergavetaal.",
     "preferences": "Voorkeuren",
-    "profile": "Profiel",
     "selectLanguage": "Taal selecteren",
     "unknownLanguage": "Onbekende taal",
     "userSettings": "Gebruikersinstellingen"

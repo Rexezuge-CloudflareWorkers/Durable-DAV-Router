@@ -163,11 +163,9 @@
     "uploaded": "上傳完成。"
   },
   "settings": {
-    "email": "電子郵件",
     "language": "語言",
     "languageDescription": "選擇您偏好的顯示語言。",
     "preferences": "偏好設定",
-    "profile": "個人資料",
     "selectLanguage": "選擇語言",
     "unknownLanguage": "未知語言",
     "userSettings": "使用者設定"

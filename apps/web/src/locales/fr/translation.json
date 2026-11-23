@@ -163,11 +163,9 @@
     "uploaded": "Téléversement terminé."
   },
   "settings": {
-    "email": "E-mail",
     "language": "Langue",
     "languageDescription": "Choisissez votre langue d'affichage préférée.",
     "preferences": "Préférences",
-    "profile": "Profil",
     "selectLanguage": "Sélectionner une langue",
     "unknownLanguage": "Langue inconnue",
     "userSettings": "Paramètres utilisateur"
