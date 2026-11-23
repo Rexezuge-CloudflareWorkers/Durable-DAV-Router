@@ -183,7 +183,7 @@ export function VolumeSettingsTab({
 
       <VolumeCredentialsCard owner={owner} volume={volume} showNotice={showNotice} backend={backend} />
 
-      <Card className="border-[var(--color-error-text)]/40">
+      <Card variant="danger" className="mt-2">
         <CardHeader>
           <CardTitle>{t('volumes.dangerZone', 'Danger Zone')}</CardTitle>
         </CardHeader>
