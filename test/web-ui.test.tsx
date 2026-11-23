@@ -5,7 +5,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { NoticeBar, EmptyState, LoadingSpinner, ReadOnlyField, Unauthorized } from '@rexezuge/web';
 import { LocaleUtil, SUPPORTED_LOCALES } from '@rexezuge/shared';
 import { LanguageSettingsCard } from '../apps/web/src/components/settings/LanguageSettingsCard';
-import { ProfileSettingsCard } from '../apps/web/src/components/settings/ProfileSettingsCard';
 import { TypeToConfirmModal } from '@rexezuge/web';
 
 vi.mock('react-i18next', () => ({
@@ -119,21 +118,6 @@ describe('layout composition', () => {
   it('disables the language selector while one is loading', () => {
     render(<LanguageSettingsCard language="en" onLanguageChange={vi.fn()} disabled />);
     expect((screen.getByRole('combobox') as unknown as HTMLSelectElement).disabled).toBe(true);
-  });
-
-  it('shows the account address read-only on the profile card', () => {
-    // The router is email-only; usernames live per-backend, so an editable address
-    // here would be an edit that goes nowhere.
-    render(
-      <MemoryRouter>
-        <ProfileSettingsCard user={{ email: 'a@example.com' }} setUser={vi.fn()} showNotice={vi.fn()} />
-      </MemoryRouter>,
-    );
-    const address = screen.getByDisplayValue('a@example.com') as HTMLInputElement;
-    expect(address.readOnly).toBe(true);
-    // A read-only *input* is still exposed as a textbox, so `readOnly` above is the
-    // assertion that matters: nothing about the address may be typed or edited.
-    expect(address.hasAttribute('readonly')).toBe(true);
   });
 
   it('requires the exact name before a destructive action is armed', async () => {

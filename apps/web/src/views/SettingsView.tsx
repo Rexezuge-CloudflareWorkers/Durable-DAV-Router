@@ -2,7 +2,6 @@ import { useTranslation } from 'react-i18next';
 import { Settings, UserRound } from 'lucide-react';
 import type { CurrentUser } from '../types';
 import { LanguageSettingsCard } from '../components/settings/LanguageSettingsCard';
-import { ProfileSettingsCard } from '../components/settings/ProfileSettingsCard';
 import { BackendsSettingsCard } from '../components/settings/BackendsSettingsCard';
 import { BreadcrumbBar } from '../components/layout/BreadcrumbBar';
 import { AppPage, PageHeaderCard } from '@rexezuge/web';
@@ -16,21 +15,18 @@ import { cn } from '@rexezuge/web';
  * shape and a way to jump to the section you came for.
  */
 const SECTION_LINKS = [
-  { id: 'profile', key: 'settings.profile', fallback: 'Profile', icon: UserRound },
   { id: 'backends', key: 'backends.title', fallback: 'Backends', icon: Settings },
   { id: 'preferences', key: 'settings.preferences', fallback: 'Preferences', icon: Settings },
 ] as const;
 
 export function SettingsView({
   user,
-  setUser,
   showNotice,
   language,
   onLanguageChange,
   languageDisabled,
 }: {
   user: CurrentUser;
-  setUser: (user: CurrentUser) => void;
   showNotice: (kind: 'success' | 'error', message: string) => void;
   language: string;
   onLanguageChange: (lng: string) => void;
@@ -69,9 +65,6 @@ export function SettingsView({
           </nav>
 
           <div className="min-w-0 space-y-4">
-            <div id="profile" className="scroll-mt-32">
-              <ProfileSettingsCard user={user} setUser={setUser} showNotice={showNotice} />
-            </div>
             <div id="backends" className="scroll-mt-32">
               <BackendsSettingsCard showNotice={showNotice} />
             </div>

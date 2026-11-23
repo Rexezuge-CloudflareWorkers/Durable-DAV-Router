@@ -163,11 +163,9 @@
     "uploaded": "Upload abgeschlossen."
   },
   "settings": {
-    "email": "E-Mail",
     "language": "Sprache",
     "languageDescription": "Wählen Sie Ihre bevorzugte Anzeigesprache.",
     "preferences": "Einstellungen",
-    "profile": "Profil",
     "selectLanguage": "Sprache auswählen",
     "unknownLanguage": "Unbekannte Sprache",
     "userSettings": "Benutzereinstellungen"

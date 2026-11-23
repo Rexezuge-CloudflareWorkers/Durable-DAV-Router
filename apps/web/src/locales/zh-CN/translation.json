@@ -163,11 +163,9 @@
     "uploaded": "上传完成。"
   },
   "settings": {
-    "email": "邮箱",
     "language": "语言",
     "languageDescription": "选择您偏好的显示语言。",
     "preferences": "偏好设置",
-    "profile": "个人资料",
     "selectLanguage": "选择语言",
     "unknownLanguage": "未知语言",
     "userSettings": "用户设置"
