@@ -45,6 +45,12 @@ export interface RouterBackend {
   lastSeenAt: number | null;
   lastStatus: number | null;
   backendUsername?: string | null;
+  /**
+   * The live backend this one mirrors, or null when it is itself live. Router-
+   * owned metadata: it only drives presentation — every backend is still
+   * registered, proxied and fanned out exactly as before.
+   */
+  replicaOf: string | null;
 }
 
 export interface BackendHealth {
@@ -52,6 +58,7 @@ export interface BackendHealth {
   ok: boolean;
   status?: number;
   error?: string;
+  replicaOf: string | null;
 }
 
 export interface VolumeDetail extends Volume {

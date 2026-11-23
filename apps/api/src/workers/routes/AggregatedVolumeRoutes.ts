@@ -215,6 +215,12 @@ interface BackendStatus {
   ok: boolean;
   status: number;
   error?: string;
+  /**
+   * The live backend this one mirrors, if any. Rides along so the dashboard can
+   * group sections without a second request to the registry — the fan-out
+   * already reads every one of these rows from D1 before it probes them.
+   */
+  replicaOf: string | null;
 }
 
 /**
@@ -261,7 +267,7 @@ const listVolumes = handleRoute(async (c: RouteContext): Promise<Response> => {
     const slug = backends[i].slug;
     if (result.status === 'fulfilled') {
       volumes.push(...result.value.volumes);
-      return { slug, ok: true, status: 200 };
+      return { slug, ok: true, status: 200, replicaOf: backends[i].replica_of_slug ?? null };
     }
     const reason = result.reason as Error & { backendStatus?: number };
     const upstreamStatus = typeof reason?.backendStatus === 'number' ? reason.backendStatus : null;
@@ -269,7 +275,7 @@ const listVolumes = handleRoute(async (c: RouteContext): Promise<Response> => {
     const code = upstreamStatus ?? fallback;
     const message = reason instanceof Error ? reason.message : 'backend unreachable';
     console.warn('backend fan-out failed', { slug, status: code, error: message.slice(0, 300) });
-    return { slug, ok: false, status: code, error: message };
+    return { slug, ok: false, status: code, error: message, replicaOf: backends[i].replica_of_slug ?? null };
   });
   return c.json({ volumes, backends: status });
 });

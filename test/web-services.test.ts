@@ -108,6 +108,14 @@ describe('backendService', () => {
     expect(target(only(updated.calls).url)).toBe('/user/backends/a%20b');
     expect(updated.calls[0]?.init.method).toBe('PATCH');
 
+    // The replica link is ordinary JSON in both directions — no extra route.
+    const replica = await withFetch('{"slug":"r1"}', () =>
+      createBackend({ slug: 'r1', baseUrl: 'https://dav.example.com', replicaOf: 'live' }),
+    );
+    expect(await recordedJson(replica.calls[0])).toEqual({ slug: 'r1', baseUrl: 'https://dav.example.com', replicaOf: 'live' });
+    const relinked = await withFetch('{"slug":"r1"}', () => updateBackend('r1', { replicaOf: null }));
+    expect(await recordedJson(relinked.calls[0])).toEqual({ replicaOf: null });
+
     const deleted = await withFetch('{"ok":true}', () => deleteBackend('a b'));
     expect(target(only(deleted.calls).url)).toBe('/user/backends/a%20b');
     expect(deleted.calls[0]?.init.method).toBe('DELETE');

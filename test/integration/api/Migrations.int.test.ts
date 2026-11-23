@@ -76,6 +76,24 @@ describe('migrations preserve registered backends', () => {
     expect(row?.backend_username_ci).toBeNull();
   });
 
+  it('adds the replica link column and serves its lookup from an index', async () => {
+    await applyMigrations(db());
+    const row = await db()
+      .prepare('SELECT replica_of_slug FROM router_backends WHERE id = ?')
+      .bind('seed-backend-id')
+      .first<{ replica_of_slug: string | null }>();
+    expect(row).toBeTruthy();
+    // Every pre-0005 backend was live; the additive migration changes nothing
+    // about how it routes or fans out.
+    expect(row?.replica_of_slug).toBeNull();
+
+    const plan = await db()
+      .prepare('EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM router_backends WHERE owner_user_id = ? AND replica_of_slug = ?')
+      .bind('usr_test', 'live')
+      .all<{ detail: string }>();
+    expect((plan.results ?? []).map((r) => r.detail).join(' | ')).toMatch(/USING (COVERING )?INDEX idx_router_backends_replica_of/);
+  });
+
   it('drops the namespaces table (usernames are per-backend)', async () => {
     await applyMigrations(db());
     const tables = await db()

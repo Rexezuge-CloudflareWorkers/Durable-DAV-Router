@@ -36,7 +36,7 @@ Add a new env var in `ConfigurationDefaults.ts` (+ an `AppConfiguration` method,
 - Never plan a migration around `DROP TABLE` + `RENAME` of a table other tables reference — the implicit `DELETE FROM` cascades, and D1 cannot use `PRAGMA foreign_keys = OFF` because every statement runs in an implicit transaction. Add columns and backfill instead; only a table with no children may be rebuilt.
 - `router_backends.owner_email` carries `ON DELETE CASCADE` on `users(email)`, so `users` is never rebuilt and `users.email` is never updated. That is why `0004_router_user_identity.sql` freezes it as an **anchor** and introduces `users.id` as the identity, rather than repointing the foreign key.
 - A migration that *must* rebuild should prove enforcement is off before its first destructive statement, so the run aborts instead of deleting rows.
-- **Apply migrations before deploying the code.** `0004` is a hard requirement: `router_backends.owner_user_id` and the `user_emails` registry are queried unconditionally, so a database without them 500s the owner-scoped plane. `UserIdentityService` tolerates a *pre-0004 row*, not a pre-0004 database.
+- **Apply migrations before deploying the code.** `0004` is a hard requirement: `router_backends.owner_user_id` and the `user_emails` registry are queried unconditionally, so a database without them 500s the owner-scoped plane. `UserIdentityService` tolerates a *pre-0004 row*, not a pre-0004 database. `0005_router_backend_replica_of.sql` adds `router_backends.replica_of_slug` plus its owner-scoped index; a missing column makes the registry and fan-out read every backend as live, which is silently wrong rather than a 500.
 
 ## Dependency injection (`packages/backend-runtime/src/di/` + `config/`)
 

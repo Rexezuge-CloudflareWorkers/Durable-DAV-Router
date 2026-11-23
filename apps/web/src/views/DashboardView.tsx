@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, FolderArchive, LayoutGrid, Lock, Plus, Search, Server } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderArchive, LayoutGrid, Lock, Plus, Search, Server } from 'lucide-react';
 import type { AggregatedVolume } from '../types';
+import { buildReplicaOfMap, groupVolumeSections, type VolumeSection } from '../lib/backendGroups';
 import { toLocalizedErrorMessage } from '../lib/backendErrors';
 import { useAsyncLoad } from '../hooks/useAsyncLoad';
 import { listMyVolumes } from '../services/volumeService';
@@ -17,6 +18,7 @@ export function DashboardView({ showNotice }: { showNotice: (kind: 'success' | '
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
+  const [expandedSlugs, setExpandedSlugs] = useState<ReadonlySet<string>>(() => new Set());
 
   /**
    * The buckets, grouped by the backend that holds them.
@@ -62,16 +64,114 @@ export function DashboardView({ showNotice }: { showNotice: (kind: 'success' | '
   );
 
   /**
-  Client-side filter over the one response this page already has.
+   * Replica relationships come from the same `/user/volumes` response as the
+   * buckets (`backends[]`), so the dashboard stays a one-request page. Sections
+   * whose parent holds no buckets stay top-level rather than disappearing.
+   */
+  const replicaOfBySlug = useMemo(() => buildReplicaOfMap(data?.backends ?? []), [data]);
+  const sections = useMemo(
+    () => groupVolumeSections([...grouped], replicaOfBySlug),
+    [grouped, replicaOfBySlug],
+  );
+
+  /**
+  Client-side filter over the one response this page already has. A replica
+  section can match on its own rows, so filtering walks both levels rather than
+  dropping a collapsed group that holds the only hit.
   */
-  const filteredGroups = useMemo(() => {
+  const filteredSections = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return [...grouped];
+    if (!needle) return sections;
     const matches = (v: AggregatedVolume) => v.fullName.toLowerCase().includes(needle) || (v.description ?? '').toLowerCase().includes(needle);
-    return [...grouped]
-      .map(([slug, rows]) => [slug, rows.filter(matches)] as const)
-      .filter(([, rows]) => rows.length > 0);
-  }, [grouped, query]);
+    return sections
+      .map((section): VolumeSection | null => {
+        const rows = section.rows.filter(matches);
+        const replicas = section.replicas
+          .map((replica) => ({ ...replica, rows: replica.rows.filter(matches) }))
+          .filter((replica) => replica.rows.length > 0);
+        return rows.length > 0 || replicas.length > 0 ? { ...section, rows, replicas } : null;
+      })
+      .filter((section): section is VolumeSection => section !== null);
+  }, [sections, query]);
+
+  // A collapsed group must never hide a search hit, so a query opens every
+  // expander without changing the persisted expand/collapse state.
+  const searching = query.trim().length > 0;
+  const toggle = (slug: string) => {
+    setExpandedSlugs((current) => {
+      const next = new Set(current);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  };
+
+  /**
+   * One backend section, optionally holding collapsed replica sections.
+   *
+   * Replicas keep their own `?backend=` links — grouping changes only which
+   * headers are visible, never which backend answers a bucket request.
+   */
+  const renderSection = (section: VolumeSection, nested: boolean): React.ReactNode => {
+    const replicaCount = section.replicas.length;
+    const open = searching || expandedSlugs.has(section.slug);
+    return (
+      <section key={section.slug} aria-label={section.slug} className={nested ? 'ml-4' : undefined}>
+        <div className="mb-2.5 flex items-center gap-2">
+          <Server className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{section.slug}</h3>
+          {section.replicaOf && (
+            <span className="rounded-md bg-[var(--color-surface-3)] px-1.5 py-0.5 text-xs font-medium text-[var(--color-text-secondary)]">
+              {t('backends.replicaBadge', 'Replica')}
+            </span>
+          )}
+          <span className="text-xs tabular-nums text-[var(--color-text-muted)]">{section.rows.length}</span>
+          {replicaCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-expanded={open}
+              aria-controls={`volume-replicas-${section.slug}`}
+              onClick={() => toggle(section.slug)}
+            >
+              {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              {t('backends.replicas', 'Replicas ({{count}})', { count: replicaCount })}
+            </Button>
+          )}
+          <span className="h-px flex-1 bg-[var(--color-border)]" />
+        </div>
+        {section.rows.length > 0 && (
+          <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {section.rows.map((v) => (
+              <li key={`${v.backend}/${v.fullName}`}>
+                <Link
+                  to={`/${v.owner}/${v.name}?backend=${encodeURIComponent(v.backend)}`}
+                  className="group flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 p-3 transition-colors duration-150 hover:border-[var(--color-surface-4)] hover:bg-[var(--color-surface-3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/50"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-4)] text-[var(--color-accent)]">
+                    <FolderArchive className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-[var(--color-text-primary)]">{v.fullName}</span>
+                    <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">
+                      {v.description?.trim() || t('dashboard.bucketFallback', 'WebDAV Bucket')}
+                    </span>
+                  </span>
+                  <VisibilityBadge isPrivate={v.isPrivate} />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150 group-hover:translate-x-0.5" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+        {replicaCount > 0 && open && (
+          <div id={`volume-replicas-${section.slug}`} className="mt-4 space-y-4">
+            {section.replicas.map((replica) => renderSection(replica, true))}
+          </div>
+        )}
+      </section>
+    );
+  };
 
   const privateCount = volumes.filter((v) => v.isPrivate).length;
   const hasBuckets = volumes.length > 0;
@@ -96,7 +196,7 @@ export function DashboardView({ showNotice }: { showNotice: (kind: 'success' | '
       {hasBuckets && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Stat icon={<FolderArchive className="h-4 w-4" />} label={t('dashboard.statsBuckets', 'Buckets')} value={volumes.length} />
-          <Stat icon={<Server className="h-4 w-4" />} label={t('dashboard.statsBackends', 'Backends')} value={grouped.size} />
+          <Stat icon={<Server className="h-4 w-4" />} label={t('dashboard.statsBackends', 'Backends')} value={sections.length} />
           <Stat icon={<Lock className="h-4 w-4" />} label={t('dashboard.statsPrivate', 'Private')} value={privateCount} />
         </div>
       )}
@@ -146,42 +246,11 @@ export function DashboardView({ showNotice }: { showNotice: (kind: 'success' | '
               </>
             }
           />
-        ) : filteredGroups.length === 0 ? (
+        ) : filteredSections.length === 0 ? (
           <p className="py-6 text-center text-sm text-[var(--color-text-secondary)]">{t('dashboard.noMatches', 'No Buckets Match Your Search.')}</p>
         ) : (
           <div className="space-y-6">
-            {filteredGroups.map(([slug, rows]) => (
-              <section key={slug} aria-label={slug}>
-                <div className="mb-2.5 flex items-center gap-2">
-                  <Server className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{slug}</h3>
-                  <span className="text-xs tabular-nums text-[var(--color-text-muted)]">{rows.length}</span>
-                  <span className="h-px flex-1 bg-[var(--color-border)]" />
-                </div>
-                <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                  {rows.map((v) => (
-                    <li key={`${v.backend}/${v.fullName}`}>
-                      <Link
-                        to={`/${v.owner}/${v.name}?backend=${encodeURIComponent(v.backend)}`}
-                        className="group flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 p-3 transition-colors duration-150 hover:border-[var(--color-surface-4)] hover:bg-[var(--color-surface-3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/50"
-                      >
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-4)] text-[var(--color-accent)]">
-                          <FolderArchive className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-[var(--color-text-primary)]">{v.fullName}</span>
-                          <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">
-                            {v.description?.trim() || t('dashboard.bucketFallback', 'WebDAV Bucket')}
-                          </span>
-                        </span>
-                        <VisibilityBadge isPrivate={v.isPrivate} />
-                        <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150 group-hover:translate-x-0.5" />
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
+            {filteredSections.map((section) => renderSection(section, false))}
           </div>
         )}
       </Card>

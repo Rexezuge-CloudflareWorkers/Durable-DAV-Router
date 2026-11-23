@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -39,8 +39,8 @@ The dashboard links `v.fullName` and groups rows by `v.backend`, so both must be
 present for a row to appear at all — a partial fixture renders an empty list and
 the assertion below fails for the wrong reason.
 */
-function volume(name: string): Record<string, unknown> {
-  return { owner: 'alice', name, fullName: `alice/${name}`, href: `/alice/${name}`, isPrivate: false, backend: 'office' };
+function volume(name: string, backend = 'office'): Record<string, unknown> {
+  return { owner: 'alice', name, fullName: `alice/${name}`, href: `/alice/${name}`, isPrivate: false, backend };
 }
 
 function renderDashboard(showNotice = vi.fn()) {
@@ -177,5 +177,62 @@ describe('DashboardView load races', () => {
     await screen.findByText('alice/alice-files');
     expect(screen.queryByRole('button', { name: 'Add Backend' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Check' })).toBeNull();
+  });
+});
+
+describe('DashboardView replica grouping', () => {
+  const data = () => ({
+    volumes: [volume('live-files', 'live'), volume('one-files', 'replica-1'), volume('two-files', 'replica-2')],
+    backends: [
+      { slug: 'live', ok: true, status: 200, replicaOf: null },
+      { slug: 'replica-1', ok: true, status: 200, replicaOf: 'live' },
+      { slug: 'replica-2', ok: true, status: 200, replicaOf: 'live' },
+    ],
+  });
+
+  beforeEach(() => {
+    volumeService.listMyVolumes.mockReset();
+    volumeService.listMyVolumes.mockResolvedValue(data());
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('shows the live section only until the replica expander is clicked', async () => {
+    renderDashboard();
+    await screen.findByText('alice/live-files');
+    const expander = screen.getByRole('button', { name: 'Replicas (2)' });
+    expect(expander.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('alice/one-files')).toBeNull();
+    expect(screen.queryByText('alice/two-files')).toBeNull();
+    // The stat counts groups the user can see, not collapsed ones.
+    expect(screen.getByText('Backends').previousElementSibling?.textContent).toBe('1');
+
+    fireEvent.click(expander);
+    expect(expander.getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByText('alice/one-files')).toBeTruthy();
+    expect(screen.getByText('alice/two-files')).toBeTruthy();
+    // One request still: grouping comes from the volumes response itself.
+    expect(volumeService.listMyVolumes).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens collapsed groups while searching so a hit is never hidden', async () => {
+    renderDashboard();
+    await screen.findByText('alice/live-files');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'two-files' } });
+    expect(await screen.findByText('alice/two-files')).toBeTruthy();
+    expect(screen.queryByText('alice/live-files')).toBeNull();
+  });
+
+  it('keeps a replica section visible when the live backend holds no buckets', async () => {
+    volumeService.listMyVolumes.mockResolvedValue({
+      volumes: [volume('one-files', 'replica-1')],
+      backends: data().backends,
+    });
+    renderDashboard();
+    expect(await screen.findByText('alice/one-files')).toBeTruthy();
+    expect(screen.getByText('Replica')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Replicas (2)' })).toBeNull();
   });
 });
