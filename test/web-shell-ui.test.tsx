@@ -26,6 +26,7 @@ vi.mock('../apps/web/src/services/volumeService', () => volumeService);
 vi.mock('../apps/web/src/services/backendService', () => backendService);
 
 import { Header } from '../apps/web/src/components/layout/Header';
+import { BreadcrumbBar } from '../apps/web/src/components/layout/BreadcrumbBar';
 import { DashboardView } from '../apps/web/src/views/DashboardView';
 import { NewVolumeView } from '../apps/web/src/views/NewVolumeView';
 import { ModalShell, ModalHeader, ModalBody } from '../apps/web/src/components/modals/ModalShell';
@@ -60,6 +61,33 @@ describe('shell header', () => {
     );
     expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Sign In With Cloudflare Access' })).toBeTruthy();
+  });
+});
+
+describe('contextual shell', () => {
+  it('keeps one navigation bar and demotes the context bar to a strip', () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <Header userEmail="alice@example.com" />
+        <BreadcrumbBar
+          crumb={<span>User Settings</span>}
+          actions={<button type="button">Refresh</button>}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelectorAll('header')).toHaveLength(1);
+    // The brand is the header's alone — the context strip must not repeat it.
+    expect(screen.getAllByText('Durable-DAV-')).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'New' })).toBeTruthy();
+
+    const homeLink = screen.getByRole('link', { name: 'Durable-DAV-Router Home' });
+    const strip = homeLink.parentElement?.parentElement;
+    expect(strip?.className).toContain('static');
+    expect(strip?.className).not.toContain('sticky');
+
+    expect(screen.getByText('User Settings')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
   });
 });
 
