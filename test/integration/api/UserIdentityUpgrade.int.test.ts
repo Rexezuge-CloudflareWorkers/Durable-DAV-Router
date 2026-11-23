@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
 import { applyMigrations, applyMigrationsAfter, applyMigrationsUpTo, migrationFiles } from '../helpers/migrations';
 
-type TestEnv = Record<string, unknown> & { DB: D1Database };
 
 const IDENTITY = '0004_router_user_identity.sql';
 
@@ -31,6 +30,7 @@ const IDENTITY = '0004_router_user_identity.sql';
  * fixture would let one test's deletes decide another's outcome.
  */
 describe('migration 0004 decouples the identifier from the address', () => {
+  type TestEnv = Record<string, unknown> & { DB: D1Database };
   const db = (): D1Database => (env as unknown as TestEnv).DB;
   const now = (): number => Math.floor(Date.now() / 1000);
 

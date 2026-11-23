@@ -57,7 +57,7 @@ function entryUrl(owner: string, volume: string, innerPath: string, backend?: st
   // below is the second layer behind this filter, not the primary defence.
   const clean = stripSlashes(innerPath)
     .split('/')
-    .filter((segment) => segment !== '' && segment !== '.' && segment !== '..')
+    .filter((segment) => !['', '.', '..'].includes(segment))
     .join('/');
   const suffix = clean === '' ? '/' : `/${clean.split('/').map(encodeURIComponent).join('/')}`;
   const base = volumeBasePath(owner, volume);

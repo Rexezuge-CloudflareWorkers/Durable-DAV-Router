@@ -12,10 +12,10 @@ import { Checkbox, FieldHint, Input, Label, Select } from '../components/ui/Inpu
 import { BreadcrumbBar } from '../components/layout/BreadcrumbBar';
 import { AppPage, PageHeaderCard } from '@rexezuge/web';
 
-type OwnerState =
-  { status: 'idle' } | { status: 'loading' } | { status: 'ready'; username: string } | { status: 'missing' } | { status: 'error' };
 
 export function NewVolumeView({ showNotice }: { showNotice: (kind: 'success' | 'error', message: string) => void }) {
+  type OwnerState =
+    { status: 'idle' } | { status: 'loading' } | { status: 'ready'; username: string } | { status: 'missing' } | { status: 'error' };
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [name, setName] = useState('');

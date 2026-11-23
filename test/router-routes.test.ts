@@ -4,7 +4,6 @@ import { registerAggregatedVolumeRoutes } from '../apps/api/src/workers/routes/A
 import { registerBackendRoutes } from '../apps/api/src/workers/routes/BackendRoutes';
 
 type Row = RouterBackendRow;
-type Handler = (c: FakeContext) => Promise<Response>;
 
 interface FakeContext {
   req: {
@@ -107,6 +106,7 @@ function fakeDb(): { db: { prepare: (sql: string) => unknown }; rows: Map<string
 }
 
 function stubApp() {
+  type Handler = (c: FakeContext) => Promise<Response>;
   const routes = new Map<string, Handler>();
   const app = {
     get: (path: string, handler: Handler) => {
