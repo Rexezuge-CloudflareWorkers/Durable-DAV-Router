@@ -38,11 +38,8 @@
     "webdavDescription": "Mount, synchroniseer en bewerk met elke WebDAV-client."
   },
   "dashboard": {
-    "connect": "Verbinden",
-    "connectHelp": "Elke bucket heeft eigen referenties. Open een bucket, ga naar Instellingen, maak een referentie aan en verbind met: {{example}}.",
     "empty": "Nog geen buckets. Registreer eerst een backend.",
     "manageBackends": "Backends beheren",
-    "mountAnyVolume": "Elke bucket mounten",
     "new": "Nieuw",
     "title": "Dashboard",
     "volumes": "Buckets",

@@ -38,11 +38,8 @@
     "webdavDescription": "使用任何 WebDAV 用戶端掛載、同步和編輯。"
   },
   "dashboard": {
-    "connect": "連線",
-    "connectHelp": "每個儲存貯體都有自己的憑證。開啟一個儲存貯體，進入設定，建立憑證，然後使用以下內容連線：{{example}}。",
     "empty": "還沒有儲存貯體。請先註冊一個後端。",
     "manageBackends": "管理後端",
-    "mountAnyVolume": "掛載任意儲存貯體",
     "new": "新增",
     "title": "儀表板",
     "volumes": "儲存貯體",

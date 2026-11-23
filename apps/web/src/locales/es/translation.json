@@ -38,11 +38,8 @@
     "webdavDescription": "Monte, sincronice y edite con cualquier cliente WebDAV."
   },
   "dashboard": {
-    "connect": "Conectar",
-    "connectHelp": "Cada bucket tiene sus propias credenciales. Abra un bucket, vaya a Configuración, cree una credencial y conéctese con: {{example}}.",
     "empty": "Aún no hay buckets. Registre primero un backend.",
     "manageBackends": "Gestionar backends",
-    "mountAnyVolume": "Montar cualquier bucket",
     "new": "Nuevo",
     "title": "Panel",
     "volumes": "Buckets",

@@ -38,11 +38,8 @@
     "webdavDescription": "Montez, synchronisez et modifiez avec n'importe quel client WebDAV."
   },
   "dashboard": {
-    "connect": "Connecter",
-    "connectHelp": "Chaque bucket a ses propres identifiants. Ouvrez un bucket, allez dans les paramètres, créez un identifiant, puis connectez-vous avec : {{example}}.",
     "empty": "Aucun bucket pour l'instant. Enregistrez d'abord un backend.",
     "manageBackends": "Gérer les backends",
-    "mountAnyVolume": "Monter n'importe quel bucket",
     "new": "Nouveau",
     "title": "Tableau de bord",
     "volumes": "Buckets",

@@ -11,7 +11,7 @@ import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { SkeletonRows } from '../components/ui/Skeleton';
 import { VisibilityBadge } from '../components/ui/Badge';
-import { AppPage, PageHeaderCard, EmptyState, ReadOnlyField, RefreshButton } from '@rexezuge/web';
+import { AppPage, PageHeaderCard, EmptyState, RefreshButton } from '@rexezuge/web';
 
 export function DashboardView({ showNotice }: { showNotice: (kind: 'success' | 'error', message: string) => void }) {
   const { t } = useTranslation();
@@ -184,29 +184,6 @@ export function DashboardView({ showNotice }: { showNotice: (kind: 'success' | '
             ))}
           </div>
         )}
-      </Card>
-
-      <Card variant="muted">
-        <CardHeader>
-          <CardTitle>{t('dashboard.connect', 'Connect')}</CardTitle>
-        </CardHeader>
-        <div className="space-y-3">
-          <ReadOnlyField
-            label={t('dashboard.mountAnyVolume', 'Mount Any Bucket')}
-            value={`${globalThis.location?.origin ?? ''}/<owner>/<volume>/?backend=<slug>`}
-            showCopy
-            copyLabel={t('common.copyToClipboard', 'Copy To Clipboard')}
-          />
-          <p className="text-sm text-[var(--color-text-secondary)]">
-            {t(
-              'dashboard.connectHelp',
-              'Each Bucket Lives On One Backend. Open A Bucket, Go To Settings, Create A Credential On That Backend, Then Connect With: {{example}}.',
-              {
-                example: 'https://<username>:<password>@backend-host/owner/volume/',
-              },
-            )}
-          </p>
-        </div>
       </Card>
     </AppPage>
   );

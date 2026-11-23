@@ -38,11 +38,8 @@
     "webdavDescription": "任意のWebDAVクライアントでマウント、同期、編集できます。"
   },
   "dashboard": {
-    "connect": "接続",
-    "connectHelp": "各バケットには独自の認証情報があります。バケットを開いて設定へ移動し、認証情報を作成してから {{example}} で接続してください。",
     "empty": "バケットがありません。まずバックエンドを登録してください。",
     "manageBackends": "バックエンドを管理",
-    "mountAnyVolume": "任意のバケットをマウント",
     "new": "新規",
     "title": "ダッシュボード",
     "volumes": "バケット",
