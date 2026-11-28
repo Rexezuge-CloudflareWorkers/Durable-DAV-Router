@@ -16,7 +16,7 @@
     "@xmldom/xmldom": "^0.9.12"
   },
   "devDependencies": {
-    "@types/node": "26.6.6",
+    "@types/node": "26.6.10",
     "typescript": "6.0.3"
   }
 }
